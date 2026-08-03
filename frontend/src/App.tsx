@@ -3,16 +3,21 @@ import type { FormEvent } from 'react'
 
 import {
   createProject,
+  deleteMaterial,
   generateTemplate,
   getProject,
   getProjects,
+  getThumbnailUrl,
+  getTimeline,
+  listMaterials,
   patchProject,
   putScript,
+  uploadMaterial,
 } from './api/client'
-import type { BossInfo, Project, ScriptModel, Shot } from './api/types'
+import type { BossInfo, Material, Project, ScriptModel, Shot, Timeline } from './api/types'
 import './app.css'
 
-type View = 'list' | 'setup' | 'script'
+type View = 'list' | 'setup' | 'script' | 'materials'
 
 const EMPTY_FORM: BossInfo = {
   restaurant_name: '',
@@ -40,6 +45,8 @@ export default function App() {
   const [form, setForm] = useState<BossInfo>(EMPTY_FORM)
   const [dishText, setDishText] = useState('')
   const [script, setScript] = useState<ScriptModel | null>(null)
+  const [materials, setMaterials] = useState<Material[]>([])
+  const [timeline, setTimeline] = useState<Timeline | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
@@ -128,6 +135,73 @@ export default function App() {
       setMessage('修改已保存。')
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '脚本保存失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function loadMaterials(projectId: string) {
+    const [loadedMaterials, loadedTimeline] = await Promise.all([
+      listMaterials(projectId),
+      getTimeline(projectId),
+    ])
+    setMaterials(loadedMaterials)
+    setTimeline(loadedTimeline)
+  }
+
+  async function openMaterials() {
+    if (!project) return
+    setBusy(true)
+    setError('')
+    setMessage('')
+    setView('materials')
+    try {
+      await loadMaterials(project.id)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '素材加载失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function uploadSelectedFiles(files: FileList | null) {
+    if (!project || !files?.length) return
+    setBusy(true)
+    setError('')
+    setMessage('')
+    try {
+      const usedIndexes = new Set(materials.map((material) => material.shot_index))
+      let nextIndex = materials.length
+      for (const file of Array.from(files)) {
+        while (usedIndexes.has(nextIndex)) nextIndex += 1
+        const formData = new FormData()
+        formData.append('shot_index', String(nextIndex))
+        formData.append('file', file)
+        await uploadMaterial(project.id, formData)
+        usedIndexes.add(nextIndex)
+        nextIndex += 1
+      }
+      await loadMaterials(project.id)
+      setMessage(`已上传 ${files.length} 个素材。`)
+    } catch (reason) {
+      await loadMaterials(project.id).catch(() => undefined)
+      setError(reason instanceof Error ? reason.message : '素材上传失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function removeMaterial(shotIndex: number) {
+    if (!project) return
+    setBusy(true)
+    setError('')
+    setMessage('')
+    try {
+      await deleteMaterial(project.id, shotIndex)
+      await loadMaterials(project.id)
+      setMessage(`素材 ${shotIndex} 已删除。`)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '素材删除失败')
     } finally {
       setBusy(false)
     }
@@ -376,6 +450,9 @@ export default function App() {
                 <button className="ghost-button" type="button" onClick={() => setView('setup')}>
                   修改问卷
                 </button>
+                <button className="ghost-button" type="button" onClick={() => void openMaterials()}>
+                  管理素材
+                </button>
                 <button
                   className="primary-button"
                   type="button"
@@ -458,6 +535,99 @@ export default function App() {
                 </article>
               ))}
             </div>
+          </section>
+        )}
+
+        {view === 'materials' && project && (
+          <section className="materials-page">
+            <div className="script-toolbar">
+              <div>
+                <p className="eyebrow">MATERIALS & TIMELINE</p>
+                <h1>{project.name}</h1>
+                <p>按拍摄顺序上传镜头，时长与位置由后端时间轴统一计算。</p>
+              </div>
+              <div className="toolbar-actions">
+                {script && (
+                  <button className="ghost-button" type="button" onClick={() => setView('script')}>
+                    返回脚本
+                  </button>
+                )}
+                <label className={`upload-button ${busy ? 'disabled' : ''}`}>
+                  {busy ? '处理中…' : '＋ 上传视频'}
+                  <input
+                    type="file"
+                    multiple
+                    accept=".mp4,.mov,.mkv,.avi"
+                    disabled={busy}
+                    onChange={(event) => {
+                      void uploadSelectedFiles(event.target.files)
+                      event.target.value = ''
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="timeline-panel">
+              <div className="timeline-heading">
+                <div>
+                  <strong>成片时间轴</strong>
+                  <small>每段宽度按后端返回的可用时长展示</small>
+                </div>
+                <span>{(timeline?.total_duration ?? 0).toFixed(2)} 秒</span>
+              </div>
+              {timeline?.segments.length ? (
+                <div className="timeline-track">
+                  {timeline.segments.map((segment) => (
+                    <div
+                      className="timeline-segment"
+                      key={segment.shot_index}
+                      style={{ flexGrow: segment.used_duration }}
+                      title={`镜头 ${segment.shot_index}：${segment.used_duration.toFixed(2)} 秒`}
+                    >
+                      <span>{segment.shot_index}</span>
+                      <small>{segment.used_duration.toFixed(1)}s</small>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="timeline-empty">上传素材后，这里会显示权威时间轴。</div>
+              )}
+            </div>
+
+            {materials.length === 0 ? (
+              <div className="empty-state compact">
+                <span>📹</span>
+                <h2>还没有拍摄素材</h2>
+                <p>可一次选择多个视频，系统会按选择顺序依次上传。</p>
+              </div>
+            ) : (
+              <div className="material-grid">
+                {materials.map((material) => (
+                  <article className="material-card" key={material.shot_index}>
+                    <img
+                      src={getThumbnailUrl(project.id, material.shot_index)}
+                      alt={`镜头 ${material.shot_index} 缩略图`}
+                    />
+                    <div>
+                      <span className="material-index">镜头 {material.shot_index}</span>
+                      <strong>{material.filename}</strong>
+                      <small>
+                        {material.duration.toFixed(2)} 秒 · {material.width}×{material.height}
+                      </small>
+                    </div>
+                    <button
+                      className="delete-button"
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void removeMaterial(material.shot_index)}
+                    >
+                      删除
+                    </button>
+                  </article>
+                ))}
+              </div>
+            )}
           </section>
         )}
       </main>

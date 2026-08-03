@@ -73,6 +73,8 @@ def create_project(name: str) -> dict:
         "name": name,
         "boss_info": {},
         "script": None,
+        "materials": [],
+        "edits": None,
         "created_at": datetime.now(UTC).isoformat(),
     }
     _write_json(project_dir / "project.json", project)
@@ -119,3 +121,66 @@ def load_script(project_id: str) -> ScriptModel | None:
     _read_project(project_id)
     payload = _script_payload(project_id)
     return ScriptModel.model_validate(payload) if payload is not None else None
+
+
+def _validate_shot_index(shot_index: int) -> int:
+    if isinstance(shot_index, bool) or not isinstance(shot_index, int) or shot_index < 0:
+        raise ValueError("拍摄序号必须是非负整数")
+    return shot_index
+
+
+def material_path(project_id: str, shot_index: int) -> Path:
+    """Return the canonical stored video path, creating its directory."""
+    _read_project(project_id)
+    index = _validate_shot_index(shot_index)
+    shots_dir = _project_dir(project_id) / "shots"
+    shots_dir.mkdir(parents=True, exist_ok=True)
+    return shots_dir / f"shot_{index}.mp4"
+
+
+def thumbnail_path(project_id: str, shot_index: int) -> Path:
+    """Return the canonical thumbnail path, creating its directory."""
+    _read_project(project_id)
+    index = _validate_shot_index(shot_index)
+    work_dir = _project_dir(project_id) / "work"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    return work_dir / f"thumb_{index}.jpg"
+
+
+def list_materials(project_id: str) -> list[dict]:
+    project = _read_project(project_id)
+    materials = project.get("materials") or []
+    return sorted(materials, key=lambda material: material["shot_index"])
+
+
+def save_material(project_id: str, material: dict) -> dict:
+    materials = [
+        current
+        for current in list_materials(project_id)
+        if current["shot_index"] != material["shot_index"]
+    ]
+    materials.append(material)
+    update_project(
+        project_id,
+        materials=sorted(materials, key=lambda current: current["shot_index"]),
+    )
+    return material
+
+
+def delete_material(project_id: str, shot_index: int) -> bool:
+    index = _validate_shot_index(shot_index)
+    materials = list_materials(project_id)
+    remaining = [item for item in materials if item["shot_index"] != index]
+    if len(remaining) == len(materials):
+        return False
+    update_project(project_id, materials=remaining)
+    return True
+
+
+def get_edits(project_id: str) -> dict | None:
+    return _read_project(project_id).get("edits")
+
+
+def save_edits(project_id: str, edits: dict) -> dict:
+    update_project(project_id, edits=edits)
+    return edits

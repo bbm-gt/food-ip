@@ -1,10 +1,10 @@
 """FastAPI entry point for food-ip."""
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .api import projects_router, script_router
+from .api import edits_router, materials_router, projects_router, script_router
 from .config import CODEX_BIN, CORS_ORIGINS, FFMPEG_PATH, FFPROBE_PATH, PROJECTS_ROOT
 from .core.store import InvalidProjectIdError, ProjectNotFoundError
 
@@ -19,6 +19,21 @@ app.add_middleware(
 )
 app.include_router(projects_router, prefix="/api")
 app.include_router(script_router, prefix="/api")
+app.include_router(materials_router, prefix="/api")
+app.include_router(edits_router, prefix="/api")
+
+
+@app.exception_handler(HTTPException)
+def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    del request
+    detail = exc.detail
+    if isinstance(detail, dict) and "message" in detail:
+        detail = detail["message"]
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"message": str(detail)},
+        headers=exc.headers,
+    )
 
 
 @app.exception_handler(ProjectNotFoundError)

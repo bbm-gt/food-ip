@@ -1,14 +1,23 @@
-import type { BossInfo, Project, ScriptModel } from './types'
+import type {
+  BossInfo,
+  Edits,
+  Material,
+  Project,
+  PutEditsResponse,
+  ScriptModel,
+  Timeline,
+} from './types'
 
 const API_BASE = '/api'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers)
+  if (init?.body != null && !(init.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json')
+  }
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...init?.headers,
-    },
+    headers,
   })
 
   if (!response.ok) {
@@ -18,6 +27,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new Error(payload.message ?? payload.detail ?? `请求失败（${response.status}）`)
   }
+  if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
 }
 
@@ -68,4 +78,44 @@ export function putScript(
     method: 'PUT',
     body: JSON.stringify(script),
   })
+}
+
+export function uploadMaterial(
+  projectId: string,
+  formData: FormData,
+): Promise<Material> {
+  return request<Material>(`/projects/${encodeURIComponent(projectId)}/materials`, {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export function listMaterials(projectId: string): Promise<Material[]> {
+  return request<Material[]>(`/projects/${encodeURIComponent(projectId)}/materials`)
+}
+
+export function deleteMaterial(projectId: string, shotIndex: number): Promise<void> {
+  return request<void>(
+    `/projects/${encodeURIComponent(projectId)}/materials/${shotIndex}`,
+    { method: 'DELETE' },
+  )
+}
+
+export function getThumbnailUrl(projectId: string, shotIndex: number): string {
+  return `${API_BASE}/projects/${encodeURIComponent(projectId)}/materials/${shotIndex}/thumbnail`
+}
+
+export function getEdits(projectId: string): Promise<Edits> {
+  return request<Edits>(`/projects/${encodeURIComponent(projectId)}/edits`)
+}
+
+export function putEdits(projectId: string, edits: Edits): Promise<PutEditsResponse> {
+  return request<PutEditsResponse>(`/projects/${encodeURIComponent(projectId)}/edits`, {
+    method: 'PUT',
+    body: JSON.stringify(edits),
+  })
+}
+
+export function getTimeline(projectId: string): Promise<Timeline> {
+  return request<Timeline>(`/projects/${encodeURIComponent(projectId)}/timeline`)
 }

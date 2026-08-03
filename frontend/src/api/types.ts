@@ -35,3 +35,54 @@ export interface Project {
   script: ScriptModel | null
   created_at: string
 }
+
+export interface Material {
+  shot_index: number
+  filename: string
+  duration: number
+  width: number
+  height: number
+  fps: number
+  has_audio: boolean
+}
+
+export interface ShotEdit {
+  trim_head: number
+  trim_tail: number
+}
+
+export type Transition = 'hard' | 'fade' | 'crossfade'
+
+export interface JunctionEdit {
+  transition: Transition
+  fade_seconds: number
+}
+
+export interface Edits {
+  shots: ShotEdit[]
+  junctions: JunctionEdit[]
+}
+
+export interface TimelineSegment extends ShotEdit {
+  shot_index: number
+  source_duration: number
+  used_duration: number
+  start: number
+  end: number
+}
+
+export interface TimelineJunction extends JunctionEdit {
+  index: number
+  offset: number | null
+}
+
+export interface Timeline {
+  segments: TimelineSegment[]
+  junctions: TimelineJunction[]
+  total_duration: number
+}
+
+export interface PutEditsResponse {
+  edits: Edits
+  timeline: Timeline
+}
