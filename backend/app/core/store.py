@@ -9,7 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .. import config
-from ..scriptgen.models import ScriptModel
+from ..scriptgen.models import BossInfo, ResearchProfile, ScriptBundle, ScriptModel
 
 
 PROJECT_ID_PATTERN = re.compile(r"[a-z0-9-]{8,}")
@@ -62,6 +62,22 @@ def _script_payload(project_id: str) -> dict | None:
     return ScriptModel.model_validate(_read_json(script_file)).model_dump(mode="json")
 
 
+def _research_payload(project_id: str) -> dict:
+    project = _read_project(project_id)
+    saved = project.get("research")
+    if isinstance(saved, dict) and saved:
+        return ResearchProfile.model_validate(saved).model_dump(mode="json")
+    legacy = BossInfo.model_validate(project.get("boss_info") or {})
+    return ResearchProfile.from_boss_info(legacy).model_dump(mode="json")
+
+
+def _bundle_payload(project_id: str) -> dict | None:
+    bundle_file = _project_dir(project_id) / "script_bundle.json"
+    if not bundle_file.is_file():
+        return None
+    return ScriptBundle.model_validate(_read_json(bundle_file)).model_dump(mode="json")
+
+
 def create_project(name: str) -> dict:
     root = _root()
     root.mkdir(parents=True, exist_ok=True)
@@ -72,7 +88,9 @@ def create_project(name: str) -> dict:
         "id": project_id,
         "name": name,
         "boss_info": {},
+        "research": None,
         "script": None,
+        "script_bundle": None,
         "materials": [],
         "edits": None,
         "created_at": datetime.now(UTC).isoformat(),
@@ -92,6 +110,8 @@ def list_projects() -> list[dict]:
             continue
         project = _read_json(project_file)
         project["script"] = _script_payload(project_id)
+        project["research"] = _research_payload(project_id)
+        project["script_bundle"] = _bundle_payload(project_id)
         projects.append(project)
     return sorted(projects, key=lambda item: item.get("created_at", ""), reverse=True)
 
@@ -99,6 +119,8 @@ def list_projects() -> list[dict]:
 def get_project(project_id: str) -> dict:
     project = _read_project(project_id)
     project["script"] = _script_payload(project_id)
+    project["research"] = _research_payload(project_id)
+    project["script_bundle"] = _bundle_payload(project_id)
     return project
 
 
@@ -121,6 +143,33 @@ def load_script(project_id: str) -> ScriptModel | None:
     _read_project(project_id)
     payload = _script_payload(project_id)
     return ScriptModel.model_validate(payload) if payload is not None else None
+
+
+def save_research(project_id: str, research: ResearchProfile) -> ResearchProfile:
+    project = _read_project(project_id)
+    project["research"] = research.model_dump(mode="json")
+    project["boss_info"] = research.to_boss_info().model_dump(mode="json")
+    _write_json(_project_dir(project_id) / "project.json", project)
+    return research
+
+
+def load_research(project_id: str) -> ResearchProfile:
+    return ResearchProfile.model_validate(_research_payload(project_id))
+
+
+def save_script_bundle(project_id: str, bundle: ScriptBundle) -> ScriptBundle:
+    _read_project(project_id)
+    _write_json(
+        _project_dir(project_id) / "script_bundle.json",
+        bundle.model_dump(mode="json"),
+    )
+    return bundle
+
+
+def load_script_bundle(project_id: str) -> ScriptBundle | None:
+    _read_project(project_id)
+    payload = _bundle_payload(project_id)
+    return ScriptBundle.model_validate(payload) if payload is not None else None
 
 
 def _validate_shot_index(shot_index: int) -> int:

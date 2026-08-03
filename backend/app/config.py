@@ -15,6 +15,8 @@ DEFAULT_CODEX_BIN = shutil.which("codex") or "codex"
 DEFAULT_PROJECTS_ROOT = REPOSITORY_ROOT / "runtime" / "projects"
 DEFAULT_FRONTEND_DIST = REPOSITORY_ROOT / "frontend" / "dist"
 DEFAULT_CORS_ORIGINS = "http://localhost:5173"
+DEFAULT_AI_SCRIPT_BASE_URL = "https://api.deepseek.com"
+DEFAULT_AI_SCRIPT_MODEL = "deepseek-v4-flash"
 
 
 def _load_env_file(path: Path) -> None:
@@ -57,5 +59,14 @@ CORS_ORIGINS = [
     for origin in os.environ.get("CORS_ORIGINS", DEFAULT_CORS_ORIGINS).split(",")
     if origin.strip()
 ]
+AI_SCRIPT_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+AI_SCRIPT_BASE_URL = os.environ.get(
+    "AI_SCRIPT_BASE_URL", DEFAULT_AI_SCRIPT_BASE_URL
+).rstrip("/")
+AI_SCRIPT_MODEL = os.environ.get("AI_SCRIPT_MODEL", DEFAULT_AI_SCRIPT_MODEL).strip()
+AI_SCRIPT_THINKING = os.environ.get("AI_SCRIPT_THINKING", "disabled").strip().lower()
+if AI_SCRIPT_THINKING not in {"enabled", "disabled"}:
+    AI_SCRIPT_THINKING = "disabled"
+AI_SCRIPT_TIMEOUT_SECONDS = float(os.environ.get("AI_SCRIPT_TIMEOUT_SECONDS", "90"))
 FFMPEG_PATH = _probe_binary("ffmpeg")
 FFPROBE_PATH = _probe_binary("ffprobe")

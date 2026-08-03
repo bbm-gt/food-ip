@@ -8,7 +8,7 @@
 - 业务错误通常为 `{"message": "中文说明"}`。
 - `400` 表示 ID、序号或素材参数错误；`404` 表示项目、脚本、素材、文件或任务不存在；`409` 表示素材重复或渲染前置条件不满足；`422` 表示请求体、表单或查询参数没有通过 FastAPI/Pydantic 校验。
 - 项目 ID 必须匹配 `[a-z0-9-]{8,}`；不合法为 `400`，格式合法但不存在为 `404`。
-- 下文 `Project` 包含 `id`、`name`、`boss_info`、`script`、`materials`、`edits`、`created_at`；`Script` 包含 `title`、`target_duration_seconds`、`style`、`opening_hook`、`cta` 和 `shots`。
+- 下文 `Project` 包含 `id`、`name`、兼容字段 `boss_info`、深度档案 `research`、当前选中 `script`、最近一次 `script_bundle`、`materials`、`edits`、`created_at`；`Script` 包含 `title`、`target_duration_seconds`、`style`、`opening_hook`、`cta` 和 `shots`。
 
 ## 系统
 
@@ -44,6 +44,17 @@
 - `200`：更新后的 `Project`。
 - 错误：`400`、`404`、`422`。
 
+### `GET /api/projects/{project_id}/research`
+
+- `200`：完整 `ResearchProfile`，包含 `store`、`owner`、`audience`、`shooting` 四部分。旧项目没有深度档案时，会从 `boss_info` 生成一份兼容草稿。
+- 错误：`400`、`404`。
+
+### `PUT /api/projects/{project_id}/research`
+
+- 请求：完整 `ResearchProfile`。保存时同步更新兼容 `boss_info`，不会覆盖已选脚本。
+- `200`：保存后的 `ResearchProfile`。
+- 错误：`400`、`404`、`422`。
+
 ## 脚本
 
 ### `POST /api/projects/{project_id}/script/template`
@@ -63,6 +74,30 @@
 - 请求：完整 `Script`。每个 `shot` 包含 `shot_index`、`lines`、`shooting_tips`、`duration_hint_seconds`，以及可选默认空字符串的 `location`、`angle`。
 - `200`：保存后的 `Script`。
 - 错误：`400`、`404`、`422`。
+
+### `POST /api/projects/{project_id}/script-bundles/template`
+
+- 请求：`{"research": ResearchProfile, "candidate_count": 3}`；数量允许 2–5。
+- `200`：`ScriptBundle`，包含调研摘要、互不重复的候选脚本、适配分、推荐原因、拍摄难度和所需场景。生成方案不会自动覆盖当前脚本。
+- 错误：`400`、`404`、`422`。
+
+### `POST /api/projects/{project_id}/script-bundles/ai`
+
+- 请求：`{"research": ResearchProfile, "candidate_count": 3}`；数量允许 2–5。
+- `200`：由规则选题、AI 成稿并经程序质检的 `ScriptBundle`。`generator` 为 `ai`，`model_name` 记录实际配置的模型。
+- 每个 `shot` 额外包含镜头目的、主体、动作步骤、手机机位、运镜、声音、光线、道具、字幕、剪辑提示、常见错误和重拍条件。
+- `502`：模型服务异常或两次输出均未通过校验；`503`：未配置或密钥无效。失败不会覆盖最近一次方案。
+
+### `GET /api/projects/{project_id}/script-bundles/latest`
+
+- `200`：最近生成的 `ScriptBundle`。
+- 错误：`400`、`404`（项目或方案不存在）。
+
+### `POST /api/projects/{project_id}/script-bundles/{bundle_id}/select/{script_id}`
+
+- 作用：将候选方案设为当前拍摄脚本，同时在方案集合记录 `selected_script_id`。
+- `200`：选中的完整 `Script`，后续素材编号沿用其 1-based 镜头编号。
+- 错误：`400`、`404`（方案过期或候选不存在）。
 
 ## 素材
 

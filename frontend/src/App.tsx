@@ -4,30 +4,51 @@ import type { FormEvent } from 'react'
 import {
   createProject,
   deleteMaterial,
-  generateTemplate,
+  generateScriptBundle,
   getEdits,
   getJob,
   getProject,
   getProjects,
   getTimeline,
   listMaterials,
-  patchProject,
+  putResearch,
   putJunction,
   putScript,
+  selectScriptCandidate,
   startExport,
   uploadMaterial,
 } from './api/client'
-import type { BossInfo, Edits, ExportJob, JunctionEdit, Material, Project, ScriptModel, Shot, Timeline } from './api/types'
+import type { Edits, ExportJob, JunctionEdit, Material, Project, ResearchProfile, ScriptBundle, ScriptCandidate, ScriptModel, Shot, Timeline } from './api/types'
 import { EditView, ExportView, MaterialsView } from './views/ProductionViews'
-import { ProjectsView, ScriptView, SetupView } from './views/ProjectViews'
+import { CandidatesView, ProjectsView, ScriptView, SetupView } from './views/ProjectViews'
 import './app.css'
 
-type View = 'list' | 'setup' | 'script' | 'materials' | 'edit' | 'export'
+type View = 'list' | 'setup' | 'candidates' | 'script' | 'materials' | 'edit' | 'export'
 
-const EMPTY_FORM: BossInfo = {
-  restaurant_name: '', cuisine_type: '家常菜', signature_dishes: [], owner_persona: '',
-  audience: '', video_style: '竖屏口播', target_duration_seconds: 60,
-  platform: '抖音', hook_preference: '',
+const EMPTY_RESEARCH: ResearchProfile = {
+  schema_version: 1,
+  store: {
+    restaurant_name: '', city: '', business_district: '', cuisine_type: '家常菜',
+    years_in_business: 0, price_per_person: 0, signature_dishes: [], business_modes: [],
+    differentiators: [], ingredient_proofs: [], visible_processes: [],
+    customer_praises: [], customer_misunderstandings: [],
+  },
+  owner: {
+    owner_name: '', hometown: '', owner_persona: '', origin_story: '', hardest_moment: '',
+    proudest_moment: '', unique_experience: '', speaking_style: '实在真诚',
+    appearance_mode: '真人口播', language_style: '普通话', avoided_topics: [],
+    allow_personal_story: false,
+  },
+  audience: {
+    core_audience: '', dining_scenarios: [], customer_needs: [], customer_concerns: [],
+    current_business_problem: '', content_goal: '吸引到店',
+  },
+  shooting: {
+    platform: '抖音', video_style: '烟火气纪实', target_duration_seconds: 60,
+    available_locations: [], unavailable_locations: [], can_show_kitchen: true,
+    can_show_customers: false, equipment: [], daily_minutes: 20,
+    update_frequency: '每周3条', hook_preference: '',
+  },
 }
 
 function nextUploadIndexes(count: number, materials: Material[], script: ScriptModel | null): number[] {
@@ -63,8 +84,8 @@ export default function App() {
   const [view, setView] = useState<View>('list')
   const [projects, setProjects] = useState<Project[]>([])
   const [project, setProject] = useState<Project | null>(null)
-  const [form, setForm] = useState<BossInfo>(EMPTY_FORM)
-  const [dishText, setDishText] = useState('')
+  const [research, setResearch] = useState<ResearchProfile>(EMPTY_RESEARCH)
+  const [bundle, setBundle] = useState<ScriptBundle | null>(null)
   const [script, setScript] = useState<ScriptModel | null>(null)
   const [materials, setMaterials] = useState<Material[]>([])
   const [edits, setEdits] = useState<Edits | null>(null)
@@ -103,7 +124,7 @@ export default function App() {
   }, [exportJobId, exportJob?.status])
 
   function startNewProject() {
-    setProject(null); setForm(EMPTY_FORM); setDishText(''); setScript(null)
+    setProject(null); setResearch(EMPTY_RESEARCH); setBundle(null); setScript(null)
     setMaterials([]); setEdits(null); setTimeline(null); setExportJobId(null)
     setExportJob(null); setMessage(''); setError(''); setView('setup')
   }
@@ -112,23 +133,48 @@ export default function App() {
     setBusy(true); setError('')
     try {
       const fullProject = await getProject(item.id)
-      setProject(fullProject); setForm({ ...EMPTY_FORM, ...fullProject.boss_info })
-      setDishText(fullProject.boss_info.signature_dishes?.join('、') ?? '')
-      setScript(fullProject.script); setView(fullProject.script ? 'script' : 'setup')
+      setProject(fullProject); setResearch(fullProject.research ?? EMPTY_RESEARCH)
+      setBundle(fullProject.script_bundle); setScript(fullProject.script)
+      setView(fullProject.script ? 'script' : fullProject.script_bundle ? 'candidates' : 'setup')
     } catch (reason) { setError(reason instanceof Error ? reason.message : '项目打开失败') }
     finally { setBusy(false) }
   }
 
   async function submitSetup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError(''); setMessage('')
-    const bossInfo = { ...form, signature_dishes: dishText.split(/[、,，]/).map((dish) => dish.trim()).filter(Boolean) }
     try {
-      const activeProject = project ?? await createProject(bossInfo.restaurant_name || '未命名餐饮项目')
-      await patchProject(activeProject.id, bossInfo)
-      const generated = await generateTemplate(activeProject.id, bossInfo)
-      setProject({ ...activeProject, boss_info: bossInfo, script: generated })
-      setForm(bossInfo); setScript(generated); setView('script'); setMessage('脚本已生成并保存。')
-    } catch (reason) { setError(reason instanceof Error ? reason.message : '脚本生成失败') }
+      const activeProject = project ?? await createProject(research.store.restaurant_name || '未命名餐饮项目')
+      if (!project) setProject(activeProject)
+      const savedResearch = await putResearch(activeProject.id, research)
+      const generated = await generateScriptBundle(activeProject.id, savedResearch)
+      const updatedProject = { ...activeProject, research: savedResearch, script_bundle: generated }
+      setProject(updatedProject); setResearch(savedResearch); setBundle(generated)
+      setView('candidates'); setMessage(`已由 ${generated.model_name || 'AI'} 生成并通过结构校验。`)
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '脚本方案生成失败') }
+    finally { setBusy(false) }
+  }
+
+  async function regenerateBundle() {
+    if (!project) return
+    setBusy(true); setError(''); setMessage('')
+    try {
+      const generated = await generateScriptBundle(project.id, research)
+      setBundle(generated); setProject({ ...project, research, script_bundle: generated })
+      setMessage(`已由 ${generated.model_name || 'AI'} 重新生成三套方案。`)
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '重新生成失败') }
+    finally { setBusy(false) }
+  }
+
+  async function chooseCandidate(candidate: ScriptCandidate) {
+    if (!project || !bundle) return
+    setBusy(true); setError(''); setMessage('')
+    try {
+      const selected = await selectScriptCandidate(project.id, bundle.id, candidate.id)
+      const selectedBundle = { ...bundle, selected_script_id: candidate.id }
+      setScript(selected); setBundle(selectedBundle)
+      setProject({ ...project, script: selected, script_bundle: selectedBundle })
+      setView('script'); setMessage(`已选择“${candidate.strategy_name}”，可以继续修改或开始拍摄。`)
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '选择脚本失败') }
     finally { setBusy(false) }
   }
 
@@ -232,8 +278,9 @@ export default function App() {
       {error && <div className="notice error" role="alert">{error}</div>}
       {message && <div className="notice success" role="status">{message}</div>}
       {view === 'list' && <ProjectsView busy={busy} projects={projects} onNew={startNewProject} onOpen={(item) => void openProject(item)} />}
-      {view === 'setup' && <SetupView project={project} script={script} form={form} dishText={dishText} busy={busy} onFormChange={setForm} onDishTextChange={setDishText} onSubmit={(event) => void submitSetup(event)} />}
-      {view === 'script' && script && <ScriptView project={project} script={script} busy={busy} onScriptChange={setScript} onUpdateShot={updateShot} onSetup={() => setView('setup')} onMaterials={() => void openMaterials()} onSave={() => void saveCurrentScript()} />}
+      {view === 'setup' && <SetupView project={project} script={script} research={research} busy={busy} onResearchChange={setResearch} onSubmit={(event) => void submitSetup(event)} />}
+      {view === 'candidates' && project && bundle && <CandidatesView project={project} bundle={bundle} busy={busy} onSelect={(candidate) => void chooseCandidate(candidate)} onRegenerate={() => void regenerateBundle()} onSetup={() => setView('setup')} />}
+      {view === 'script' && script && <ScriptView project={project} script={script} busy={busy} hasAlternatives={Boolean(bundle)} onScriptChange={setScript} onUpdateShot={updateShot} onSetup={() => setView('setup')} onCandidates={() => setView('candidates')} onMaterials={() => void openMaterials()} onSave={() => void saveCurrentScript()} />}
       {view === 'materials' && project && <MaterialsView project={project} script={script} materials={materials} timeline={timeline} busy={busy} canEdit={hasContiguousMaterials(materials)} onScript={() => setView('script')} onEdit={() => void openEdit()} onUpload={(files) => void uploadSelectedFiles(files)} onDelete={(index) => void removeMaterial(index)} />}
       {view === 'edit' && project && edits && timeline && <EditView project={project} edits={edits} timeline={timeline} selectedJunction={selectedJunction} previewVersion={previewVersion} junctionBusy={junctionBusy} onSelectJunction={(index) => { setSelectedJunction(index); setPreviewVersion(Date.now()) }} onSaveJunction={(shotPatch, junctionPatch) => void saveJunction(shotPatch, junctionPatch)} onMaterials={() => setView('materials')} onExport={() => { setError(''); setMessage(''); setView('export') }} />}
       {view === 'export' && project && <ExportView project={project} timeline={timeline} job={exportJob} busy={busy} onEdit={() => setView('edit')} onExport={() => void beginExport()} />}

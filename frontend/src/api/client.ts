@@ -6,6 +6,8 @@ import type {
   Project,
   PutEditsResponse,
   PutJunctionBody,
+  ResearchProfile,
+  ScriptBundle,
   ScriptModel,
   Timeline,
 } from './types'
@@ -56,6 +58,41 @@ export function patchProject(
     method: 'PATCH',
     body: JSON.stringify(bossInfo),
   })
+}
+
+export function putResearch(
+  projectId: string,
+  research: ResearchProfile,
+): Promise<ResearchProfile> {
+  return request<ResearchProfile>(`/projects/${encodeURIComponent(projectId)}/research`, {
+    method: 'PUT',
+    body: JSON.stringify(research),
+  })
+}
+
+export function generateScriptBundle(
+  projectId: string,
+  research: ResearchProfile,
+  candidateCount = 3,
+): Promise<ScriptBundle> {
+  return request<ScriptBundle>(
+    `/projects/${encodeURIComponent(projectId)}/script-bundles/ai`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ research, candidate_count: candidateCount }),
+    },
+  )
+}
+
+export function selectScriptCandidate(
+  projectId: string,
+  bundleId: string,
+  scriptId: string,
+): Promise<ScriptModel> {
+  return request<ScriptModel>(
+    `/projects/${encodeURIComponent(projectId)}/script-bundles/${encodeURIComponent(bundleId)}/select/${encodeURIComponent(scriptId)}`,
+    { method: 'POST' },
+  )
 }
 
 export function generateTemplate(

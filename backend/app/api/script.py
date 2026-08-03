@@ -1,14 +1,34 @@
 """Script generation and editing API routes."""
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel, Field
 from fastapi.responses import JSONResponse
 
-from ..core.store import get_project, load_script, save_script, update_project
+from ..core.store import (
+    get_project,
+    load_script,
+    load_script_bundle,
+    save_research,
+    save_script,
+    save_script_bundle,
+    update_project,
+)
+from ..scriptgen.bundles import generate_script_bundle
+from ..scriptgen.ai import (
+    AIConfigurationError,
+    AIScriptError,
+    generate_ai_script_bundle,
+)
 from ..scriptgen.generators import get
-from ..scriptgen.models import BossInfo, ScriptModel
+from ..scriptgen.models import BossInfo, ResearchProfile, ScriptBundle, ScriptModel
 
 
 router = APIRouter(tags=["script"])
+
+
+class GenerateBundleRequest(BaseModel):
+    research: ResearchProfile
+    candidate_count: int = Field(default=3, ge=2, le=5)
 
 
 @router.post("/projects/{project_id}/script/template", response_model=ScriptModel)
@@ -39,3 +59,85 @@ def get_script_route(project_id: str) -> ScriptModel | JSONResponse:
 def put_script_route(project_id: str, body: ScriptModel) -> ScriptModel:
     save_script(project_id, body)
     return body
+
+
+@router.post(
+    "/projects/{project_id}/script-bundles/template",
+    response_model=ScriptBundle,
+)
+def generate_script_bundle_route(
+    project_id: str, body: GenerateBundleRequest
+) -> ScriptBundle:
+    get_project(project_id)
+    save_research(project_id, body.research)
+    bundle = generate_script_bundle(body.research, body.candidate_count)
+    return save_script_bundle(project_id, bundle)
+
+
+@router.post(
+    "/projects/{project_id}/script-bundles/ai",
+    response_model=ScriptBundle,
+    responses={
+        status.HTTP_502_BAD_GATEWAY: {"description": "AI 输出或服务异常"},
+        status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "AI 尚未配置"},
+    },
+)
+def generate_ai_script_bundle_route(
+    project_id: str, body: GenerateBundleRequest
+) -> ScriptBundle:
+    get_project(project_id)
+    save_research(project_id, body.research)
+    try:
+        bundle = generate_ai_script_bundle(body.research, body.candidate_count)
+    except AIConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"message": str(exc)}
+        ) from exc
+    except AIScriptError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"message": f"AI 脚本生成失败：{exc}"},
+        ) from exc
+    return save_script_bundle(project_id, bundle)
+
+
+@router.get(
+    "/projects/{project_id}/script-bundles/latest",
+    response_model=ScriptBundle,
+    responses={status.HTTP_404_NOT_FOUND: {"description": "脚本方案不存在"}},
+)
+def get_script_bundle_route(project_id: str) -> ScriptBundle:
+    bundle = load_script_bundle(project_id)
+    if bundle is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "该项目还没有多套脚本方案"},
+        )
+    return bundle
+
+
+@router.post(
+    "/projects/{project_id}/script-bundles/{bundle_id}/select/{script_id}",
+    response_model=ScriptModel,
+)
+def select_script_candidate_route(
+    project_id: str, bundle_id: str, script_id: str
+) -> ScriptModel:
+    bundle = load_script_bundle(project_id)
+    if bundle is None or bundle.id != bundle_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "脚本方案不存在或已过期"},
+        )
+    candidate = next(
+        (item for item in bundle.candidates if item.id == script_id), None
+    )
+    if candidate is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "候选脚本不存在"},
+        )
+    selected = bundle.model_copy(update={"selected_script_id": candidate.id})
+    save_script_bundle(project_id, selected)
+    save_script(project_id, candidate.script)
+    return candidate.script

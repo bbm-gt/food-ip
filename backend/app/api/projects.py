@@ -3,8 +3,15 @@
 from fastapi import APIRouter, status
 from pydantic import BaseModel
 
-from ..core.store import create_project, get_project, list_projects, update_project
-from ..scriptgen.models import BossInfo
+from ..core.store import (
+    create_project,
+    get_project,
+    list_projects,
+    load_research,
+    save_research,
+    update_project,
+)
+from ..scriptgen.models import BossInfo, ResearchProfile
 
 
 router = APIRouter(tags=["projects"])
@@ -35,3 +42,15 @@ def patch_project_route(project_id: str, body: BossInfo) -> dict:
     current = BossInfo.model_validate(project.get("boss_info") or {})
     updated = current.model_copy(update=body.model_dump(exclude_unset=True))
     return update_project(project_id, boss_info=updated.model_dump(mode="json"))
+
+
+@router.get("/projects/{project_id}/research", response_model=ResearchProfile)
+def get_research_route(project_id: str) -> ResearchProfile:
+    return load_research(project_id)
+
+
+@router.put("/projects/{project_id}/research", response_model=ResearchProfile)
+def put_research_route(
+    project_id: str, body: ResearchProfile
+) -> ResearchProfile:
+    return save_research(project_id, body)

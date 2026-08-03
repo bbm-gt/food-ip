@@ -4,11 +4,12 @@
 
 ## 产品流水线
 
-1. 脚本生成（独立可插拔模块）：模板生成（免费主路径）| Codex AI（可选增强）| 手工编辑 → 产出 `script.json`
-2. 老板按脚本拍摄 N 个镜头素材
-3. 素材自动拼接成一条视频（顺序 + 简单转场）
-4. 缝合处调节：每个接缝可减 0.x~2 秒无效片段（剪前段尾部 + 剪后段头部）+ 转场选择
-5. AI 润色（二期）：接口占位，不接真实模型
+1. 五步深度调研 → 产出结构化 `ResearchProfile`
+2. 规则引擎对五类内容策略评分 → 默认产出三套 `ScriptCandidate`
+3. 老板比较并选择方案，可手工修改 → 产出当前 `script.json`
+4. 老板按脚本拍摄 N 个镜头素材
+5. 素材自动拼接、接缝调节并导出成片
+6. AI 脚本增强与视频润色（二期）：接口占位，不接真实模型
 
 ## 目录结构
 
@@ -22,11 +23,11 @@ food-ip/
 │  │  ├─ config.py            # 读 .env：CODEX_BIN、PROJECTS_ROOT、CORS_ORIGINS；ffmpeg/ffprobe 定位
 │  │  ├─ api/                 # projects.py script.py materials.py edits.py render.py polish.py jobs.py
 │  │  ├─ core/                # store.py(项目=文件夹状态读写) project.py(ProjectState) jobs.py(内存job)
-│  │  ├─ scriptgen/           # generators/(template.py codex.py) codex_client.py prompts.py models.py validate.py
+│  │  ├─ scriptgen/           # models.py bundles.py generators/(template.py codex.py)
 │  │  ├─ engine/              # ffmpeg.py media.py timeline.py build.py junction.py export.py
 │  │  ├─ polish/              # contract.py registry.py providers/null.py
 │  │  └─ tests/
-│  └─ scripts/                # make_sample_shots.py e2e_smoke.py
+│  └─ scripts/                # make_sample_shots.py e2e_smoke.py sync_official_guidance.py
 ├─ frontend/                  # Vite + React + TS；dev proxy /api → http://127.0.0.1:8000
 ├─ docs/
 │  ├─ architecture.md
@@ -35,15 +36,18 @@ food-ip/
 │  ├─ deploy.md
 │  ├─ claude-codex-workflow.md
 │  └─ tasks/NN-*.md
-└─ runtime/projects/<id>/     # gitignore；project.json script.json shots/ work/ exports/ log/
+└─ runtime/projects/<id>/     # gitignore；project.json script_bundle.json script.json shots/ work/ exports/
 ```
 
 ## 核心设计要点
 
 ### 脚本生成（scriptgen/）
-- 已确认方案（2026-08-03）：**引导式问卷 + 模板生成**为主路径，免费可规模化；Codex AI 生成仅作可选增强；AI 对话共创 agent **暂不做**（可二期）。
-- `ScriptGenerator` 协议 + 注册表，一个生成器一个文件。
-- `template.py`（默认主路径）：**引导式问卷**收集老板信息（菜系/招牌菜/人设/风格/时长）→ 按菜系/内容类型的镜头模板库填充 → 即时返回脚本骨架，$0/单。
+- 已确认方案（2026-08-04）：**深度调研 + 规则评分 + DeepSeek 结构化生成 + 本地质检**为脚本主路径；模型名和接口地址通过环境变量替换。
+- `ResearchProfile` 分为门店、老板、顾客目标、拍摄条件；保存时投影出旧 `BossInfo`，兼容原单模板接口和旧项目。
+- `bundles.py` 对招牌菜、老板故事、后厨揭秘、顾客问题、经营纪实五种策略评分，避开不可出镜或不可拍后厨等条件，选择 2–5 个互不重复候选。
+- `ai.py` 调用 OpenAI 兼容的 Chat Completions JSON 输出，默认模型为 `deepseek-v4-flash`；输出经 Pydantic 与业务规则校验，失败时携带错误原因重试一次。
+- `ScriptBundle` 保存候选的适配分、理由、难度、场景与完整六镜头脚本；只有用户选择后才写入当前 `script.json`。
+- `template.py` 保留为旧版单脚本兼容入口。
 - `codex.py`（可选增强）：`codex exec --ephemeral -s read-only -o <out> -C <项目目录> "<prompt>"`，240s 超时+kill。（注意：`codex exec` 不接受 `--ask-for-approval`。）
 - 输出 schema（`script.json`）：
   ```json
@@ -82,8 +86,12 @@ food-ip/
 | GET | /api/health | 自检，含 ffmpeg/ffprobe 路径 |
 | POST/GET | /api/projects | 建/列项目 |
 | GET/PATCH | /api/projects/{id} | 项目状态 / 保存老板信息 |
-| POST | /api/projects/{id}/script/template | 模板即时生成脚本（免费主路径） |
-| POST | /api/projects/{id}/script/generate | AI 增强生成 → {job_id} |
+| GET/PUT | /api/projects/{id}/research | 读取/保存深度调研档案 |
+| POST | /api/projects/{id}/script-bundles/template | 规则评分生成多套脚本 |
+| POST | /api/projects/{id}/script-bundles/ai | 规则选题并由 AI 生成、校验多套脚本 |
+| GET | /api/projects/{id}/script-bundles/latest | 查看最近一次脚本方案 |
+| POST | /api/projects/{id}/script-bundles/{bundle}/select/{script} | 选择当前拍摄脚本 |
+| POST | /api/projects/{id}/script/template | 旧版单模板兼容入口 |
 | GET/PUT | /api/projects/{id}/script | 查看/手工编辑脚本 |
 | POST | /api/projects/{id}/materials | 上传素材(multipart+shot_index, ffprobe) |
 | DELETE/GET | /api/projects/{id}/materials/{shot_index} | 删/流式播放(Range) |

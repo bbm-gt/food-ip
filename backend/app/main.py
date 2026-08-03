@@ -14,6 +14,8 @@ from .api import (
 )
 from .api.render import jobs_router, render_router
 from .config import (
+    AI_SCRIPT_API_KEY,
+    AI_SCRIPT_MODEL,
     CODEX_BIN,
     CORS_ORIGINS,
     FFMPEG_PATH,
@@ -84,6 +86,8 @@ def health() -> dict[str, str | bool | None]:
         "ffprobe": FFPROBE_PATH,
         "codex_bin": CODEX_BIN,
         "projects_root": PROJECTS_ROOT,
+        "ai_script_configured": bool(AI_SCRIPT_API_KEY),
+        "ai_script_model": AI_SCRIPT_MODEL,
     }
 
 
