@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+imageio-ffmpeg
+pydantic
+python-multipart
+httpx
+pytest
