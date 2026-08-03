@@ -53,6 +53,9 @@ button { cursor: pointer; }
 .notice { padding: 12px 16px; border-radius: 10px; margin-bottom: 20px; }
 .notice.error { color: #8b2d20; background: #fbe3de; }
 .notice.success { color: #315f3b; background: #e3f1e6; }
+.loading-indicator { margin: -28px 0 22px; color: #746b61; font-size: 13px; }
+.loading-indicator::before { content: ""; width: 9px; height: 9px; margin-right: 8px; display: inline-block; border: 2px solid #e4b5a6; border-top-color: #df5b36; border-radius: 50%; vertical-align: -1px; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 .setup-layout { display: grid; grid-template-columns: 280px 1fr; gap: 54px; align-items: start; }
 .setup-intro { position: sticky; top: 124px; }
@@ -60,6 +63,8 @@ button { cursor: pointer; }
 .setup-intro ol { list-style: none; margin: 34px 0 0; padding: 0; border-left: 1px solid #d8d0c5; }
 .setup-intro li { padding: 10px 0 10px 22px; color: #92887c; }
 .setup-intro li.active { color: #df5b36; font-weight: 700; border-left: 3px solid #df5b36; margin-left: -2px; }
+.empty-hint { margin-top: 28px; padding: 16px; display: grid; gap: 6px; border-radius: 12px; color: #6f4b3d; background: #f8e8e1; }
+.empty-hint span { color: #806e64; font-size: 13px; line-height: 1.6; }
 .setup-form, .script-summary, .shot-card { border: 1px solid #ded8ce; border-radius: 18px; background: #fffdf9; }
 .setup-form { padding: 34px; }
 .form-section { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 24px; }
@@ -144,6 +149,7 @@ textarea { resize: vertical; line-height: 1.6; }
 .export-icon { width: 68px; height: 68px; margin: 0 auto 20px; display: grid; place-items: center; border-radius: 20px; color: white; background: #df5b36; font-size: 34px; }
 .export-card h2 { margin: 0 0 8px; font-size: 27px; }
 .export-card > p { margin: 0; color: #81786d; }
+.export-error { margin: 24px 0 0; text-align: left; }
 .progress-block { margin: 34px 0 26px; text-align: left; }
 .progress-label { margin-bottom: 9px; display: flex; justify-content: space-between; font-size: 13px; }
 .progress-track { height: 12px; overflow: hidden; border-radius: 999px; background: #eee8df; }

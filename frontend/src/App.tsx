@@ -385,8 +385,13 @@ export default function App() {
       </header>
 
       <main className="page">
-        {error && <div className="notice error">{error}</div>}
-        {message && <div className="notice success">{message}</div>}
+        {busy && (
+          <div className="loading-indicator" role="status" aria-live="polite">
+            正在处理，请稍候…
+          </div>
+        )}
+        {error && <div className="notice error" role="alert">{error}</div>}
+        {message && <div className="notice success" role="status">{message}</div>}
 
         {view === 'list' && (
           <section>
@@ -446,6 +451,12 @@ export default function App() {
                 <li>老板与顾客</li>
                 <li>视频表达</li>
               </ol>
+              {project && !script && (
+                <div className="empty-hint">
+                  <strong>这个项目还没有脚本</strong>
+                  <span>完成右侧问卷后即可生成第一版，生成结果可以继续手工修改。</span>
+                </div>
+              )}
             </aside>
             <form className="setup-form" onSubmit={(event) => void submitSetup(event)}>
               <div className="form-section">
@@ -632,8 +643,15 @@ export default function App() {
               </label>
             </div>
 
-            <div className="shot-list">
-              {script.shots.map((shot, index) => (
+            {script.shots.length === 0 ? (
+              <div className="empty-state compact">
+                <span>📝</span>
+                <h2>脚本里还没有镜头</h2>
+                <p>返回问卷重新生成，或补充镜头后再保存。</p>
+              </div>
+            ) : (
+              <div className="shot-list">
+                {script.shots.map((shot, index) => (
                 <article className="shot-card" key={shot.shot_index}>
                   <header>
                     <span className="shot-index">{String(shot.shot_index).padStart(2, '0')}</span>
@@ -673,8 +691,9 @@ export default function App() {
                     />
                   </label>
                 </article>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </section>
         )}
 
@@ -955,6 +974,12 @@ export default function App() {
               <div className="export-icon">↗</div>
               <h2>{exportJob?.status === 'done' ? '成片已就绪' : '准备生成最终视频'}</h2>
               <p>{exportJob?.message ?? `预计总时长 ${(timeline?.total_duration ?? 0).toFixed(2)} 秒`}</p>
+
+              {exportJob?.status === 'failed' && (
+                <div className="notice error export-error" role="alert">
+                  导出失败：{exportJob.message || '请检查素材后重试'}
+                </div>
+              )}
 
               {exportJob && (
                 <div className="progress-block">

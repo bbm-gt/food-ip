@@ -15,6 +15,7 @@ DEFAULT_CODEX_BIN = (
     r"\d7e8094cfb76a267\codex.exe"
 )
 DEFAULT_PROJECTS_ROOT = REPOSITORY_ROOT / "runtime" / "projects"
+DEFAULT_FRONTEND_DIST = REPOSITORY_ROOT / "frontend" / "dist"
 DEFAULT_CORS_ORIGINS = "http://localhost:5173"
 
 
@@ -47,6 +48,7 @@ _load_env_file(ENV_FILE)
 
 CODEX_BIN = os.environ.get("CODEX_BIN", DEFAULT_CODEX_BIN)
 PROJECTS_ROOT = os.environ.get("PROJECTS_ROOT", str(DEFAULT_PROJECTS_ROOT))
+FRONTEND_DIST = Path(os.environ.get("FRONTEND_DIST", str(DEFAULT_FRONTEND_DIST)))
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.environ.get("CORS_ORIGINS", DEFAULT_CORS_ORIGINS).split(",")

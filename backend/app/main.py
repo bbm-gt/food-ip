@@ -3,10 +3,24 @@
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
-from .api import edits_router, materials_router, projects_router, script_router
+from .api import (
+    edits_router,
+    materials_router,
+    polish_router,
+    projects_router,
+    script_router,
+)
 from .api.render import jobs_router, render_router
-from .config import CODEX_BIN, CORS_ORIGINS, FFMPEG_PATH, FFPROBE_PATH, PROJECTS_ROOT
+from .config import (
+    CODEX_BIN,
+    CORS_ORIGINS,
+    FFMPEG_PATH,
+    FFPROBE_PATH,
+    FRONTEND_DIST,
+    PROJECTS_ROOT,
+)
 from .core.store import InvalidProjectIdError, ProjectNotFoundError
 
 
@@ -24,6 +38,7 @@ app.include_router(materials_router, prefix="/api")
 app.include_router(edits_router, prefix="/api")
 app.include_router(render_router, prefix="/api")
 app.include_router(jobs_router, prefix="/api")
+app.include_router(polish_router, prefix="/api")
 
 
 @app.exception_handler(HTTPException)
@@ -61,11 +76,6 @@ def invalid_project_id_handler(
     )
 
 
-@app.get("/")
-def root() -> dict[str, str]:
-    return {"message": "food-ip API"}
-
-
 @app.get("/api/health")
 def health() -> dict[str, str | bool | None]:
     return {
@@ -75,3 +85,18 @@ def health() -> dict[str, str | bool | None]:
         "codex_bin": CODEX_BIN,
         "projects_root": PROJECTS_ROOT,
     }
+
+
+if (FRONTEND_DIST / "index.html").is_file():
+    assets_dir = FRONTEND_DIST / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
+else:
+
+    @app.get("/")
+    def root() -> dict[str, str]:
+        return {
+            "message": "前端未构建，请先运行 npm run build",
+            "docs": "/docs",
+        }
