@@ -1,0 +1,121 @@
+"""Filesystem-backed project state store."""
+
+from __future__ import annotations
+
+import json
+import re
+from datetime import UTC, datetime
+from pathlib import Path
+from uuid import uuid4
+
+from .. import config
+from ..scriptgen.models import ScriptModel
+
+
+PROJECT_ID_PATTERN = re.compile(r"[a-z0-9-]{8,}")
+
+
+class ProjectNotFoundError(LookupError):
+    def __init__(self, project_id: str) -> None:
+        self.project_id = project_id
+        super().__init__(f"项目不存在：{project_id}")
+
+
+class InvalidProjectIdError(ValueError):
+    def __init__(self, project_id: str) -> None:
+        self.project_id = project_id
+        super().__init__("项目 ID 格式不合法")
+
+
+def _root() -> Path:
+    return Path(config.PROJECTS_ROOT)
+
+
+def _project_dir(project_id: str) -> Path:
+    if PROJECT_ID_PATTERN.fullmatch(project_id) is None:
+        raise InvalidProjectIdError(project_id)
+    return _root() / project_id
+
+
+def _write_json(path: Path, payload: dict) -> None:
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _read_json(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _read_project(project_id: str) -> dict:
+    project_file = _project_dir(project_id) / "project.json"
+    if not project_file.is_file():
+        raise ProjectNotFoundError(project_id)
+    return _read_json(project_file)
+
+
+def _script_payload(project_id: str) -> dict | None:
+    script_file = _project_dir(project_id) / "script.json"
+    if not script_file.is_file():
+        return None
+    return ScriptModel.model_validate(_read_json(script_file)).model_dump(mode="json")
+
+
+def create_project(name: str) -> dict:
+    root = _root()
+    root.mkdir(parents=True, exist_ok=True)
+    project_id = uuid4().hex[:12]
+    project_dir = _project_dir(project_id)
+    project_dir.mkdir()
+    project = {
+        "id": project_id,
+        "name": name,
+        "boss_info": {},
+        "script": None,
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    _write_json(project_dir / "project.json", project)
+    return project
+
+
+def list_projects() -> list[dict]:
+    root = _root()
+    if not root.is_dir():
+        return []
+    projects: list[dict] = []
+    for project_file in root.glob("*/project.json"):
+        project_id = project_file.parent.name
+        if PROJECT_ID_PATTERN.fullmatch(project_id) is None:
+            continue
+        project = _read_json(project_file)
+        project["script"] = _script_payload(project_id)
+        projects.append(project)
+    return sorted(projects, key=lambda item: item.get("created_at", ""), reverse=True)
+
+
+def get_project(project_id: str) -> dict:
+    project = _read_project(project_id)
+    project["script"] = _script_payload(project_id)
+    return project
+
+
+def update_project(project_id: str, **patch: object) -> dict:
+    project = get_project(project_id)
+    project.update(patch)
+    _write_json(_project_dir(project_id) / "project.json", project)
+    return project
+
+
+def save_script(project_id: str, script: ScriptModel) -> None:
+    project = get_project(project_id)
+    payload = script.model_dump(mode="json")
+    _write_json(_project_dir(project_id) / "script.json", payload)
+    project["script"] = payload
+    _write_json(_project_dir(project_id) / "project.json", project)
+
+
+def load_script(project_id: str) -> ScriptModel | None:
+    _read_project(project_id)
+    payload = _script_payload(project_id)
+    return ScriptModel.model_validate(payload) if payload is not None else None
