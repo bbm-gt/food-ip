@@ -86,3 +86,22 @@ export interface PutEditsResponse {
   edits: Edits
   timeline: Timeline
 }
+
+export interface PutJunctionBody {
+  trim_tail: number
+  trim_head: number
+  transition: Transition
+  fade_seconds: number
+}
+
+export type ExportJobStatus = 'pending' | 'running' | 'done' | 'failed'
+
+export interface ExportJob {
+  status: ExportJobStatus
+  progress: number
+  message: string
+  result: {
+    output: string
+    total_duration: number
+  } | null
+}

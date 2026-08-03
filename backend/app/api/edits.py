@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
+from .. import config
 from ..core import store
 from ..engine.timeline import compute_timeline, normalize_edits
 
@@ -27,6 +29,13 @@ class JunctionEdit(BaseModel):
 class EditsPayload(BaseModel):
     shots: list[ShotEdit] = Field(default_factory=list)
     junctions: list[JunctionEdit] = Field(default_factory=list)
+
+
+class JunctionPayload(BaseModel):
+    trim_tail: float
+    trim_head: float
+    transition: Literal["hard", "fade", "crossfade"]
+    fade_seconds: float
 
 
 def _default_edits(material_count: int) -> dict:
@@ -65,8 +74,50 @@ def put_edits_route(project_id: str, body: EditsPayload) -> dict:
     }
 
 
+@router.put("/projects/{project_id}/junctions/{junction_index}")
+def put_junction_route(
+    project_id: str, junction_index: int, body: JunctionPayload
+) -> dict:
+    materials = store.list_materials(project_id)
+    if junction_index < 0 or junction_index >= max(0, len(materials) - 1):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": "接缝序号超出范围"},
+        )
+    left = materials[junction_index]
+    right = materials[junction_index + 1]
+    if (
+        left.get("shot_index") != junction_index
+        or right.get("shot_index") != junction_index + 1
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"message": "接缝相邻素材缺失，请先补齐镜头"},
+        )
+
+    requested = _effective_edits(project_id, materials)
+    requested["shots"][junction_index]["trim_tail"] = body.trim_tail
+    requested["shots"][junction_index + 1]["trim_head"] = body.trim_head
+    requested["junctions"][junction_index] = {
+        "transition": body.transition,
+        "fade_seconds": body.fade_seconds,
+    }
+    effective = normalize_edits(materials, requested)
+    store.save_edits(project_id, effective)
+    preview = (
+        Path(config.PROJECTS_ROOT)
+        / project_id
+        / "work"
+        / f"preview_j{junction_index}.mp4"
+    )
+    preview.unlink(missing_ok=True)
+    return {
+        "edits": effective,
+        "timeline": compute_timeline(materials, effective),
+    }
+
+
 @router.get("/projects/{project_id}/timeline")
 def get_timeline_route(project_id: str) -> dict:
     materials = store.list_materials(project_id)
     return compute_timeline(materials, _effective_edits(project_id, materials))
-

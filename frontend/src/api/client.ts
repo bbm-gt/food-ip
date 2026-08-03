@@ -1,9 +1,11 @@
 import type {
   BossInfo,
   Edits,
+  ExportJob,
   Material,
   Project,
   PutEditsResponse,
+  PutJunctionBody,
   ScriptModel,
   Timeline,
 } from './types'
@@ -118,4 +120,45 @@ export function putEdits(projectId: string, edits: Edits): Promise<PutEditsRespo
 
 export function getTimeline(projectId: string): Promise<Timeline> {
   return request<Timeline>(`/projects/${encodeURIComponent(projectId)}/timeline`)
+}
+
+export function putJunction(
+  projectId: string,
+  junctionIndex: number,
+  body: PutJunctionBody,
+): Promise<PutEditsResponse> {
+  return request<PutEditsResponse>(
+    `/projects/${encodeURIComponent(projectId)}/junctions/${junctionIndex}`,
+    { method: 'PUT', body: JSON.stringify(body) },
+  )
+}
+
+export function previewJunctionUrl(
+  projectId: string,
+  junctionIndex: number,
+  before = 1.5,
+  after = 1.5,
+  width = 360,
+): string {
+  const query = new URLSearchParams({
+    before: String(before),
+    after: String(after),
+    w: String(width),
+  })
+  return `${API_BASE}/projects/${encodeURIComponent(projectId)}/preview/junction/${junctionIndex}?${query}`
+}
+
+export function startExport(projectId: string): Promise<{ job_id: string }> {
+  return request<{ job_id: string }>(
+    `/projects/${encodeURIComponent(projectId)}/render/export`,
+    { method: 'POST' },
+  )
+}
+
+export function getJob(jobId: string): Promise<ExportJob> {
+  return request<ExportJob>(`/jobs/${encodeURIComponent(jobId)}`)
+}
+
+export function exportUrl(projectId: string): string {
+  return `${API_BASE}/projects/${encodeURIComponent(projectId)}/exports/final.mp4`
 }

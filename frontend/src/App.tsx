@@ -1,23 +1,39 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 
 import {
   createProject,
   deleteMaterial,
+  exportUrl,
   generateTemplate,
+  getEdits,
+  getJob,
   getProject,
   getProjects,
   getThumbnailUrl,
   getTimeline,
   listMaterials,
   patchProject,
+  previewJunctionUrl,
+  putJunction,
   putScript,
+  startExport,
   uploadMaterial,
 } from './api/client'
-import type { BossInfo, Material, Project, ScriptModel, Shot, Timeline } from './api/types'
+import type {
+  BossInfo,
+  Edits,
+  ExportJob,
+  JunctionEdit,
+  Material,
+  Project,
+  ScriptModel,
+  Shot,
+  Timeline,
+} from './api/types'
 import './app.css'
 
-type View = 'list' | 'setup' | 'script' | 'materials'
+type View = 'list' | 'setup' | 'script' | 'materials' | 'edit' | 'export'
 
 const EMPTY_FORM: BossInfo = {
   restaurant_name: '',
@@ -46,10 +62,17 @@ export default function App() {
   const [dishText, setDishText] = useState('')
   const [script, setScript] = useState<ScriptModel | null>(null)
   const [materials, setMaterials] = useState<Material[]>([])
+  const [edits, setEdits] = useState<Edits | null>(null)
   const [timeline, setTimeline] = useState<Timeline | null>(null)
+  const [selectedJunction, setSelectedJunction] = useState(0)
+  const [previewVersion, setPreviewVersion] = useState(Date.now())
+  const [junctionBusy, setJunctionBusy] = useState(false)
+  const [exportJobId, setExportJobId] = useState<string | null>(null)
+  const [exportJob, setExportJob] = useState<ExportJob | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const previewTimer = useRef<number | null>(null)
 
   async function loadProjects() {
     setBusy(true)
@@ -67,11 +90,44 @@ export default function App() {
     void loadProjects()
   }, [])
 
+  useEffect(() => {
+    return () => {
+      if (previewTimer.current !== null) window.clearTimeout(previewTimer.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!exportJobId || exportJob?.status === 'done' || exportJob?.status === 'failed') {
+      return undefined
+    }
+    let cancelled = false
+    async function pollJob() {
+      try {
+        const job = await getJob(exportJobId as string)
+        if (!cancelled) setExportJob(job)
+      } catch (reason) {
+        if (!cancelled) {
+          setError(reason instanceof Error ? reason.message : '导出进度查询失败')
+        }
+      }
+    }
+    void pollJob()
+    const timer = window.setInterval(() => void pollJob(), 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [exportJobId, exportJob?.status])
+
   function startNewProject() {
     setProject(null)
     setForm(EMPTY_FORM)
     setDishText('')
     setScript(null)
+    setEdits(null)
+    setTimeline(null)
+    setExportJobId(null)
+    setExportJob(null)
     setMessage('')
     setError('')
     setView('setup')
@@ -159,6 +215,90 @@ export default function App() {
       await loadMaterials(project.id)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '素材加载失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function openEdit() {
+    if (!project) return
+    setBusy(true)
+    setError('')
+    setMessage('')
+    try {
+      const [loadedMaterials, loadedEdits, loadedTimeline] = await Promise.all([
+        listMaterials(project.id),
+        getEdits(project.id),
+        getTimeline(project.id),
+      ])
+      setMaterials(loadedMaterials)
+      setEdits(loadedEdits)
+      setTimeline(loadedTimeline)
+      setSelectedJunction(Math.min(selectedJunction, Math.max(0, loadedEdits.junctions.length - 1)))
+      setPreviewVersion(Date.now())
+      setView('edit')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '接缝编辑加载失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function schedulePreviewRefresh() {
+    if (previewTimer.current !== null) window.clearTimeout(previewTimer.current)
+    previewTimer.current = window.setTimeout(() => {
+      setPreviewVersion(Date.now())
+      previewTimer.current = null
+    }, 400)
+  }
+
+  async function saveJunction(
+    shotPatch: { trimTail?: number; trimHead?: number },
+    junctionPatch: Partial<JunctionEdit> = {},
+  ) {
+    if (!project || !edits) return
+    const left = edits.shots[selectedJunction]
+    const right = edits.shots[selectedJunction + 1]
+    const junction = edits.junctions[selectedJunction]
+    if (!left || !right || !junction) return
+    const currentTransition = junction.transition === 'hard' ? 'hard' : 'fade'
+    setJunctionBusy(true)
+    setError('')
+    try {
+      const response = await putJunction(project.id, selectedJunction, {
+        trim_tail: shotPatch.trimTail ?? left.trim_tail,
+        trim_head: shotPatch.trimHead ?? right.trim_head,
+        transition: junctionPatch.transition ?? currentTransition,
+        fade_seconds: junctionPatch.fade_seconds ?? junction.fade_seconds,
+      })
+      setEdits(response.edits)
+      setTimeline(response.timeline)
+      schedulePreviewRefresh()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '接缝更新失败')
+    } finally {
+      setJunctionBusy(false)
+    }
+  }
+
+  function openExport() {
+    setError('')
+    setMessage('')
+    setView('export')
+  }
+
+  async function beginExport() {
+    if (!project) return
+    setBusy(true)
+    setError('')
+    setMessage('')
+    setExportJob(null)
+    try {
+      const result = await startExport(project.id)
+      setExportJobId(result.job_id)
+      setExportJob({ status: 'pending', progress: 0, message: '等待导出', result: null })
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '导出启动失败')
     } finally {
       setBusy(false)
     }
@@ -552,6 +692,11 @@ export default function App() {
                     返回脚本
                   </button>
                 )}
+                {materials.length >= 2 && (
+                  <button className="primary-button" type="button" onClick={() => void openEdit()}>
+                    继续缝合 →
+                  </button>
+                )}
                 <label className={`upload-button ${busy ? 'disabled' : ''}`}>
                   {busy ? '处理中…' : '＋ 上传视频'}
                   <input
@@ -628,6 +773,216 @@ export default function App() {
                 ))}
               </div>
             )}
+          </section>
+        )}
+
+        {view === 'edit' && project && edits && timeline && (
+          <section className="edit-page">
+            <div className="script-toolbar">
+              <div>
+                <p className="eyebrow">JUNCTION EDITOR</p>
+                <h1>调好每一道接缝</h1>
+                <p>点选片段间的接缝，微调前后裁剪和转场。</p>
+              </div>
+              <div className="toolbar-actions">
+                <button className="ghost-button" type="button" onClick={() => setView('materials')}>
+                  返回素材
+                </button>
+                <button className="primary-button" type="button" onClick={openExport}>
+                  继续导出 →
+                </button>
+              </div>
+            </div>
+
+            <div className="timeline-panel edit-timeline">
+              <div className="timeline-heading">
+                <div>
+                  <strong>接缝时间轴</strong>
+                  <small>片段宽度严格按后端 used_duration 比例显示</small>
+                </div>
+                <span>{timeline.total_duration.toFixed(2)} 秒</span>
+              </div>
+              <div className="timeline-track junction-track">
+                {timeline.segments.map((segment, index) => (
+                  <div className="timeline-piece" key={segment.shot_index}>
+                    <div
+                      className="timeline-segment"
+                      style={{ flexGrow: segment.used_duration }}
+                      title={`镜头 ${segment.shot_index}：${segment.used_duration.toFixed(2)} 秒`}
+                    >
+                      <span>{segment.shot_index}</span>
+                      <small>{segment.used_duration.toFixed(1)}s</small>
+                    </div>
+                    {index < timeline.segments.length - 1 && (
+                      <button
+                        className={`junction-button ${selectedJunction === index ? 'selected' : ''}`}
+                        type="button"
+                        aria-label={`编辑接缝 ${index}`}
+                        onClick={() => {
+                          setSelectedJunction(index)
+                          setPreviewVersion(Date.now())
+                        }}
+                      >
+                        ✦
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {edits.junctions[selectedJunction] && (
+              <div className="junction-panel">
+                <div className="preview-player">
+                  <video
+                    key={`${selectedJunction}-${previewVersion}`}
+                    controls
+                    playsInline
+                    src={`${previewJunctionUrl(project.id, selectedJunction, 1.5, 1.5)}&t=${previewVersion}`}
+                  />
+                  <small>接缝 {selectedJunction + 1} · 前后各预览最多 1.5 秒</small>
+                </div>
+
+                <div className="junction-controls">
+                  <div className="trim-control">
+                    <span>剪前段尾部</span>
+                    <strong>{edits.shots[selectedJunction].trim_tail.toFixed(2)}s</strong>
+                    <div className="step-buttons">
+                      {[-0.2, -0.1, 0.1, 0.2].map((delta) => (
+                        <button
+                          type="button"
+                          disabled={junctionBusy}
+                          key={delta}
+                          onClick={() =>
+                            void saveJunction({
+                              trimTail: edits.shots[selectedJunction].trim_tail + delta,
+                            })
+                          }
+                        >
+                          {delta > 0 ? '+' : '−'}{Math.abs(delta).toFixed(1)}s
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="trim-control">
+                    <span>剪后段头部</span>
+                    <strong>{edits.shots[selectedJunction + 1].trim_head.toFixed(2)}s</strong>
+                    <div className="step-buttons">
+                      {[-0.2, -0.1, 0.1, 0.2].map((delta) => (
+                        <button
+                          type="button"
+                          disabled={junctionBusy}
+                          key={delta}
+                          onClick={() =>
+                            void saveJunction({
+                              trimHead: edits.shots[selectedJunction + 1].trim_head + delta,
+                            })
+                          }
+                        >
+                          {delta > 0 ? '+' : '−'}{Math.abs(delta).toFixed(1)}s
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="transition-control">
+                    <label>
+                      转场
+                      <select
+                        disabled={junctionBusy}
+                        value={edits.junctions[selectedJunction].transition === 'hard' ? 'hard' : 'fade'}
+                        onChange={(event) =>
+                          void saveJunction({}, { transition: event.target.value as 'hard' | 'fade' })
+                        }
+                      >
+                        <option value="hard">硬切</option>
+                        <option value="fade">淡入淡出</option>
+                      </select>
+                    </label>
+                    <div className="fade-stepper">
+                      <span>Fade 时长</span>
+                      <button
+                        type="button"
+                        disabled={junctionBusy || edits.junctions[selectedJunction].transition === 'hard'}
+                        onClick={() =>
+                          void saveJunction({}, {
+                            fade_seconds: edits.junctions[selectedJunction].fade_seconds - 0.1,
+                          })
+                        }
+                      >
+                        −0.1s
+                      </button>
+                      <strong>{edits.junctions[selectedJunction].fade_seconds.toFixed(2)}s</strong>
+                      <button
+                        type="button"
+                        disabled={junctionBusy || edits.junctions[selectedJunction].transition === 'hard'}
+                        onClick={() =>
+                          void saveJunction({}, {
+                            fade_seconds: edits.junctions[selectedJunction].fade_seconds + 0.1,
+                          })
+                        }
+                      >
+                        +0.1s
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <footer className="junction-summary">
+                  <span>{junctionBusy ? '正在保存并刷新预览…' : '所有数值由服务端自动钳制'}</span>
+                  <strong>预计总时长：{timeline.total_duration.toFixed(2)} 秒</strong>
+                </footer>
+              </div>
+            )}
+          </section>
+        )}
+
+        {view === 'export' && project && (
+          <section className="export-page">
+            <div className="script-toolbar">
+              <div>
+                <p className="eyebrow">FINAL EXPORT</p>
+                <h1>导出竖屏成片</h1>
+                <p>1080×1920 · 30 fps · H.264 + AAC</p>
+              </div>
+              <button className="ghost-button" type="button" onClick={() => setView('edit')}>
+                返回接缝编辑
+              </button>
+            </div>
+
+            <div className="export-card">
+              <div className="export-icon">↗</div>
+              <h2>{exportJob?.status === 'done' ? '成片已就绪' : '准备生成最终视频'}</h2>
+              <p>{exportJob?.message ?? `预计总时长 ${(timeline?.total_duration ?? 0).toFixed(2)} 秒`}</p>
+
+              {exportJob && (
+                <div className="progress-block">
+                  <div className="progress-label">
+                    <span>渲染进度</span>
+                    <strong>{Math.round(exportJob.progress)}%</strong>
+                  </div>
+                  <div className="progress-track" role="progressbar" aria-valuenow={exportJob.progress}>
+                    <div style={{ width: `${Math.min(100, Math.max(0, exportJob.progress))}%` }} />
+                  </div>
+                </div>
+              )}
+
+              {exportJob?.status === 'done' ? (
+                <a className="download-button" href={exportUrl(project.id)} download="final.mp4">
+                  下载 final.mp4
+                </a>
+              ) : (
+                <button
+                  className="primary-button export-button"
+                  type="button"
+                  disabled={busy || exportJob?.status === 'pending' || exportJob?.status === 'running'}
+                  onClick={() => void beginExport()}
+                >
+                  {exportJob?.status === 'failed' ? '重新导出' : '导出成片'}
+                </button>
+              )}
+            </div>
           </section>
         )}
       </main>
