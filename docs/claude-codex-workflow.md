@@ -4,10 +4,12 @@
 
 ## 委托命令速查
 
-Codex CLI 路径（已登录）：
+Codex CLI 应加入 `PATH`，命令直接使用：
 ```
-C:\Users\HP\AppData\Local\OpenAI\Codex\bin\d7e8094cfb76a267\codex.exe
+codex
 ```
+
+如果本机未加入 `PATH`，可在仓库 `.env` 中通过 `CODEX_BIN` 配置绝对路径；不要把用户目录或版本哈希写入代码和共享文档。
 
 ### 只读任务（调研 / 评审，无副作用）
 ```

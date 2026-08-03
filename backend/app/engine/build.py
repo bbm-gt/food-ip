@@ -24,9 +24,7 @@ def _number(value: float | int) -> str:
 
 
 def _transition_is_fade(value: object) -> bool:
-    # Crossfade is a second-phase feature. Existing values receive the same
-    # visual fade treatment without introducing an overlapping concat.
-    return value in {"fade", "crossfade"}
+    return value == "fade"
 
 
 def build_filter_complex(
@@ -49,6 +47,7 @@ def build_filter_complex(
         video_filters = [
             f"trim=start={_number(trim_head)}:end={_number(source_duration - trim_tail)}",
             "setpts=PTS-STARTPTS",
+            "settb=AVTB",
             "scale=1080:1920:force_original_aspect_ratio=decrease",
             "pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
             "fps=30",
@@ -75,11 +74,45 @@ def build_filter_complex(
         ]
         chains.append(f"[{index}:a]{','.join(audio_filters)}[a{index}]")
 
-    # concat expects the streams grouped by segment: video, audio, video, audio.
-    concat_inputs = "".join(f"[v{i}][a{i}]" for i in range(len(segments)))
-    chains.append(
-        f"{concat_inputs}concat=n={len(segments)}:v=1:a=1[vout][aout]"
-    )
+    if len(segments) == 1:
+        chains.extend(("[v0]null[vout]", "[a0]anull[aout]"))
+        return ";".join(chains)
+
+    current_video = "v0"
+    current_audio = "a0"
+    cumulative_overlap = 0.0
+    cumulative_duration = float(segments[0]["used_duration"])
+    for index, junction in enumerate(junctions):
+        transition = junction.get("transition")
+        fade_seconds = float(junction.get("fade_seconds", 0.0))
+        is_last = index == len(junctions) - 1
+        output_video = "vout" if is_last else f"vjoin{index}"
+        output_audio = "aout" if is_last else f"ajoin{index}"
+        next_video = f"v{index + 1}"
+        next_audio = f"a{index + 1}"
+
+        if transition == "crossfade" and fade_seconds > 0:
+            cumulative_overlap += fade_seconds
+            offset = cumulative_duration - cumulative_overlap
+            chains.append(
+                f"[{current_video}][{next_video}]"
+                f"xfade=transition=fade:duration={_number(fade_seconds)}:"
+                f"offset={_number(offset)}[{output_video}]"
+            )
+            chains.append(
+                f"[{current_audio}][{next_audio}]"
+                f"acrossfade=d={_number(fade_seconds)}:c1=tri:c2=tri[{output_audio}]"
+            )
+        else:
+            chains.append(
+                f"[{current_video}][{current_audio}]"
+                f"[{next_video}][{next_audio}]"
+                f"concat=n=2:v=1:a=1[{output_video}][{output_audio}]"
+            )
+
+        cumulative_duration += float(segments[index + 1]["used_duration"])
+        current_video = output_video
+        current_audio = output_audio
     return ";".join(chains)
 
 

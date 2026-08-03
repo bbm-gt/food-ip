@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 import imageio_ffmpeg
@@ -10,10 +11,7 @@ import imageio_ffmpeg
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = REPOSITORY_ROOT / ".env"
-DEFAULT_CODEX_BIN = (
-    r"C:\Users\HP\AppData\Local\OpenAI\Codex\bin"
-    r"\d7e8094cfb76a267\codex.exe"
-)
+DEFAULT_CODEX_BIN = shutil.which("codex") or "codex"
 DEFAULT_PROJECTS_ROOT = REPOSITORY_ROOT / "runtime" / "projects"
 DEFAULT_FRONTEND_DIST = REPOSITORY_ROOT / "frontend" / "dist"
 DEFAULT_CORS_ORIGINS = "http://localhost:5173"
@@ -44,11 +42,16 @@ def _probe_binary(probe: str) -> str | None:
         return None
 
 
+def _path_setting(name: str, default: Path) -> Path:
+    value = Path(os.environ.get(name, str(default))).expanduser()
+    return value if value.is_absolute() else REPOSITORY_ROOT / value
+
+
 _load_env_file(ENV_FILE)
 
 CODEX_BIN = os.environ.get("CODEX_BIN", DEFAULT_CODEX_BIN)
-PROJECTS_ROOT = os.environ.get("PROJECTS_ROOT", str(DEFAULT_PROJECTS_ROOT))
-FRONTEND_DIST = Path(os.environ.get("FRONTEND_DIST", str(DEFAULT_FRONTEND_DIST)))
+PROJECTS_ROOT = str(_path_setting("PROJECTS_ROOT", DEFAULT_PROJECTS_ROOT))
+FRONTEND_DIST = _path_setting("FRONTEND_DIST", DEFAULT_FRONTEND_DIST)
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.environ.get("CORS_ORIGINS", DEFAULT_CORS_ORIGINS).split(",")

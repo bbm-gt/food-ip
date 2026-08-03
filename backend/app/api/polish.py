@@ -35,9 +35,12 @@ async def polish_junction_route(
         )
     left = materials[junction_index]
     right = materials[junction_index + 1]
+    left_shot_index = left.get("shot_index")
+    right_shot_index = right.get("shot_index")
     if (
-        left.get("shot_index") != junction_index
-        or right.get("shot_index") != junction_index + 1
+        not isinstance(left_shot_index, int)
+        or not isinstance(right_shot_index, int)
+        or right_shot_index != left_shot_index + 1
     ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

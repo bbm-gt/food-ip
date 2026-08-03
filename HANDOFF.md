@@ -27,13 +27,13 @@
 | P1 | 脚本生成（问卷+模板，6镜头） | ✅ | pytest + 真实 HTTP 冒烟 |
 | P2 | 素材上传 + timeline 权威时长 | ✅ | 24 tests |
 | P3 | 拼接 + 缝合调节 + 导出 | ✅ | 29 tests，**成片时长 = timeline 零误差** |
-| P4 | 润色占位 + 静态托管 + 文档 | ✅ | **34 tests 全绿** |
+| P4 + 后续维护 | 润色占位、静态托管、编号修复、真实 crossfade、前端拆分 | ✅ | **37 tests 全绿** |
 
 **端到端可用**：`uvicorn` 单进程托管前端 + 后端；`POST /polish/junctions/{j}` 返回 `not_configured`。
 
 ## 3. 技术栈
 
-- **后端**：Python 3.12.13（venv 在 `backend/.venv`）+ FastAPI + uvicorn + Pydantic；`imageio-ffmpeg` 内置静态 ffmpeg（系统无独立 ffmpeg/ffprobe）。
+- **后端**：Python 3.10+（当前 venv 为 3.12.13，位于 `backend/.venv`）+ FastAPI + uvicorn + Pydantic；`imageio-ffmpeg` 内置静态 ffmpeg（缺少 ffprobe 时自动回退探测）。
 - **前端**：Vite + React 19 + TypeScript（`frontend/`），dev proxy `/api → 127.0.0.1:8000`。
 - **脚本生成**：纯规则模板（确定性，零 LLM）。Codex AI 生成器为占位（raise NotImplementedError）。
 - **剪辑引擎**：`engine/`，ffmpeg 后端渲染。
@@ -52,9 +52,9 @@ food-ip/
 │  │  ├─ scriptgen/  models.py generators/(template.py codex.py)
 │  │  ├─ engine/   timeline.py media.py build.py junction.py export.py
 │  │  ├─ polish/   contract.py registry.py providers/null.py
-│  │  └─ tests/   （34 个测试）
+│  │  └─ tests/   （37 个测试）
 │  └─ scripts/  make_sample_shots.py e2e_smoke.py
-├─ frontend/  src/App.tsx（项目列表/问卷/脚本/素材/时间轴/导出全在单文件路由）
+├─ frontend/  src/App.tsx（状态与流程编排）+ src/views/（项目、问卷、脚本、素材、接缝、导出视图）
 ├─ docs/
 │  ├─ architecture.md  api.md  deploy.md  polish-interface.md  questionnaire-design.md
 │  ├─ claude-codex-workflow.md（委托协议 + 防幻觉）
@@ -79,7 +79,7 @@ food-ip/
   - **`codex exec` 不接受 `--ask-for-approval`**（顶层参数，传了报错）。
   - **Codex 沙箱阻断子进程外网**：pip/npm install 必须在沙箱外（由总指挥配国内镜像执行）。
   - 防幻觉：拆小任务 + 证据验收（真实 pytest 输出）+ 总指挥独立复验 + ≤3 轮迭代。
-- Codex CLI：`C:\Users\HP\AppData\Local\OpenAI\Codex\bin\d7e8094cfb76a267\codex.exe`，默认模型 `gpt-5.6-sol`（高推理）。认证在 `~\.codex\auth.json`。
+- Codex CLI：默认使用 `PATH` 中的 `codex`；如未加入 `PATH`，通过 `.env` 的 `CODEX_BIN` 配置绝对路径。认证由本机 Codex 安装管理。
 
 ## 7. 运行与测试
 
@@ -106,16 +106,15 @@ backend\.venv\Scripts\python.exe backend\scripts\e2e_smoke.py
 2. **Python 3.12.13 而非 3.10**：机器原装 3.10 是裁剪版（缺 venv），用 codex-runtimes 缓存解释器建 venv。兼容性已验证。
 3. **Codex 沙箱断网**：依赖安装必须由总指挥在沙箱外执行（pip 清华镜像 / npm npmmirror）。
 4. **本机系统代理**：Python httpx 默认 `trust_env=True` 会走系统代理导致 localhost 502，测试脚本必须 `trust_env=False`（`e2e_smoke.py` 已修）。**curl 在 Git Bash 传中文 JSON body 会编码损坏**，调试用 python httpx。
-5. **crossfade 未渲染**：UI 只提供硬切/淡入淡出；若 edits 里出现 crossfade，build 按 fade 视觉处理并以 `timeline.total` 封顶。二期再做交叠渲染。
-6. **前端单文件 App.tsx**（~800 行，状态路由）：MVP 可接受，v2 建议拆组件/引入 router。
+5. **crossfade 已渲染**：主渲染和接缝预览均使用 `xfade + acrossfade`，时长与 `timeline.total_duration` 一致。
+6. **前端仍使用轻量状态路由**：视图已从 `App.tsx` 拆到 `src/views/`；后续页面继续增长时可引入正式 router。
 
 ## 9. v2 路线图（未实现，按优先级）
 
 1. **引导问卷升级**：`docs/questionnaire-design.md` 的 4 步引导（需给 `BossInfo` 加 `usp/story/cta_goal` 3 字段）。
 2. **AI 对话共创 agent**：老板与 AI 聊天打磨脚本（需 LLM 接入 + 流式，成本/规模化权衡已记录）。
-3. **crossfade 交叠渲染**（P3 已留接口）。
-4. 正式 ffmpeg/ffprobe 安装（winget 或静态包）。
-5. 手机端 / 云端部署（`docs/deploy.md` 有思路：后端搬云 + 前端适配）。
+3. 正式 ffmpeg/ffprobe 安装（winget 或静态包）。
+4. 手机端 / 云端部署（`docs/deploy.md` 有思路：后端搬云 + 前端适配）。
 
 ## 10. Git 历史
 

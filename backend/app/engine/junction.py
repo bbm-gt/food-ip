@@ -52,22 +52,28 @@ def render_junction_preview(
     right_start = float(right_segment["trim_head"])
     right_end = right_start + right_duration
     junction = junctions[junction_index]
-    is_fade = junction["transition"] in {"fade", "crossfade"}
+    is_fade = junction["transition"] == "fade"
+    is_crossfade = junction["transition"] == "crossfade"
     fade_seconds = min(
         float(junction["fade_seconds"]), left_duration, right_duration
     )
 
+    preview_height = max(2, int(round(width * 16 / 9)) // 2 * 2)
     left_video = [
         f"trim=start={_number(left_start)}:end={_number(left_end)}",
         "setpts=PTS-STARTPTS",
-        f"scale={width}:-2",
+        "settb=AVTB",
+        f"scale={width}:{preview_height}:force_original_aspect_ratio=decrease",
+        f"pad={width}:{preview_height}:(ow-iw)/2:(oh-ih)/2",
         "fps=10",
         "format=yuv420p",
     ]
     right_video = [
         f"trim=start={_number(right_start)}:end={_number(right_end)}",
         "setpts=PTS-STARTPTS",
-        f"scale={width}:-2",
+        "settb=AVTB",
+        f"scale={width}:{preview_height}:force_original_aspect_ratio=decrease",
+        f"pad={width}:{preview_height}:(ow-iw)/2:(oh-ih)/2",
         "fps=10",
         "format=yuv420p",
     ]
@@ -93,8 +99,18 @@ def render_junction_preview(
             f"apad=whole_dur={_number(right_duration)},"
             "aformat=sample_rates=44100:channel_layouts=stereo[a1]"
         ),
-        "[v0][a0][v1][a1]concat=n=2:v=1:a=1[vout][aout]",
     ]
+    if is_crossfade and fade_seconds > 0:
+        chains.extend(
+            (
+                f"[v0][v1]xfade=transition=fade:duration={_number(fade_seconds)}:"
+                f"offset={_number(left_duration - fade_seconds)}[vout]",
+                f"[a0][a1]acrossfade=d={_number(fade_seconds)}:"
+                "c1=tri:c2=tri[aout]",
+            )
+        )
+    else:
+        chains.append("[v0][a0][v1][a1]concat=n=2:v=1:a=1[vout][aout]")
     output.parent.mkdir(parents=True, exist_ok=True)
     run_ffmpeg(
         [

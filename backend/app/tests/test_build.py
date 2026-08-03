@@ -11,6 +11,7 @@ from ..engine.timeline import compute_timeline, normalize_edits
 
 
 def _filter_timeline(transition: str) -> dict:
+    is_crossfade = transition == "crossfade"
     return {
         "segments": [
             {
@@ -28,8 +29,8 @@ def _filter_timeline(transition: str) -> dict:
                 "trim_head": 0.4,
                 "trim_tail": 0.1,
                 "used_duration": 5.5,
-                "start": 5.5,
-                "end": 11.0,
+                "start": 5.0 if is_crossfade else 5.5,
+                "end": 10.5 if is_crossfade else 11.0,
             },
         ],
         "junctions": [
@@ -37,10 +38,10 @@ def _filter_timeline(transition: str) -> dict:
                 "index": 0,
                 "transition": transition,
                 "fade_seconds": 0.5,
-                "offset": None,
+                "offset": 5.0 if is_crossfade else None,
             }
         ],
-        "total_duration": 11.0,
+        "total_duration": 10.5 if is_crossfade else 11.0,
     }
 
 
@@ -64,10 +65,22 @@ def test_build_filter_complex_hard_cut_has_no_fade() -> None:
     assert "fade=t=" not in graph
 
 
+def test_build_filter_complex_crossfade_uses_real_overlap() -> None:
+    graph = build_filter_complex(
+        _filter_timeline("crossfade"), [Path("shot_0.mp4"), Path("shot_1.mp4")]
+    )
+
+    assert "xfade=transition=fade:duration=0.5:offset=5" in graph
+    assert "acrossfade=d=0.5" in graph
+    assert "fade=t=" not in graph
+
+
+@pytest.mark.parametrize("transition", ["fade", "crossfade"])
 def test_build_final_real_render_matches_authoritative_timeline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     sample_shots: list[Path],
+    transition: str,
 ) -> None:
     monkeypatch.setattr(config, "PROJECTS_ROOT", str(tmp_path / "projects"))
     project_id = store.create_project("真实渲染测试")["id"]
@@ -89,7 +102,7 @@ def test_build_final_real_render_matches_authoritative_timeline(
                 {"trim_head": 0.2, "trim_tail": 0.3},
                 {"trim_head": 0.4, "trim_tail": 0.1},
             ],
-            "junctions": [{"transition": "fade", "fade_seconds": 0.5}],
+            "junctions": [{"transition": transition, "fade_seconds": 0.5}],
         },
     )
     store.save_edits(project_id, edits)

@@ -10,6 +10,8 @@ Food IP Studio 是一个面向餐饮老板的短视频生产工具，用引导�
 
 脚本模板是当前免费主路径；AI 润色仅保留稳定接口，当前恒定返回 `not_configured`，不会调用外部模型。
 
+素材镜头编号与脚本保持一致（默认从 1 开始）；删除中间素材后，下一次上传会优先补齐缺失编号。转场支持硬切、淡入淡出和真正的音视频 crossfade。
+
 ## 快速开始
 
 要求：Python 3.10+、Node.js/npm，以及可用的 ffmpeg/ffprobe。下列命令均从仓库根目录执行。
@@ -51,7 +53,7 @@ backend/.venv/Scripts/python.exe -m uvicorn backend.app.main:app --host 0.0.0.0 
 
 | 变量 | 默认值/作用 |
 |---|---|
-| `CODEX_BIN` | Codex 可执行文件路径；当前仅为后续可选脚本增强预留 |
+| `CODEX_BIN` | 默认从 `PATH` 查找 `codex`；也可填写绝对路径，当前仅为后续可选脚本增强预留 |
 | `PROJECTS_ROOT` | `<仓库根>/runtime/projects`；项目 JSON、素材、预览和导出的持久化目录 |
 | `CORS_ORIGINS` | `http://localhost:5173`；允许跨域访问 API 的前端来源列表 |
 | `FRONTEND_DIST` | `<仓库根>/frontend/dist`；可选覆盖生产前端构建目录 |

@@ -15,7 +15,7 @@
 ```
 food-ip/
 ├─ backend/
-│  ├─ .venv/                  # Python 3.10 虚拟环境
+│  ├─ .venv/                  # Python 3.10+ 虚拟环境
 │  ├─ requirements.txt
 │  ├─ app/
 │  │  ├─ main.py              # FastAPI 入口，/api/health，CORS，静态托管
@@ -60,9 +60,9 @@ food-ip/
 - 转场时长公式：
   - 硬切：`total = Σ d_i`
   - 淡入淡出（默认）：接缝 fade-out+fade-in 到黑，`total = Σ d_i`（时长不变）
-  - crossfade（二期开关）：`offset_j = Σ_{i≤j} d_i − Σ_{k≤j} F_k`；`total = Σ d_i − Σ F_j`
+  - crossfade：`offset_j = Σ_{i≤j} d_i − Σ_{k≤j} F_k`；`total = Σ d_i − Σ F_j`
   - 钳制：`trim_head+trim_tail ≤ D_i−0.5`；`F_j ≤ min(d_j, d_{j+1})` 且 `F_j ≤ 1.0`
-- `build.py`：timeline → ffmpeg filter_complex。统一归一化 1080:1920 / fps=30 / yuv420p → 每路 `trim=start=TH:end=D-TL,setpts=PTS-STARTPTS` → concat n=N；fade 在 setpts 后追加。
+- `build.py`：timeline → ffmpeg filter_complex。统一归一化 1080:1920 / fps=30 / yuv420p；hard/fade 使用 concat，fade 在片段首尾处理，crossfade 使用 `xfade + acrossfade` 按权威 offset 真正交叠。
 - `junction.py`：渲染某接缝前后 1.5s 低分辨率预览 mp4。
 
 ### 缝合调节 UI（前端）

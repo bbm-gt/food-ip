@@ -68,7 +68,7 @@
 
 ### `POST /api/projects/{project_id}/materials`
 
-- 请求：`multipart/form-data`，字段 `shot_index`（非负整数）与 `file`；扩展名仅支持 `.mp4`、`.mov`、`.mkv`、`.avi`。
+- 请求：`multipart/form-data`，字段 `shot_index`（应与脚本的 1-based 镜头编号一致；为兼容旧项目仍接受非负整数）与 `file`；扩展名仅支持 `.mp4`、`.mov`、`.mkv`、`.avi`。
 - `200`：`{"shot_index", "filename", "duration", "width", "height", "fps", "has_audio"}`。
 - 错误：`400`（序号、扩展名或 ffmpeg/ffprobe 处理失败）、`404`（项目不存在）、`409`（该 `shot_index` 已存在）、`422`（表单缺失或类型错误）。
 
@@ -94,7 +94,7 @@
 
 ## 时间轴与接缝
 
-`Edits` 为 `{"shots": [{"trim_head", "trim_tail"}], "junctions": [{"transition", "fade_seconds"}]}`。`transition` 可为 `hard | fade | crossfade`。服务端会钳制负裁剪、最短剩余时长及转场时长，并回显生效值。
+`Edits` 为 `{"shots": [{"trim_head", "trim_tail"}], "junctions": [{"transition", "fade_seconds"}]}`。`transition` 可为 `hard | fade | crossfade`；crossfade 会同时交叠视频和音频，并按 `fade_seconds` 缩短总时长。服务端会钳制负裁剪、最短剩余时长及转场时长，并回显生效值。
 
 ### `GET /api/projects/{project_id}/edits`
 
