@@ -1,5 +1,5 @@
 """Structured restaurant script generation."""
 
-from .models import BossInfo, ScriptModel, Shot
+from .models import BossInfo, ScriptModel, ScriptQualityRisk, Shot
 
-__all__ = ["BossInfo", "ScriptModel", "Shot"]
+__all__ = ["BossInfo", "ScriptModel", "ScriptQualityRisk", "Shot"]

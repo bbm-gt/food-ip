@@ -1,7 +1,10 @@
 import type {
+  Bgm,
   BossInfo,
+  CreativeConversation,
   Edits,
   ExportJob,
+  IPProfile,
   Material,
   Project,
   PutEditsResponse,
@@ -9,6 +12,7 @@ import type {
   ResearchProfile,
   ScriptBundle,
   ScriptModel,
+  ScriptVersion,
   Timeline,
 } from './types'
 
@@ -119,6 +123,22 @@ export function putScript(
   })
 }
 
+export function getIpProfile(projectId: string): Promise<IPProfile> {
+  return request<IPProfile>(`/projects/${encodeURIComponent(projectId)}/ip-profile`)
+}
+
+export function listCreativeConversations(projectId: string): Promise<CreativeConversation[]> {
+  return request<CreativeConversation[]>(
+    `/projects/${encodeURIComponent(projectId)}/creative-conversations`,
+  )
+}
+
+export function getScriptVersions(projectId: string): Promise<ScriptVersion[]> {
+  return request<ScriptVersion[]>(
+    `/projects/${encodeURIComponent(projectId)}/script/versions`,
+  )
+}
+
 export function uploadMaterial(
   projectId: string,
   formData: FormData,
@@ -127,6 +147,17 @@ export function uploadMaterial(
     method: 'POST',
     body: formData,
   })
+}
+
+export function replaceMaterial(
+  projectId: string,
+  shotIndex: number,
+  formData: FormData,
+): Promise<Material> {
+  return request<Material>(
+    `/projects/${encodeURIComponent(projectId)}/materials/${shotIndex}`,
+    { method: 'PUT', body: formData },
+  )
 }
 
 export function listMaterials(projectId: string): Promise<Material[]> {
@@ -142,6 +173,25 @@ export function deleteMaterial(projectId: string, shotIndex: number): Promise<vo
 
 export function getThumbnailUrl(projectId: string, shotIndex: number): string {
   return `${API_BASE}/projects/${encodeURIComponent(projectId)}/materials/${shotIndex}/thumbnail`
+}
+
+export function getBgm(projectId: string): Promise<Bgm | null> {
+  return request<Bgm | null>(`/projects/${encodeURIComponent(projectId)}/bgm`)
+}
+
+export function uploadBgm(projectId: string, file: File): Promise<Bgm> {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request<Bgm>(`/projects/${encodeURIComponent(projectId)}/bgm`, {
+    method: 'POST',
+    body: formData,
+  })
+}
+
+export function deleteBgm(projectId: string): Promise<void> {
+  return request<void>(`/projects/${encodeURIComponent(projectId)}/bgm`, {
+    method: 'DELETE',
+  })
 }
 
 export function getEdits(projectId: string): Promise<Edits> {
@@ -194,6 +244,10 @@ export function startExport(projectId: string): Promise<{ job_id: string }> {
 
 export function getJob(jobId: string): Promise<ExportJob> {
   return request<ExportJob>(`/jobs/${encodeURIComponent(jobId)}`)
+}
+
+export function listExports(projectId: string): Promise<string[]> {
+  return request<string[]>(`/projects/${encodeURIComponent(projectId)}/exports`)
 }
 
 export function exportUrl(projectId: string): string {

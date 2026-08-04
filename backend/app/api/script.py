@@ -6,8 +6,10 @@ from fastapi.responses import JSONResponse
 
 from ..core.store import (
     get_project,
+    load_ip_profile,
     load_script,
     load_script_bundle,
+    load_script_versions,
     save_research,
     save_script,
     save_script_bundle,
@@ -20,7 +22,14 @@ from ..scriptgen.ai import (
     generate_ai_script_bundle,
 )
 from ..scriptgen.generators import get
-from ..scriptgen.models import BossInfo, ResearchProfile, ScriptBundle, ScriptModel
+from ..scriptgen.quality import annotate_script_quality
+from ..scriptgen.models import (
+    BossInfo,
+    ResearchProfile,
+    ScriptBundle,
+    ScriptModel,
+    ScriptVersion,
+)
 
 
 router = APIRouter(tags=["script"])
@@ -35,8 +44,17 @@ class GenerateBundleRequest(BaseModel):
 def generate_template_route(project_id: str, body: BossInfo) -> ScriptModel:
     get_project(project_id)
     update_project(project_id, boss_info=body.model_dump(mode="json"))
-    script = get("template").generate(body)
-    save_script(project_id, script)
+    scan_profile = ResearchProfile.from_boss_info(
+        body.model_copy(
+            update={
+                "target_duration_seconds": min(
+                    180, max(15, body.target_duration_seconds)
+                )
+            }
+        )
+    )
+    script = annotate_script_quality(get("template").generate(body), scan_profile)
+    save_script(project_id, script, source="template_generation")
     return script
 
 
@@ -57,8 +75,16 @@ def get_script_route(project_id: str) -> ScriptModel | JSONResponse:
 
 @router.put("/projects/{project_id}/script", response_model=ScriptModel)
 def put_script_route(project_id: str, body: ScriptModel) -> ScriptModel:
-    save_script(project_id, body)
+    save_script(project_id, body, source="manual_save")
     return body
+
+
+@router.get(
+    "/projects/{project_id}/script/versions",
+    response_model=list[ScriptVersion],
+)
+def get_script_versions_route(project_id: str) -> list[ScriptVersion]:
+    return list(reversed(load_script_versions(project_id)))
 
 
 @router.post(
@@ -92,6 +118,44 @@ def generate_ai_script_bundle_route(
     except AIConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"message": str(exc)}
+        ) from exc
+    except AIScriptError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"message": f"AI 脚本生成失败：{exc}"},
+        ) from exc
+    return save_script_bundle(project_id, bundle)
+
+
+@router.post(
+    "/projects/{project_id}/script-bundles/ip-ai",
+    response_model=ScriptBundle,
+    responses={
+        status.HTTP_409_CONFLICT: {"description": "IP 定位尚未确认"},
+        status.HTTP_502_BAD_GATEWAY: {"description": "AI 输出或服务异常"},
+        status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "AI 尚未配置"},
+    },
+)
+def generate_ip_script_bundle_route(
+    project_id: str, body: GenerateBundleRequest
+) -> ScriptBundle:
+    profile = load_ip_profile(project_id)
+    if not profile.confirmed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"message": "请先确认 IP 定位，再开始脚本共创"},
+        )
+    save_research(project_id, body.research)
+    try:
+        bundle = generate_ai_script_bundle(
+            body.research,
+            body.candidate_count,
+            creative_context={"ip_profile": profile.model_dump(mode="json")},
+        )
+    except AIConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"message": str(exc)},
         ) from exc
     except AIScriptError as exc:
         raise HTTPException(
@@ -139,5 +203,5 @@ def select_script_candidate_route(
         )
     selected = bundle.model_copy(update={"selected_script_id": candidate.id})
     save_script_bundle(project_id, selected)
-    save_script(project_id, candidate.script)
+    save_script(project_id, candidate.script, source="candidate_selection")
     return candidate.script

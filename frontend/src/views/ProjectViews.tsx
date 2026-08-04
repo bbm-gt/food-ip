@@ -7,6 +7,8 @@ import type {
   ScriptBundle,
   ScriptCandidate,
   ScriptModel,
+  ScriptQualityRisk,
+  ScriptVersion,
   Shot,
 } from '../api/types'
 
@@ -15,6 +17,13 @@ function formatDate(value: string) {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(value))
+}
+
+const SCRIPT_VERSION_SOURCE_NAMES: Record<ScriptVersion['source'], string> = {
+  legacy_import: '旧项目基线',
+  template_generation: '模板生成',
+  candidate_selection: '选择方案',
+  manual_save: '手工保存',
 }
 
 function splitList(value: string): string[] {
@@ -189,6 +198,7 @@ export function CandidatesView({ project, bundle, busy, onSelect, onRegenerate, 
       <div className="candidate-meta"><span>拍摄难度：{candidate.difficulty}</span><span>{candidate.requires_owner ? '需要老板参与' : '可弱化口播'}</span></div>
       <div className="candidate-hook"><small>开场钩子</small><strong>{candidate.script.opening_hook}</strong></div>
       <ul className="reason-list">{candidate.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+      <QualityRiskList risks={candidate.script.quality_risks ?? []} />
       <details><summary>查看 6 个镜头</summary><ol className="candidate-shots">{candidate.script.shots.map((shot) => <li key={shot.shot_index}><span>{shot.shot_index}</span><div><strong>{shot.location} · {shot.angle}</strong><p>{shot.purpose && `目的：${shot.purpose}｜`}{shot.lines}</p></div></li>)}</ol></details>
       <button className="primary-button candidate-select" type="button" disabled={busy} onClick={() => onSelect(candidate)}>选择方案 {String.fromCharCode(65 + index)} 开始拍摄</button>
     </article>)}</div>
@@ -199,22 +209,30 @@ export function CandidatesView({ project, bundle, busy, onSelect, onRegenerate, 
 interface ScriptViewProps {
   project: Project | null
   script: ScriptModel
+  versions: ScriptVersion[]
   busy: boolean
   hasAlternatives: boolean
   onScriptChange: (script: ScriptModel) => void
   onUpdateShot: (index: number, field: keyof Shot, value: string | number) => void
   onSetup: () => void
   onCandidates: () => void
+  onChecklist: () => void
   onMaterials: () => void
   onSave: () => void
 }
 
-export function ScriptView({ project, script, busy, hasAlternatives, onScriptChange, onUpdateShot, onSetup, onCandidates, onMaterials, onSave }: ScriptViewProps) {
+export function ScriptView({ project, script, versions, busy, hasAlternatives, onScriptChange, onUpdateShot, onSetup, onCandidates, onChecklist, onMaterials, onSave }: ScriptViewProps) {
+  const currentVersion = versions[0]
   return (
     <section className="script-page">
       <div className="script-toolbar"><div><p className="eyebrow">SHOOTING SCRIPT</p><h1>{project?.name}</h1><p>{script.shots.length} 个镜头 · 目标 {script.target_duration_seconds} 秒 · {script.style}</p></div>
-        <div className="toolbar-actions"><button className="ghost-button" type="button" onClick={onSetup}>修改调研</button>{hasAlternatives && <button className="ghost-button" type="button" onClick={onCandidates}>其他方案</button>}<button className="ghost-button" type="button" onClick={onMaterials}>管理素材</button><button className="primary-button" type="button" disabled={busy} onClick={onSave}>{busy ? '保存中…' : '保存修改'}</button></div>
+        <div className="toolbar-actions"><button className="ghost-button" type="button" onClick={onSetup}>修改调研</button>{hasAlternatives && <button className="ghost-button" type="button" onClick={onCandidates}>其他方案</button>}<button className="ghost-button" type="button" onClick={onChecklist}>拍摄清单</button><button className="ghost-button" type="button" onClick={onMaterials}>管理素材</button><button className="primary-button" type="button" disabled={busy} onClick={onSave}>{busy ? '保存中…' : '保存修改'}</button></div>
       </div>
+      {currentVersion && <div className="script-version-bar">
+        <div><span>当前版本</span><strong>v{currentVersion.version_number}</strong><small>{SCRIPT_VERSION_SOURCE_NAMES[currentVersion.source]} · {formatDate(currentVersion.created_at)}</small></div>
+        <details><summary>历史版本（{versions.length}）</summary><ol>{versions.map((version) => <li key={version.id}><strong>v{version.version_number}</strong><span>{version.script.title}</span><small>{SCRIPT_VERSION_SOURCE_NAMES[version.source]} · {formatDate(version.created_at)}</small></li>)}</ol></details>
+      </div>}
+      <QualityRiskList risks={script.quality_risks ?? []} />
       <div className="script-summary">
         <label>脚本标题<input value={script.title} onChange={(event) => onScriptChange({ ...script, title: event.target.value })} /></label>
         <label>开场钩子<textarea rows={2} value={script.opening_hook} onChange={(event) => onScriptChange({ ...script, opening_hook: event.target.value })} /></label>
@@ -237,12 +255,23 @@ function DetailList({ title, items }: { title: string; items: string[] }) {
   return <div><strong>{title}</strong><ol>{items.map((item, index) => <li key={`${title}-${index}`}>{item}</li>)}</ol></div>
 }
 
+function QualityRiskList({ risks }: { risks: ScriptQualityRisk[] }) {
+  if (!risks.length) return null
+  return <aside className="quality-risk-panel" role="note">
+    <strong>风险提示</strong>
+    <p>以下是轻量规则提示，不是法律审核；请拍摄和发布前自行确认。</p>
+    <ul>{risks.map((risk, index) => <li key={`${risk.category}-${risk.shot_index ?? 'script'}-${index}`}><span>{risk.category}</span>{risk.shot_index ? `镜头 ${risk.shot_index}：` : ''}{risk.message}</li>)}</ul>
+  </aside>
+}
+
 function DetailedShotGuide({ shot }: { shot: Shot }) {
-  const hasDetails = Boolean(shot.purpose || shot.phone_setup || shot.action_steps.length)
+  const hasPerformance = Boolean(shot.tone || shot.emotion || shot.speech_rate || shot.pause_guidance || shot.expression_guidance)
+  const hasDetails = Boolean(shot.purpose || shot.phone_setup || shot.action_steps.length || hasPerformance)
   if (!hasDetails) return null
   return <details className="shooting-guide">
     <summary>不会拍？展开详细拍摄教程</summary>
     <div className="shooting-guide-grid">
+      <div className="guide-section-title guide-wide">怎么拍</div>
       <div><strong>镜头目的</strong><p>{shot.purpose}</p></div>
       <div><strong>拍摄主体</strong><p>{shot.subject}</p></div>
       <div className="guide-wide"><strong>手机与机位</strong><p>{shot.phone_setup}</p></div>
@@ -251,6 +280,14 @@ function DetailedShotGuide({ shot }: { shot: Shot }) {
       <div><strong>光线</strong><p>{shot.lighting}</p></div>
       <div><strong>所需道具</strong><p>{shot.props.join('、') || '无需额外道具'}</p></div>
       <DetailList title="照着做" items={shot.action_steps} />
+      {hasPerformance && <>
+        <div className="guide-section-title guide-wide">怎么说</div>
+        <div><strong>语气</strong><p>{shot.tone}</p></div>
+        <div><strong>情绪</strong><p>{shot.emotion}</p></div>
+        <div><strong>语速</strong><p>{shot.speech_rate}</p></div>
+        <div><strong>停顿</strong><p>{shot.pause_guidance}</p></div>
+        <div className="guide-wide"><strong>表达方式</strong><p>{shot.expression_guidance}</p></div>
+      </>}
       <div><strong>字幕</strong><p>{shot.subtitle || '使用台词自动生成字幕'}</p></div>
       <div><strong>剪辑提示</strong><p>{shot.edit_note}</p></div>
       <DetailList title="常见错误" items={shot.common_mistakes} />

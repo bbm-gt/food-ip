@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, ValidationError
 from .. import config
 from .bundles import StrategyScore, _score_strategies
 from .models import ResearchProfile, ScriptBundle, ScriptCandidate, ScriptModel, Shot
+from .quality import annotate_script_quality
 
 
 class AIScriptError(RuntimeError):
@@ -48,6 +49,11 @@ class AIDetailedShot(BaseModel):
     edit_note: str = Field(min_length=2)
     common_mistakes: list[str] = Field(min_length=1, max_length=4)
     retake_if: list[str] = Field(min_length=1, max_length=4)
+    tone: str = ""
+    emotion: str = ""
+    speech_rate: str = ""
+    pause_guidance: str = ""
+    expression_guidance: str = ""
     duration_seconds: int = Field(ge=2, le=30)
 
 
@@ -155,6 +161,7 @@ def _build_messages(
     profile: ResearchProfile,
     strategies: list[StrategyScore],
     feedback: str = "",
+    creative_context: dict[str, object] | None = None,
 ) -> list[dict[str, str]]:
     required_ctas = _required_ctas(profile, strategies)
     strategy_payload = [
@@ -187,10 +194,16 @@ def _build_messages(
 11. opening_hook 必须原样出现在第 1 镜头台词中；cta 必须原样出现在第 6 镜头台词中，确保页面字段和实际拍摄台词一致。
 12. 输出前先自行检查连贯性和事实依据。避免“先别划走”“我赌你”“天花板”“闭眼冲”等夸张网感套话。
 13. 经营年限只能表述为“开店/做餐饮 X 年”；问卷没有明确同一街道经营年限时，不得写“在这条街 X 年”。
+14. 每个镜头额外给出老板表达指导：tone、emotion、speech_rate、pause_guidance、expression_guidance；这些是拍摄提示，不要改变事实内容。
 
 JSON 顶层格式示例：
-{"research_summary":"...","candidates":[{"strategy":"dish","title":"...","opening_hook":"...","cta":"...","shots":[{"shot_index":1,"purpose":"...","lines":"...","location":"...","angle":"...","subject":"...","action_steps":["...","..."],"phone_setup":"...","camera_movement":"...","audio":"...","lighting":"...","props":[],"subtitle":"...","edit_note":"...","common_mistakes":["..."],"retake_if":["..."],"duration_seconds":6}]}]}
+{"research_summary":"...","candidates":[{"strategy":"dish","title":"...","opening_hook":"...","cta":"...","shots":[{"shot_index":1,"purpose":"...","lines":"...","location":"...","angle":"...","subject":"...","action_steps":["...","..."],"phone_setup":"...","camera_movement":"...","audio":"...","lighting":"...","props":[],"subtitle":"...","edit_note":"...","common_mistakes":["..."],"retake_if":["..."],"tone":"自然真诚","emotion":"放松","speech_rate":"比平时聊天慢一点","pause_guidance":"重点词后停顿1秒","expression_guidance":"像和熟客聊天","duration_seconds":6}]}]}
 """.strip()
+    if creative_context is not None:
+        system_prompt += (
+            "\n15. confirmed_creative_context 只用于约束本期方向；其中标为 "
+            "owner_message 或未核验的证据不得改写成已确认事实，也不得因此放宽上述规则。"
+        )
     user_payload = {
         "task": "根据问卷生成多套可直接执行的餐饮 IP 短视频脚本 JSON",
         "questionnaire": _safe_profile_payload(profile),
@@ -198,6 +211,8 @@ JSON 顶层格式示例：
         "target_duration_seconds": profile.shooting.target_duration_seconds,
         "required_candidate_count": len(strategies),
     }
+    if creative_context is not None:
+        user_payload["confirmed_creative_context"] = creative_context
     if feedback:
         user_payload["previous_output_errors"] = feedback
         user_payload["repair_instruction"] = "重新完整生成 JSON，并修正全部错误"
@@ -420,6 +435,11 @@ def _to_script(candidate: AIGeneratedCandidate, profile: ResearchProfile) -> Scr
             edit_note=shot.edit_note,
             common_mistakes=shot.common_mistakes,
             retake_if=shot.retake_if,
+            tone=shot.tone,
+            emotion=shot.emotion,
+            speech_rate=shot.speech_rate,
+            pause_guidance=shot.pause_guidance,
+            expression_guidance=shot.expression_guidance,
         )
         for index, shot in enumerate(candidate.shots, start=1)
     ]
@@ -452,7 +472,10 @@ def _to_script(candidate: AIGeneratedCandidate, profile: ResearchProfile) -> Scr
 
 
 def generate_ai_script_bundle(
-    profile: ResearchProfile, candidate_count: int = 3
+    profile: ResearchProfile,
+    candidate_count: int = 3,
+    *,
+    creative_context: dict[str, object] | None = None,
 ) -> ScriptBundle:
     """Generate distinct scripts with DeepSeek and validate them locally."""
 
@@ -462,7 +485,14 @@ def generate_ai_script_bundle(
     last_error: Exception | None = None
     for _attempt in range(2):
         try:
-            raw = _request_json(_build_messages(profile, strategies, feedback))
+            raw = _request_json(
+                _build_messages(
+                    profile,
+                    strategies,
+                    feedback,
+                    creative_context=creative_context,
+                )
+            )
             output = AIBundleOutput.model_validate(raw)
             output = _apply_required_ctas(output, profile, strategies)
             _validate_quality(output, profile, strategies)
@@ -493,7 +523,11 @@ def generate_ai_script_bundle(
             difficulty=strategy.difficulty,  # type: ignore[arg-type]
             required_scenes=strategy.scenes,
             requires_owner=strategy.requires_owner,
-            script=_to_script(by_strategy[strategy.key], profile),
+            script=annotate_script_quality(
+                _to_script(by_strategy[strategy.key], profile),
+                profile,
+                creative_context=creative_context,
+            ),
         )
         for strategy in strategies
     ]

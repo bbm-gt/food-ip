@@ -91,6 +91,19 @@ export interface Shot {
   edit_note: string
   common_mistakes: string[]
   retake_if: string[]
+  tone: string
+  emotion: string
+  speech_rate: string
+  pause_guidance: string
+  expression_guidance: string
+}
+
+export type ScriptQualityRiskCategory = '真实性' | '可拍摄性' | 'IP一致性'
+
+export interface ScriptQualityRisk {
+  category: ScriptQualityRiskCategory
+  message: string
+  shot_index: number | null
 }
 
 export interface ScriptModel {
@@ -100,6 +113,110 @@ export interface ScriptModel {
   opening_hook: string
   cta: string
   shots: Shot[]
+  quality_risks: ScriptQualityRisk[]
+}
+
+export type ScriptVersionSource =
+  | 'legacy_import'
+  | 'template_generation'
+  | 'candidate_selection'
+  | 'manual_save'
+
+export interface ScriptVersion {
+  id: string
+  version_number: number
+  created_at: string
+  source: ScriptVersionSource
+  script: ScriptModel
+}
+
+export type CreativeMode = 'own_idea' | 'ai_recommendation' | 'revise_script'
+export type ConversationStage = 'collecting' | 'brief_ready' | 'confirmed'
+export type FactScope = 'episode_only' | 'long_term_profile'
+export type EvidenceSource = 'research_profile' | 'ip_profile' | 'owner_message'
+
+export interface CreativeEvidence {
+  statement: string
+  source: EvidenceSource
+  verified: boolean
+  fact_scope: FactScope | null
+}
+
+export interface CreativeBrief {
+  idea: string
+  goal: string
+  target_customer: string
+  key_message: string
+  evidence: CreativeEvidence[]
+  tone: string
+  format: string
+  shooting_constraints: string[]
+  cta: string
+  confirmed: boolean
+  confirmed_at: string | null
+}
+
+export interface CreativeMessage {
+  id: string
+  role: 'owner' | 'ai'
+  content: string
+  fact_scope: FactScope | null
+  trust_status: 'untrusted' | 'assistant_synthesis'
+  questions: string[]
+  reply_to_message_id: string | null
+  created_at: string
+}
+
+export interface TopicCard {
+  id: string
+  title: string
+  hook: string
+  angle: string
+  target_customer: string
+  ip_alignment: string
+  evidence_needed: string[]
+  shoot_difficulty: 'low' | 'medium' | 'high'
+  estimated_duration_sec: number
+  cta: string
+}
+
+export interface TopicCardSet {
+  id: string
+  generated_at: string
+  model_name: string
+  cards: TopicCard[]
+  selected_topic_card_id: string | null
+}
+
+export interface IPProfile {
+  persona_positioning: string
+  core_audience: string
+  core_promise: string
+  memory_points: string[]
+  content_pillars: string[]
+  recurring_series: string[]
+  speaking_style: string
+  evidence_assets: string[]
+  avoided_topics: string[]
+  conversion_path: string[]
+  confirmed: boolean
+  confirmed_at: string | null
+}
+
+export interface CreativeConversation {
+  id: string
+  project_id: string
+  mode: CreativeMode
+  stage: ConversationStage
+  research_snapshot: ResearchProfile
+  ip_profile_snapshot: IPProfile
+  source_script: ScriptModel | null
+  messages: CreativeMessage[]
+  brief: CreativeBrief | null
+  topic_card_set: TopicCardSet | null
+  last_error: string | null
+  created_at: string
+  updated_at: string
 }
 
 export interface ScriptCandidate {
@@ -130,10 +247,20 @@ export interface Project {
   id: string
   name: string
   boss_info: Partial<BossInfo>
-  research: ResearchProfile
+  research: ResearchProfile | null
   script: ScriptModel | null
   script_bundle: ScriptBundle | null
+  materials?: Material[]
+  edits?: Edits | null
+  bgm?: Bgm | null
   created_at: string
+}
+
+export interface Bgm {
+  filename: string
+  original_filename: string
+  duration: number
+  has_audio: boolean
 }
 
 export interface Material {
@@ -203,5 +330,6 @@ export interface ExportJob {
   result: {
     output: string
     total_duration: number
+    warnings?: string[]
   } | null
 }

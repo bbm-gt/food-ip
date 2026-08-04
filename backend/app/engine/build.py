@@ -10,6 +10,8 @@ from typing import Any
 
 from .. import config
 from ..core import store
+from .captions import build_subtitle_file
+from .media import probe_video
 
 
 ProgressCallback = Callable[[float], None]
@@ -27,8 +29,18 @@ def _transition_is_fade(value: object) -> bool:
     return value == "fade"
 
 
+def _filter_path(path: str | Path) -> str:
+    """Escape a local path for an FFmpeg filter argument."""
+    return str(path).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
+
+
 def build_filter_complex(
-    timeline: dict[str, Any], material_paths: Sequence[str | Path]
+    timeline: dict[str, Any],
+    material_paths: Sequence[str | Path],
+    *,
+    subtitle_path: str | Path | None = None,
+    bgm_input_index: int | None = None,
+    bgm_volume: float = 0.12,
 ) -> str:
     """Build the deterministic main-render filter graph from a timeline."""
     segments = timeline.get("segments", [])
@@ -39,6 +51,8 @@ def build_filter_complex(
         raise RenderError("素材文件数量与时间轴不一致")
 
     chains: list[str] = []
+    main_video_label = "vbase" if subtitle_path is not None else "vout"
+    main_audio_label = "amain" if bgm_input_index is not None else "aout"
     for index, segment in enumerate(segments):
         trim_head = float(segment["trim_head"])
         trim_tail = float(segment["trim_tail"])
@@ -75,44 +89,60 @@ def build_filter_complex(
         chains.append(f"[{index}:a]{','.join(audio_filters)}[a{index}]")
 
     if len(segments) == 1:
-        chains.extend(("[v0]null[vout]", "[a0]anull[aout]"))
-        return ";".join(chains)
+        chains.extend((f"[v0]null[{main_video_label}]", f"[a0]anull[{main_audio_label}]"))
+    else:
+        current_video = "v0"
+        current_audio = "a0"
+        cumulative_overlap = 0.0
+        cumulative_duration = float(segments[0]["used_duration"])
+        for index, junction in enumerate(junctions):
+            transition = junction.get("transition")
+            fade_seconds = float(junction.get("fade_seconds", 0.0))
+            is_last = index == len(junctions) - 1
+            output_video = main_video_label if is_last else f"vjoin{index}"
+            output_audio = main_audio_label if is_last else f"ajoin{index}"
+            next_video = f"v{index + 1}"
+            next_audio = f"a{index + 1}"
 
-    current_video = "v0"
-    current_audio = "a0"
-    cumulative_overlap = 0.0
-    cumulative_duration = float(segments[0]["used_duration"])
-    for index, junction in enumerate(junctions):
-        transition = junction.get("transition")
-        fade_seconds = float(junction.get("fade_seconds", 0.0))
-        is_last = index == len(junctions) - 1
-        output_video = "vout" if is_last else f"vjoin{index}"
-        output_audio = "aout" if is_last else f"ajoin{index}"
-        next_video = f"v{index + 1}"
-        next_audio = f"a{index + 1}"
+            if transition == "crossfade" and fade_seconds > 0:
+                cumulative_overlap += fade_seconds
+                offset = cumulative_duration - cumulative_overlap
+                chains.append(
+                    f"[{current_video}][{next_video}]"
+                    f"xfade=transition=fade:duration={_number(fade_seconds)}:"
+                    f"offset={_number(offset)}[{output_video}]"
+                )
+                chains.append(
+                    f"[{current_audio}][{next_audio}]"
+                    f"acrossfade=d={_number(fade_seconds)}:c1=tri:c2=tri[{output_audio}]"
+                )
+            else:
+                chains.append(
+                    f"[{current_video}][{current_audio}]"
+                    f"[{next_video}][{next_audio}]"
+                    f"concat=n=2:v=1:a=1[{output_video}][{output_audio}]"
+                )
 
-        if transition == "crossfade" and fade_seconds > 0:
-            cumulative_overlap += fade_seconds
-            offset = cumulative_duration - cumulative_overlap
-            chains.append(
-                f"[{current_video}][{next_video}]"
-                f"xfade=transition=fade:duration={_number(fade_seconds)}:"
-                f"offset={_number(offset)}[{output_video}]"
-            )
-            chains.append(
-                f"[{current_audio}][{next_audio}]"
-                f"acrossfade=d={_number(fade_seconds)}:c1=tri:c2=tri[{output_audio}]"
-            )
-        else:
-            chains.append(
-                f"[{current_video}][{current_audio}]"
-                f"[{next_video}][{next_audio}]"
-                f"concat=n=2:v=1:a=1[{output_video}][{output_audio}]"
-            )
+            cumulative_duration += float(segments[index + 1]["used_duration"])
+            current_video = output_video
+            current_audio = output_audio
 
-        cumulative_duration += float(segments[index + 1]["used_duration"])
-        current_video = output_video
-        current_audio = output_audio
+    if subtitle_path is not None:
+        chains.append(
+            f"[{main_video_label}]ass=filename='{_filter_path(subtitle_path)}'[vout]"
+        )
+    if bgm_input_index is not None:
+        total_duration = _number(float(timeline["total_duration"]))
+        chains.extend(
+            (
+                f"[{bgm_input_index}:a]atrim=duration={total_duration},"
+                f"asetpts=PTS-STARTPTS,volume={_number(max(0.0, bgm_volume))},"
+                f"aformat=sample_rates=44100:channel_layouts=stereo[bgm]",
+                f"[{main_audio_label}][bgm]amix=inputs=2:duration=first:"
+                "dropout_transition=2:normalize=0[amix]",
+                "[amix]aformat=sample_rates=44100:channel_layouts=stereo[aout]",
+            )
+        )
     return ";".join(chains)
 
 
@@ -217,6 +247,45 @@ def prepare_material_paths(
     return prepared
 
 
+LOW_RESOLUTION_WARNING = "\u5f53\u524d\u7d20\u6750\u5206\u8fa8\u7387\u8f83\u4f4e\uff0c\u5bfc\u51fa1080P\u4e0d\u4f1a\u63d0\u5347\u539f\u59cb\u753b\u8d28\u3002"
+
+
+def low_resolution_warnings(materials: Sequence[dict[str, Any]]) -> list[str]:
+    """Return non-blocking warnings for sources below the final canvas size."""
+    for material in materials:
+        try:
+            if int(material.get("width", 0)) < 1080 or int(material.get("height", 0)) < 1920:
+                return [LOW_RESOLUTION_WARNING]
+        except (TypeError, ValueError):
+            continue
+    return []
+
+
+def validate_rendered_output(
+    output: Path,
+    expected_duration: float,
+    *,
+    duration_tolerance: float = 0.25,
+) -> dict[str, float | int | bool]:
+    """Verify the final file before it is exposed as a downloadable export."""
+    if not output.is_file() or output.stat().st_size <= 0:
+        raise RenderError("瀵煎嚭鏂囦欢涓嶅瓨鍦ㄦ垨涓虹┖")
+    try:
+        metadata = probe_video(output)
+    except Exception as exc:
+        raise RenderError(f"瀵煎嚭缁撴灉鏃犳硶鎺㈡祴: {exc}") from exc
+    if not bool(metadata.get("has_audio")):
+        raise RenderError("rendered output has no audio stream")
+    if int(metadata.get("width", 0)) != 1080 or int(metadata.get("height", 0)) != 1920:
+        raise RenderError("瀵煎嚭缁撴灉鍒嗚辨巼涓嶆槸 1080x1920")
+    actual_duration = float(metadata.get("duration", 0.0))
+    if abs(actual_duration - expected_duration) > duration_tolerance:
+        raise RenderError(
+            f"瀵煎嚭鏃堕暱涓嶅悎棰勬湡: {actual_duration:.3f}s / {expected_duration:.3f}s"
+        )
+    return metadata
+
+
 def build_final(
     project_id: str,
     timeline: dict[str, Any],
@@ -228,10 +297,25 @@ def build_final(
     material_paths = prepare_material_paths(project_id, timeline, materials)
     output = _project_dir(project_id) / "work" / "final.mp4"
     output.parent.mkdir(parents=True, exist_ok=True)
-    filter_complex = build_filter_complex(timeline, material_paths)
+    subtitle_path = build_subtitle_file(
+        output.parent, timeline, store.load_script(project_id)
+    )
+    bgm_metadata = store.get_bgm(project_id)
+    bgm_path = store.bgm_path(project_id) if bgm_metadata else None
+    if bgm_path is not None and not bgm_path.is_file():
+        raise RenderError("BGM file is missing")
+    bgm_input_index = len(material_paths) if bgm_path is not None else None
+    filter_complex = build_filter_complex(
+        timeline,
+        material_paths,
+        subtitle_path=subtitle_path,
+        bgm_input_index=bgm_input_index,
+    )
     args: list[str | Path] = ["-y"]
     for path in material_paths:
         args.extend(["-i", path])
+    if bgm_path is not None:
+        args.extend(["-stream_loop", "-1", "-i", bgm_path])
     args.extend(
         [
             "-filter_complex",
@@ -250,6 +334,8 @@ def build_final(
             "aac",
             "-b:a",
             "192k",
+            "-pix_fmt",
+            "yuv420p",
             "-movflags",
             "+faststart",
             "-t",
@@ -260,4 +346,5 @@ def build_final(
         args.extend(["-progress", "pipe:1", "-nostats"])
     args.append(output)
     run_ffmpeg(args, on_progress=on_progress)
+    validate_rendered_output(output, float(timeline["total_duration"]))
     return output

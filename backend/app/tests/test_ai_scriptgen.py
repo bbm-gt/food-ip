@@ -11,9 +11,12 @@ from ..scriptgen.models import (
     AudienceProfile,
     OwnerProfile,
     ResearchProfile,
+    ScriptModel,
+    Shot,
     ShootingProfile,
     StoreProfile,
 )
+from ..scriptgen.quality import scan_script_quality
 
 
 def profile(*, allow_personal_story: bool = False) -> ResearchProfile:
@@ -80,6 +83,11 @@ def generated_payload(strategies: list[str]) -> dict[str, object]:
                     "edit_note": "动作完成后多停留两秒再结束录制",
                     "common_mistakes": ["拍到一半突然变焦"],
                     "retake_if": ["菜品被手完全挡住"],
+                    "tone": "自然真诚",
+                    "emotion": "放松",
+                    "speech_rate": "比平时聊天慢一点",
+                    "pause_guidance": "重点词后停顿1秒",
+                    "expression_guidance": "像和熟客聊天",
                     "duration_seconds": 8,
                 }
             )
@@ -135,6 +143,49 @@ def test_ai_bundle_has_detailed_shooting_guidance(
             assert "竖屏" in shot.phone_setup
             assert shot.common_mistakes
             assert shot.retake_if
+            assert shot.tone == "自然真诚"
+            assert shot.emotion == "放松"
+            assert shot.speech_rate
+            assert shot.pause_guidance
+            assert shot.expression_guidance
+
+
+def test_quality_scan_marks_risks_without_rewriting() -> None:
+    research = profile().model_copy(
+        update={
+            "owner": profile().owner.model_copy(update={"avoided_topics": ["儿童"]}),
+            "shooting": profile().shooting.model_copy(
+                update={"unavailable_locations": ["后厨"], "can_show_kitchen": False}
+            ),
+        }
+    )
+    original_lines = "全城第一的味道，保证顾客都说好，儿童也会喜欢。"
+    script = ScriptModel(
+        title="风险提示测试",
+        target_duration_seconds=15,
+        style="竖屏",
+        opening_hook="开场",
+        cta="结尾",
+        shots=[
+            Shot(
+                shot_index=1,
+                lines=original_lines,
+                shooting_tips="",
+                duration_hint_seconds=15,
+                location="后厨",
+                subject="顾客反应",
+                action_steps=["先拍火焰", "再靠近热油", "同时拍顾客", "最后拍装盘"],
+                phone_setup="手机竖屏",
+                camera_movement="贴近推进",
+            )
+        ],
+    )
+
+    risks = scan_script_quality(script, research)
+
+    assert script.shots[0].lines == original_lines
+    assert {risk.category for risk in risks} == {"真实性", "可拍摄性", "IP一致性"}
+    assert all(risk.shot_index == 1 for risk in risks if risk.shot_index is not None)
 
 
 def test_invalid_ai_output_is_retried(

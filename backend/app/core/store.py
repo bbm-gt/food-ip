@@ -6,10 +6,19 @@ import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 from .. import config
-from ..scriptgen.models import BossInfo, ResearchProfile, ScriptBundle, ScriptModel
+from ..scriptgen.models import (
+    BossInfo,
+    CreativeConversation,
+    IPProfile,
+    ResearchProfile,
+    ScriptBundle,
+    ScriptModel,
+    ScriptVersion,
+)
 
 
 PROJECT_ID_PATTERN = re.compile(r"[a-z0-9-]{8,}")
@@ -27,6 +36,12 @@ class InvalidProjectIdError(ValueError):
         super().__init__("项目 ID 格式不合法")
 
 
+class CreativeConversationNotFoundError(LookupError):
+    def __init__(self, conversation_id: str) -> None:
+        self.conversation_id = conversation_id
+        super().__init__(f"共创对话不存在：{conversation_id}")
+
+
 def _root() -> Path:
     return Path(config.PROJECTS_ROOT)
 
@@ -37,7 +52,7 @@ def _project_dir(project_id: str) -> Path:
     return _root() / project_id
 
 
-def _write_json(path: Path, payload: dict) -> None:
+def _write_json(path: Path, payload: dict | list[dict]) -> None:
     path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -131,18 +146,80 @@ def update_project(project_id: str, **patch: object) -> dict:
     return project
 
 
-def save_script(project_id: str, script: ScriptModel) -> None:
-    project = get_project(project_id)
-    payload = script.model_dump(mode="json")
-    _write_json(_project_dir(project_id) / "script.json", payload)
-    project["script"] = payload
-    _write_json(_project_dir(project_id) / "project.json", project)
-
-
 def load_script(project_id: str) -> ScriptModel | None:
     _read_project(project_id)
     payload = _script_payload(project_id)
     return ScriptModel.model_validate(payload) if payload is not None else None
+
+
+def _script_versions_file(project_id: str) -> Path:
+    return _project_dir(project_id) / "script_versions.json"
+
+
+def _write_script_versions(project_id: str, versions: list[ScriptVersion]) -> None:
+    _write_json(
+        _script_versions_file(project_id),
+        [version.model_dump(mode="json") for version in versions],
+    )
+
+
+def load_script_versions(project_id: str) -> list[ScriptVersion]:
+    project = _read_project(project_id)
+    versions_file = _script_versions_file(project_id)
+    if versions_file.is_file():
+        payload = json.loads(versions_file.read_text(encoding="utf-8"))
+        if not isinstance(payload, list):
+            raise ValueError("script_versions.json 必须是数组")
+        return [ScriptVersion.model_validate(item) for item in payload]
+
+    current = _script_payload(project_id)
+    if current is None:
+        return []
+    baseline = ScriptVersion(
+        id=uuid4().hex[:12],
+        version_number=1,
+        created_at=str(project.get("created_at") or datetime.now(UTC).isoformat()),
+        source="legacy_import",
+        script=ScriptModel.model_validate(current),
+    )
+    _write_script_versions(project_id, [baseline])
+    return [baseline]
+
+
+def save_script(
+    project_id: str,
+    script: ScriptModel,
+    *,
+    source: Literal[
+        "legacy_import",
+        "template_generation",
+        "candidate_selection",
+        "manual_save",
+    ] = "manual_save",
+) -> None:
+    project = get_project(project_id)
+    payload = script.model_dump(mode="json")
+    current = _script_payload(project_id)
+    versions = load_script_versions(project_id)
+    if current == payload:
+        return
+
+    _write_json(_project_dir(project_id) / "script.json", payload)
+    versions.append(
+        ScriptVersion(
+            id=uuid4().hex[:12],
+            version_number=max(
+                (version.version_number for version in versions), default=0
+            )
+            + 1,
+            created_at=datetime.now(UTC).isoformat(),
+            source=source,
+            script=script,
+        )
+    )
+    _write_script_versions(project_id, versions)
+    project["script"] = payload
+    _write_json(_project_dir(project_id) / "project.json", project)
 
 
 def save_research(project_id: str, research: ResearchProfile) -> ResearchProfile:
@@ -155,6 +232,66 @@ def save_research(project_id: str, research: ResearchProfile) -> ResearchProfile
 
 def load_research(project_id: str) -> ResearchProfile:
     return ResearchProfile.model_validate(_research_payload(project_id))
+
+
+def save_ip_profile(project_id: str, profile: IPProfile) -> IPProfile:
+    _read_project(project_id)
+    _write_json(
+        _project_dir(project_id) / "ip_profile.json",
+        profile.model_dump(mode="json"),
+    )
+    return profile
+
+
+def load_ip_profile(project_id: str) -> IPProfile:
+    _read_project(project_id)
+    profile_file = _project_dir(project_id) / "ip_profile.json"
+    if profile_file.is_file():
+        return IPProfile.model_validate(_read_json(profile_file))
+
+    from ..scriptgen.ip_profile import rule_ip_profile
+
+    return rule_ip_profile(load_research(project_id))
+
+
+def _creative_conversation_file(project_id: str, conversation_id: str) -> Path:
+    if PROJECT_ID_PATTERN.fullmatch(conversation_id) is None:
+        raise CreativeConversationNotFoundError(conversation_id)
+    return _project_dir(project_id) / "creative_conversations" / f"{conversation_id}.json"
+
+
+def save_creative_conversation(
+    project_id: str, conversation: CreativeConversation
+) -> CreativeConversation:
+    _read_project(project_id)
+    if conversation.project_id != project_id:
+        raise ValueError("共创对话与项目不匹配")
+    conversation_file = _creative_conversation_file(project_id, conversation.id)
+    conversation_file.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(conversation_file, conversation.model_dump(mode="json"))
+    return conversation
+
+
+def load_creative_conversation(
+    project_id: str, conversation_id: str
+) -> CreativeConversation:
+    _read_project(project_id)
+    conversation_file = _creative_conversation_file(project_id, conversation_id)
+    if not conversation_file.is_file():
+        raise CreativeConversationNotFoundError(conversation_id)
+    return CreativeConversation.model_validate(_read_json(conversation_file))
+
+
+def list_creative_conversations(project_id: str) -> list[CreativeConversation]:
+    _read_project(project_id)
+    conversations_dir = _project_dir(project_id) / "creative_conversations"
+    if not conversations_dir.is_dir():
+        return []
+    conversations = [
+        CreativeConversation.model_validate(_read_json(path))
+        for path in conversations_dir.glob("*.json")
+    ]
+    return sorted(conversations, key=lambda item: item.updated_at, reverse=True)
 
 
 def save_script_bundle(project_id: str, bundle: ScriptBundle) -> ScriptBundle:
@@ -194,6 +331,40 @@ def thumbnail_path(project_id: str, shot_index: int) -> Path:
     work_dir = _project_dir(project_id) / "work"
     work_dir.mkdir(parents=True, exist_ok=True)
     return work_dir / f"thumb_{index}.jpg"
+
+
+def bgm_path(project_id: str, filename: str | None = None) -> Path:
+    """Return the single project BGM path, creating its directory."""
+    project = _read_project(project_id)
+    metadata = project.get("bgm") or {}
+    stored_name = filename or metadata.get("filename") or "bgm.mp3"
+    if not isinstance(stored_name, str) or Path(stored_name).name != stored_name:
+        raise ValueError("BGM 鏂囦欢鍚嶄笉鍚堟硶")
+    audio_dir = _project_dir(project_id) / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    return audio_dir / stored_name
+
+
+def get_bgm(project_id: str) -> dict | None:
+    return _read_project(project_id).get("bgm")
+
+
+def save_bgm(project_id: str, metadata: dict) -> dict:
+    _read_project(project_id)
+    update_project(project_id, bgm=metadata)
+    return metadata
+
+
+def delete_bgm(project_id: str) -> dict | None:
+    project = _read_project(project_id)
+    metadata = project.get("bgm")
+    if not metadata:
+        return None
+    filename = metadata.get("filename") if isinstance(metadata, dict) else None
+    if isinstance(filename, str):
+        bgm_path(project_id, filename).unlink(missing_ok=True)
+    update_project(project_id, bgm=None)
+    return metadata
 
 
 def list_materials(project_id: str) -> list[dict]:

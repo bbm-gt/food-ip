@@ -6,6 +6,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import (
+    audio_router,
+    creative_router,
     edits_router,
     materials_router,
     polish_router,
@@ -23,7 +25,11 @@ from .config import (
     FRONTEND_DIST,
     PROJECTS_ROOT,
 )
-from .core.store import InvalidProjectIdError, ProjectNotFoundError
+from .core.store import (
+    CreativeConversationNotFoundError,
+    InvalidProjectIdError,
+    ProjectNotFoundError,
+)
 
 
 app = FastAPI(title="food-ip")
@@ -36,6 +42,8 @@ app.add_middleware(
 )
 app.include_router(projects_router, prefix="/api")
 app.include_router(script_router, prefix="/api")
+app.include_router(creative_router, prefix="/api")
+app.include_router(audio_router, prefix="/api")
 app.include_router(materials_router, prefix="/api")
 app.include_router(edits_router, prefix="/api")
 app.include_router(render_router, prefix="/api")
@@ -75,6 +83,17 @@ def invalid_project_id_handler(
     return JSONResponse(
         status_code=status.HTTP_400_BAD_REQUEST,
         content={"message": "项目 ID 格式不合法"},
+    )
+
+
+@app.exception_handler(CreativeConversationNotFoundError)
+def creative_conversation_not_found_handler(
+    request: Request, exc: CreativeConversationNotFoundError
+) -> JSONResponse:
+    del request
+    return JSONResponse(
+        status_code=status.HTTP_404_NOT_FOUND,
+        content={"message": f"共创对话不存在：{exc.conversation_id}"},
     )
 
 

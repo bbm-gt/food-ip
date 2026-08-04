@@ -40,7 +40,13 @@ def preview_junction_route(
 
 @render_router.post("/projects/{project_id}/render/export")
 def start_export_route(project_id: str) -> dict[str, str]:
-    return {"job_id": start_export(project_id)}
+    try:
+        return {"job_id": start_export(project_id)}
+    except (RenderError, OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"message": f"无法开始导出: {exc}"},
+        ) from exc
 
 
 @jobs_router.get("/jobs/{job_id}")

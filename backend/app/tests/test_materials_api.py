@@ -48,6 +48,26 @@ def test_material_upload_list_thumbnail_duplicate_and_delete(
         )
     assert duplicate.status_code == 409
 
+    with sample_shots[1].open("rb") as source:
+        replaced = materials_client.put(
+            f"/api/projects/{project_id}/materials/1",
+            files={"file": ("replacement.mp4", source, "video/mp4")},
+        )
+    assert replaced.status_code == 200
+    assert replaced.json()["shot_index"] == 1
+    assert materials_client.get(
+        f"/api/projects/{project_id}/materials/1/thumbnail"
+    ).status_code == 200
+
+    failed_replace = materials_client.put(
+        f"/api/projects/{project_id}/materials/1",
+        files={"file": ("broken.mp4", b"not a video", "video/mp4")},
+    )
+    assert failed_replace.status_code == 400
+    assert materials_client.get(
+        f"/api/projects/{project_id}/materials/1/thumbnail"
+    ).status_code == 200
+
     invalid = materials_client.post(
         f"/api/projects/{project_id}/materials",
         data={"shot_index": "3"},

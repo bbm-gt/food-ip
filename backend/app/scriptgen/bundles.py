@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from .models import ResearchProfile, ScriptBundle, ScriptCandidate, ScriptModel, Shot
+from .quality import annotate_script_quality
 
 
 @dataclass(frozen=True)
@@ -346,7 +347,10 @@ def generate_script_bundle(
             difficulty=item.difficulty,  # type: ignore[arg-type]
             required_scenes=item.scenes,
             requires_owner=item.requires_owner,
-            script=_render_script(item.key, profile),
+            script=annotate_script_quality(
+                _render_script(item.key, profile),
+                profile,
+            ),
         )
         for item in chosen
     ]

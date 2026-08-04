@@ -1,7 +1,10 @@
 """Pydantic models shared by research, script generators and API routes."""
 
 import re
+from datetime import UTC, datetime
+from enum import Enum
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -154,6 +157,17 @@ class Shot(BaseModel):
     edit_note: str = ""
     common_mistakes: list[str] = Field(default_factory=list)
     retake_if: list[str] = Field(default_factory=list)
+    tone: str = ""
+    emotion: str = ""
+    speech_rate: str = ""
+    pause_guidance: str = ""
+    expression_guidance: str = ""
+
+
+class ScriptQualityRisk(BaseModel):
+    category: Literal["真实性", "可拍摄性", "IP一致性"]
+    message: str
+    shot_index: int | None = None
 
 
 class ScriptModel(BaseModel):
@@ -163,6 +177,7 @@ class ScriptModel(BaseModel):
     opening_hook: str
     cta: str
     shots: list[Shot]
+    quality_risks: list[ScriptQualityRisk] = Field(default_factory=list)
 
 
 class ScriptCandidate(BaseModel):
@@ -187,3 +202,127 @@ class ScriptBundle(BaseModel):
     generator: Literal["template", "ai", "template_fallback"] = "template"
     model_name: str = ""
     warnings: list[str] = Field(default_factory=list)
+
+
+class ScriptVersion(BaseModel):
+    id: str
+    version_number: int = Field(ge=1)
+    created_at: str
+    source: Literal[
+        "legacy_import",
+        "template_generation",
+        "candidate_selection",
+        "manual_save",
+    ]
+    script: ScriptModel
+
+
+class IPProfile(BaseModel):
+    persona_positioning: str = ""
+    core_audience: str = ""
+    core_promise: str = ""
+    memory_points: list[str] = Field(default_factory=list)
+    content_pillars: list[str] = Field(default_factory=list)
+    recurring_series: list[str] = Field(default_factory=list)
+    speaking_style: str = ""
+    evidence_assets: list[str] = Field(default_factory=list)
+    avoided_topics: list[str] = Field(default_factory=list)
+    conversion_path: list[str] = Field(default_factory=list)
+    confirmed: bool = False
+    confirmed_at: str | None = None
+
+
+class CreativeMode(str, Enum):
+    OWN_IDEA = "own_idea"
+    AI_RECOMMENDATION = "ai_recommendation"
+    REVISE_SCRIPT = "revise_script"
+
+
+class ConversationStage(str, Enum):
+    COLLECTING = "collecting"
+    BRIEF_READY = "brief_ready"
+    CONFIRMED = "confirmed"
+
+
+class FactScope(str, Enum):
+    EPISODE_ONLY = "episode_only"
+    LONG_TERM_PROFILE = "long_term_profile"
+
+
+class EvidenceSource(str, Enum):
+    RESEARCH_PROFILE = "research_profile"
+    IP_PROFILE = "ip_profile"
+    OWNER_MESSAGE = "owner_message"
+
+
+class CreativeEvidence(BaseModel):
+    statement: str = Field(min_length=1)
+    source: EvidenceSource
+    verified: bool = False
+    fact_scope: FactScope | None = None
+
+
+class CreativeBrief(BaseModel):
+    idea: str = ""
+    goal: str = ""
+    target_customer: str = ""
+    key_message: str = ""
+    evidence: list[CreativeEvidence] = Field(default_factory=list)
+    tone: str = ""
+    format: str = ""
+    shooting_constraints: list[str] = Field(default_factory=list)
+    cta: str = ""
+    confirmed: bool = False
+    confirmed_at: str | None = None
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+class CreativeMessage(BaseModel):
+    id: str = Field(default_factory=lambda: uuid4().hex[:12])
+    role: Literal["owner", "ai"]
+    content: str = Field(min_length=1)
+    fact_scope: FactScope | None = None
+    trust_status: Literal["untrusted", "assistant_synthesis"]
+    questions: list[str] = Field(default_factory=list)
+    reply_to_message_id: str | None = None
+    created_at: str = Field(default_factory=_utc_now)
+
+
+class TopicCard(BaseModel):
+    id: str
+    title: str
+    hook: str
+    angle: str
+    target_customer: str
+    ip_alignment: str
+    evidence_needed: list[str] = Field(default_factory=list)
+    shoot_difficulty: Literal["low", "medium", "high"]
+    estimated_duration_sec: int = Field(ge=15, le=180)
+    cta: str
+
+
+class TopicCardSet(BaseModel):
+    id: str
+    generated_at: str = Field(default_factory=_utc_now)
+    model_name: str = ""
+    cards: list[TopicCard] = Field(default_factory=list)
+    selected_topic_card_id: str | None = None
+
+
+class CreativeConversation(BaseModel):
+    id: str = Field(default_factory=lambda: uuid4().hex[:12])
+    project_id: str
+    mode: CreativeMode
+    stage: ConversationStage = ConversationStage.COLLECTING
+    research_snapshot: ResearchProfile
+    ip_profile_snapshot: IPProfile
+    source_script: ScriptModel | None = None
+    messages: list[CreativeMessage] = Field(default_factory=list)
+    brief: CreativeBrief | None = None
+    topic_card_set: TopicCardSet | None = None
+    last_error: str | None = None
+    created_at: str = Field(default_factory=_utc_now)
+    updated_at: str = Field(default_factory=_utc_now)

@@ -16,11 +16,12 @@ router = APIRouter(tags=["materials"])
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi"}
 
 
-@router.post("/projects/{project_id}/materials")
-def upload_material_route(
+def _save_uploaded_material(
     project_id: str,
-    shot_index: int = Form(...),
-    file: UploadFile = File(...),
+    shot_index: int,
+    file: UploadFile,
+    *,
+    replace: bool,
 ) -> dict:
     store.get_project(project_id)
     if shot_index < 0:
@@ -28,28 +29,45 @@ def upload_material_route(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"message": "拍摄序号必须是非负整数"},
         )
+
     extension = Path(file.filename or "").suffix.lower()
     if extension not in ALLOWED_VIDEO_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"message": "仅支持 MP4、MOV、MKV、AVI 视频文件"},
         )
-    if any(item["shot_index"] == shot_index for item in store.list_materials(project_id)):
+
+    exists = any(
+        item["shot_index"] == shot_index
+        for item in store.list_materials(project_id)
+    )
+    if exists and not replace:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"message": f"拍摄序号 {shot_index} 已存在"},
         )
+    if replace and not exists:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "素材不存在，无法替换"},
+        )
 
     destination = store.material_path(project_id, shot_index)
     thumbnail = store.thumbnail_path(project_id, shot_index)
+    temporary_destination = destination.with_name(f".{destination.stem}.upload.mp4")
+    temporary_thumbnail = thumbnail.with_name(f".{thumbnail.stem}.upload.jpg")
     try:
-        with destination.open("wb") as output:
+        temporary_destination.unlink(missing_ok=True)
+        temporary_thumbnail.unlink(missing_ok=True)
+        with temporary_destination.open("wb") as output:
             shutil.copyfileobj(file.file, output)
-        media_info = probe_video(destination)
-        make_thumbnail(destination, thumbnail)
+        media_info = probe_video(temporary_destination)
+        make_thumbnail(temporary_destination, temporary_thumbnail)
+        temporary_destination.replace(destination)
+        temporary_thumbnail.replace(thumbnail)
     except (OSError, MediaCommandError) as exc:
-        destination.unlink(missing_ok=True)
-        thumbnail.unlink(missing_ok=True)
+        temporary_destination.unlink(missing_ok=True)
+        temporary_thumbnail.unlink(missing_ok=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"message": f"视频处理失败：{exc}"},
@@ -61,6 +79,28 @@ def upload_material_route(
         **media_info,
     }
     return store.save_material(project_id, material)
+
+
+@router.post("/projects/{project_id}/materials")
+def upload_material_route(
+    project_id: str,
+    shot_index: int = Form(...),
+    file: UploadFile = File(...),
+) -> dict:
+    return _save_uploaded_material(
+        project_id, shot_index, file, replace=False
+    )
+
+
+@router.put("/projects/{project_id}/materials/{shot_index}")
+def replace_material_route(
+    project_id: str,
+    shot_index: int,
+    file: UploadFile = File(...),
+) -> dict:
+    return _save_uploaded_material(
+        project_id, shot_index, file, replace=True
+    )
 
 
 @router.get("/projects/{project_id}/materials")

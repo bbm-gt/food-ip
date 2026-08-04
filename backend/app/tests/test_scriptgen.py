@@ -52,3 +52,31 @@ def test_template_generator_supports_cuisines_and_fallback(cuisine: str) -> None
 def test_codex_generator_is_a_placeholder() -> None:
     with pytest.raises(NotImplementedError, match="二期接入"):
         get("codex").generate(BossInfo())
+
+
+def test_legacy_script_payload_gets_optional_t106_defaults() -> None:
+    script = ScriptModel.model_validate(
+        {
+            "title": "旧脚本",
+            "target_duration_seconds": 30,
+            "style": "竖屏口播",
+            "opening_hook": "开场",
+            "cta": "结尾",
+            "shots": [
+                {
+                    "shot_index": 1,
+                    "lines": "台词",
+                    "shooting_tips": "拍摄要点",
+                    "duration_hint_seconds": 30,
+                }
+            ],
+        }
+    )
+
+    shot = script.shots[0]
+    assert shot.tone == ""
+    assert shot.emotion == ""
+    assert shot.speech_rate == ""
+    assert shot.pause_guidance == ""
+    assert shot.expression_guidance == ""
+    assert script.quality_risks == []
