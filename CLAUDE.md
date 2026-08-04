@@ -2,14 +2,6 @@
 
 帮餐饮店老板低门槛产出「口播短视频」：脚本生成 → 拍摄 → 自动拼接 → 缝合处调节 →（二期）AI 润色。
 
-## 协作协议（重要，任何会话都遵守）
-
-- **Claude Code = 总指挥 + 验收官**：拆解任务、写任务规格书（`docs/tasks/NN-*.md`）、委托 Codex 执行、验收产出、迭代决策。**不亲自写实现类代码**。
-- **Codex = 技术执行者**：按规格书实现代码、搭工具链、修 bug、跑构建。
-- 每个任务规格书固定包含：**目标 / 验收标准 / 可改文件 / 禁止项**。
-- **Claude 验收**：git diff + 读关键文件 → 跑 pytest / tsc / build → 有运行时面则端到端验证 → 记录验收结果。不通过则反馈 Codex 迭代（≤3 轮，超限 Claude 接管）。
-- 委托命令速查见 `docs/claude-codex-workflow.md`。
-
 ## 技术栈
 
 - 后端：Python 3.10+ + FastAPI + uvicorn；`imageio-ffmpeg` 内置静态 ffmpeg，并在缺少 ffprobe 时回退到 ffmpeg 探测

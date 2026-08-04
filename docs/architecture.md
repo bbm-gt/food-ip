@@ -1,6 +1,6 @@
-# 架构（浓缩版，供 Codex 执行时参考）
+# 架构（浓缩版）
 
-完整计划见 `C:\Users\HP\.claude\plans\merry-stargazing-hopper.md`。本文件是执行用的浓缩架构。
+完整计划见项目交接文档 `HANDOFF.md`。本文件是执行用的浓缩架构。
 
 ## 产品流水线
 
@@ -34,8 +34,7 @@ food-ip/
 │  ├─ api.md
 │  ├─ polish-interface.md
 │  ├─ deploy.md
-│  ├─ claude-codex-workflow.md
-│  └─ tasks/NN-*.md
+│  ├─ questionnaire-design.md
 └─ runtime/projects/<id>/     # gitignore；project.json script_bundle.json script.json shots/ work/ exports/
 ```
 
@@ -48,7 +47,7 @@ food-ip/
 - `ai.py` 调用 OpenAI 兼容的 Chat Completions JSON 输出，默认模型为 `deepseek-v4-flash`；输出经 Pydantic 与业务规则校验，失败时携带错误原因重试一次。
 - `ScriptBundle` 保存候选的适配分、理由、难度、场景与完整六镜头脚本；只有用户选择后才写入当前 `script.json`。
 - `template.py` 保留为旧版单脚本兼容入口。
-- `codex.py`（可选增强）：`codex exec --ephemeral -s read-only -o <out> -C <项目目录> "<prompt>"`，240s 超时+kill。（注意：`codex exec` 不接受 `--ask-for-approval`。）
+- `codex.py`（可选增强）：Codex AI 生成器占位，当前 raise NotImplementedError。
 - 输出 schema（`script.json`）：
   ```json
   { "title": "", "target_duration_seconds": 60, "style": "",

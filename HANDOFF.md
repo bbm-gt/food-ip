@@ -1,7 +1,7 @@
 # food-ip 项目交接文档（HANDOFF）
 
 > 生成日期：2026-08-03。本文件是任何 agent / 新会话接手本项目的**第一入口**。
-> 先读本文件 → 再读 `CLAUDE.md`（协作协议）→ 需要细节时查 `docs/architecture.md` 与各任务报告。
+> 先读本文件 → 再读 `CLAUDE.md` → 需要细节时查 `docs/architecture.md`。
 
 ---
 
@@ -57,8 +57,6 @@ food-ip/
 ├─ frontend/  src/App.tsx（状态与流程编排）+ src/views/（项目、问卷、脚本、素材、接缝、导出视图）
 ├─ docs/
 │  ├─ architecture.md  api.md  deploy.md  polish-interface.md  questionnaire-design.md
-│  ├─ claude-codex-workflow.md（委托协议 + 防幻觉）
-│  └─ tasks/  NN-*.md（规格书） + NN-report.md（Codex 汇报 + 验收官结论）
 └─ runtime/projects/<id>/   # 项目数据（gitignore）：project.json script.json shots/ work/ exports/ log/
 ```
 
@@ -71,17 +69,7 @@ food-ip/
 3. **项目 = 一个文件夹**：`runtime/projects/<id>/`，读写全经 `core/store.py`（含 path 安全校验）。
 4. **AI 润色二期接入方式**：输入=已渲染片段文件、输出=替换片段文件，加一个 provider 即可，不改引擎（见 `docs/polish-interface.md`）。
 
-## 6. 协作协议（Claude Code = 总指挥+验收官，Codex = 执行）
-
-- 完整协议见 `docs/claude-codex-workflow.md`。要点：
-  - 每个任务 = `docs/tasks/NN-*.md` 规格书（目标/验收/可改文件/禁止项），Codex 按它实现。
-  - 委托命令：`codex exec --skip-git-repo-check --ephemeral -s workspace-write -C <repo> -o <report> "<prompt>"`。
-  - **`codex exec` 不接受 `--ask-for-approval`**（顶层参数，传了报错）。
-  - **Codex 沙箱阻断子进程外网**：pip/npm install 必须在沙箱外（由总指挥配国内镜像执行）。
-  - 防幻觉：拆小任务 + 证据验收（真实 pytest 输出）+ 总指挥独立复验 + ≤3 轮迭代。
-- Codex CLI：默认使用 `PATH` 中的 `codex`；如未加入 `PATH`，通过 `.env` 的 `CODEX_BIN` 配置绝对路径。认证由本机 Codex 安装管理。
-
-## 7. 运行与测试
+## 6. 运行与测试
 
 ```bash
 # 后端测试（全部 34 个）
@@ -100,28 +88,26 @@ backend\.venv\Scripts\python.exe backend\scripts\e2e_smoke.py
 
 环境变量（`.env`）：`CODEX_BIN`、`PROJECTS_ROOT`（默认 `runtime/projects`）、`CORS_ORIGINS`、`FRONTEND_DIST`。
 
-## 8. 已知限制 / 环境偏差（重要）
+## 7. 已知限制 / 环境偏差（重要）
 
 1. **无独立 ffprobe**：`config.FFPROBE_PATH=None`，`engine/media.py` 用 ffmpeg 回退解析（实测时长准确）。建议后续装正式 ffmpeg/ffprobe。
-2. **Python 3.12.13 而非 3.10**：机器原装 3.10 是裁剪版（缺 venv），用 codex-runtimes 缓存解释器建 venv。兼容性已验证。
-3. **Codex 沙箱断网**：依赖安装必须由总指挥在沙箱外执行（pip 清华镜像 / npm npmmirror）。
+2. **Python 3.12.13 而非 3.10**：机器原装 3.10 是裁剪版（缺 venv），兼容性已验证。
 4. **本机系统代理**：Python httpx 默认 `trust_env=True` 会走系统代理导致 localhost 502，测试脚本必须 `trust_env=False`（`e2e_smoke.py` 已修）。**curl 在 Git Bash 传中文 JSON body 会编码损坏**，调试用 python httpx。
 5. **crossfade 已渲染**：主渲染和接缝预览均使用 `xfade + acrossfade`，时长与 `timeline.total_duration` 一致。
 6. **前端仍使用轻量状态路由**：视图已从 `App.tsx` 拆到 `src/views/`；后续页面继续增长时可引入正式 router。
 
-## 9. v2 路线图（未实现，按优先级）
+## 8. v2 路线图（未实现，按优先级）
 
 1. **引导问卷升级**：`docs/questionnaire-design.md` 的 4 步引导（需给 `BossInfo` 加 `usp/story/cta_goal` 3 字段）。
 2. **AI 对话共创 agent**：老板与 AI 聊天打磨脚本（需 LLM 接入 + 流式，成本/规模化权衡已记录）。
 3. 正式 ffmpeg/ffprobe 安装（winget 或静态包）。
 4. 手机端 / 云端部署（`docs/deploy.md` 有思路：后端搬云 + 前端适配）。
 
-## 10. Git 历史
+## 9. Git 历史
 
 - `301516c` P0 基线 · `7f9b031` P1 脚本生成 · `b0d6d56` P2 素材+时间轴 · `4f78bf4` P3 拼接+导出 · （P4 + 本文件待提交）
 
-## 11. 下次接手建议
+## 10. 下次接手建议
 
 1. 先跑 `pytest` 确认基线绿。
-2. 若继续 P 系列 → 按「写规格书 → 委托 Codex → 独立复验」流程推进 v2 路线图。
-3. 若调产品 → 优先做问卷升级（用户已确认 MVP 后再优化问卷）。
+2. 若调产品 → 优先做问卷升级（用户已确认 MVP 后再优化问卷）。
