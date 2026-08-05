@@ -149,10 +149,10 @@ def _probe_audio_with_ffmpeg(path: Path, executable: str) -> dict[str, float | i
     result = _run([executable, "-hide_banner", "-i", str(path)], allow_nonzero=True)
     output = result.stderr
     if re.search(r"Stream[^\r\n]*Audio:", output) is None:
-        raise MediaCommandError("涓婁紶鏂囦欢涓病鏈夋湁鏁堥煶棰戞祦")
+        raise MediaCommandError("上传文件中没有有效音频流")
     duration_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", output)
     if duration_match is None:
-        raise MediaCommandError("鏃犳硶瑙ｆ瀽 BGM 鏃堕暱")
+        raise MediaCommandError("无法解析 BGM 时长")
     hours, minutes, seconds = duration_match.groups()
     duration = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
     return {"duration": max(0.0, duration), "has_audio": True}
@@ -162,12 +162,12 @@ def probe_audio(path: str | Path) -> dict[str, float | int | bool]:
     """Return basic metadata for a standalone audio file."""
     source = Path(path)
     if not source.is_file():
-        raise MediaCommandError(f"闊抽鏂囦欢涓嶅瓨鍦細{source}")
+        raise MediaCommandError(f"音频文件不存在：{source}")
     if config.FFPROBE_PATH:
         return _probe_audio_with_ffprobe(source, config.FFPROBE_PATH)
     if config.FFMPEG_PATH:
         return _probe_audio_with_ffmpeg(source, config.FFMPEG_PATH)
-    raise MediaCommandError("鏈壘鍒?ffprobe 鎴?ffmpeg")
+    raise MediaCommandError("未找到 ffprobe 或 ffmpeg")
 
 
 def make_thumbnail(

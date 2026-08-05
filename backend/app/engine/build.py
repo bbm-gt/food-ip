@@ -269,19 +269,19 @@ def validate_rendered_output(
 ) -> dict[str, float | int | bool]:
     """Verify the final file before it is exposed as a downloadable export."""
     if not output.is_file() or output.stat().st_size <= 0:
-        raise RenderError("瀵煎嚭鏂囦欢涓嶅瓨鍦ㄦ垨涓虹┖")
+        raise RenderError("导出文件不存在或为空")
     try:
         metadata = probe_video(output)
     except Exception as exc:
-        raise RenderError(f"瀵煎嚭缁撴灉鏃犳硶鎺㈡祴: {exc}") from exc
+        raise RenderError(f"导出结果无法探测: {exc}") from exc
     if not bool(metadata.get("has_audio")):
         raise RenderError("rendered output has no audio stream")
     if int(metadata.get("width", 0)) != 1080 or int(metadata.get("height", 0)) != 1920:
-        raise RenderError("瀵煎嚭缁撴灉鍒嗚辨巼涓嶆槸 1080x1920")
+        raise RenderError("导出结果分辨率不是 1080x1920")
     actual_duration = float(metadata.get("duration", 0.0))
     if abs(actual_duration - expected_duration) > duration_tolerance:
         raise RenderError(
-            f"瀵煎嚭鏃堕暱涓嶅悎棰勬湡: {actual_duration:.3f}s / {expected_duration:.3f}s"
+            f"导出时长不合预期: {actual_duration:.3f}s / {expected_duration:.3f}s"
         )
     return metadata
 

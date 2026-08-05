@@ -339,7 +339,7 @@ def bgm_path(project_id: str, filename: str | None = None) -> Path:
     metadata = project.get("bgm") or {}
     stored_name = filename or metadata.get("filename") or "bgm.mp3"
     if not isinstance(stored_name, str) or Path(stored_name).name != stored_name:
-        raise ValueError("BGM 鏂囦欢鍚嶄笉鍚堟硶")
+        raise ValueError("BGM 文件名不合法")
     audio_dir = _project_dir(project_id) / "audio"
     audio_dir.mkdir(parents=True, exist_ok=True)
     return audio_dir / stored_name
