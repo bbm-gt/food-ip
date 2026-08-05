@@ -315,3 +315,55 @@ def test_ai_quality_failure_falls_back_to_template(
     assert client.get(
         f"/api/projects/{project_id}/script-bundles/latest"
     ).status_code == 200
+
+
+def test_hook_phrase_allowed_in_opening_hook() -> None:
+    research = profile()
+    scored = ai._eligible_strategies(research, 3)
+    payload = generated_payload([item.key for item in scored])
+    payload["candidates"][0]["shots"][0]["lines"] = (
+        f"先别划走，{payload['candidates'][0]['shots'][0]['lines']}"
+    )
+    output = ai.AIBundleOutput.model_validate(payload)
+
+    ai._validate_quality(output, research, scored)  # 不应抛异常
+
+
+def test_cta_phrase_allowed_in_last_shot() -> None:
+    research = profile()
+    scored = ai._eligible_strategies(research, 3)
+    payload = generated_payload([item.key for item in scored])
+    last = payload["candidates"][-1]
+    new_cta = "想尝尝这个味道，收藏这条视频。"
+    last["cta"] = new_cta
+    last["shots"][5]["lines"] = f"{last['shots'][5]['lines']}{new_cta}"
+    output = ai.AIBundleOutput.model_validate(payload)
+
+    ai._validate_quality(output, research, scored)  # 不应抛异常
+
+
+def test_hook_phrase_rejected_outside_hook() -> None:
+    research = profile()
+    scored = ai._eligible_strategies(research, 3)
+    payload = generated_payload([item.key for item in scored])
+    payload["candidates"][0]["shots"][2]["lines"] = (
+        f"先别划走，{payload['candidates'][0]['shots'][2]['lines']}"
+    )
+    output = ai.AIBundleOutput.model_validate(payload)
+
+    with pytest.raises(ai.AIResponseError, match="开场钩子"):
+        ai._validate_quality(output, research, scored)
+
+
+def test_cta_phrase_stacking_rejected() -> None:
+    research = profile()
+    scored = ai._eligible_strategies(research, 3)
+    payload = generated_payload([item.key for item in scored])
+    last = payload["candidates"][-1]
+    new_cta = "想尝尝这个味道，收藏这条视频，到店报到。"
+    last["cta"] = new_cta
+    last["shots"][5]["lines"] = f"{last['shots'][5]['lines']}{new_cta}"
+    output = ai.AIBundleOutput.model_validate(payload)
+
+    with pytest.raises(ai.AIResponseError, match="堆叠"):
+        ai._validate_quality(output, research, scored)

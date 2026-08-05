@@ -208,7 +208,7 @@ def _build_messages(
 9. 分镜说明写给第一次拍视频的人：写清竖屏、倍率、距离/高度、机位、起止动作、声音、光线、剪辑和重拍条件。
 10. 默认手机竖屏；靠近炭火、刀具、热油时提醒保持安全距离，不设计危险运镜。
 11. opening_hook 必须原样出现在第 1 镜头台词中；cta 必须原样出现在第 6 镜头台词中，确保页面字段和实际拍摄台词一致。
-12. 输出前先自行检查连贯性和事实依据。避免“先别划走”“我赌你”“天花板”“闭眼冲”等夸张网感套话。
+12. 输出前先自行检查连贯性和事实依据。“先别划走”最多只在第1镜头开场出现一次；“收藏这条视频”“先收藏”“报到”最多只在第6镜头结尾出现一次；不要在同一套里堆叠多个这类话术。避免“我赌你”“天花板”“闭眼冲”“导航搜”等夸大或假权威表达。
 13. 经营年限只能表述为“开店/做餐饮 X 年”；问卷没有明确同一街道经营年限时，不得写“在这条街 X 年”。
 14. 每个镜头额外给出老板表达指导：tone、emotion、speech_rate、pause_guidance、expression_guidance；这些是拍摄提示，不要改变事实内容。
 
@@ -366,18 +366,32 @@ def _validate_quality(
         errors.append("三套脚本的 CTA 存在重复")
 
     all_text = json.dumps(output.model_dump(mode="json"), ensure_ascii=False)
-    for phrase in (
-        "报到",
-        "收藏这条视频",
-        "先收藏",
-        "先别划走",
-        "我赌你",
-        "天花板",
-        "闭眼冲",
-        "导航搜",
-    ):
+    # 夸大或假权威表达：任何位置都不允许。
+    for phrase in ("我赌你", "天花板", "闭眼冲", "导航搜"):
         if phrase in all_text:
-            errors.append(f"包含禁用表达：{phrase}")
+            errors.append(f"包含夸大或假权威表达：{phrase}")
+    # 语境话术：只在合适位置最多出现一次；堆叠仍不合格。
+    for candidate in output.candidates:
+        shots = candidate.shots
+        if not shots:
+            continue
+        hook_lines = shots[0].lines
+        cta_lines = shots[-1].lines
+        body_text = "\n".join(
+            "\n".join((shot.lines, shot.subtitle, "、".join(shot.action_steps)))
+            for shot in shots[1:-1]
+        )
+        if "先别划走" in body_text or "先别划走" in cta_lines:
+            errors.append(f"{candidate.strategy} 的「先别划走」只能用于开场钩子")
+        if "先别划走" in hook_lines and hook_lines.count("先别划走") > 1:
+            errors.append(f"{candidate.strategy} 的开场钩子重复使用「先别划走」")
+        cta_phrases = ("收藏这条视频", "先收藏", "报到")
+        used_in_cta = [phrase for phrase in cta_phrases if phrase in cta_lines]
+        for phrase in cta_phrases:
+            if phrase in body_text or phrase in hook_lines:
+                errors.append(f"{candidate.strategy} 的「{phrase}」只能用于结尾 CTA")
+        if len(used_in_cta) >= 2:
+            errors.append(f"{candidate.strategy} 的结尾 CTA 堆叠了多个收藏/报到话术")
     if "\\" in all_text:
         errors.append("脚本仍包含未清洗的反斜杠菜名分隔符")
     if "这条街" in all_text and "街" not in profile.store.business_district:
