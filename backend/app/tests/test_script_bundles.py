@@ -93,6 +93,23 @@ def test_bundle_respects_no_owner_and_no_kitchen_constraints() -> None:
     assert "kitchen" not in strategies
 
 
+def test_rule_bundle_cta_is_goal_aware_and_ban_phrase_free() -> None:
+    profile = ResearchProfile(
+        store=StoreProfile(restaurant_name="糖棠甜品", signature_dishes=["杨枝甘露"]),
+        audience=AudienceProfile(content_goal="团购转化"),
+        shooting=ShootingProfile(),
+    )
+
+    bundle = generate_script_bundle(profile)
+    cta = bundle.candidates[0].script.cta
+
+    # 与 AI 路径目标文案一致：体现 content_goal 且不使用禁用表达。
+    assert cta == "想尝尝杨枝甘露的话，可以看看糖棠甜品现在的团购套餐。"
+    assert "团购" in cta
+    for banned in ("先收藏", "收藏这条视频", "报到", "先别划走"):
+        assert banned not in cta
+
+
 @pytest.fixture
 def bundle_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(config, "PROJECTS_ROOT", str(tmp_path / "projects"))

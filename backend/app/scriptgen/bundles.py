@@ -44,18 +44,23 @@ def _allocate_durations(target: int) -> list[int]:
 
 
 def _cta(profile: ResearchProfile) -> str:
+    # 与 AI 路径 _required_ctas 的目标文案保持一致，规避禁用表达
+    # （先收藏/收藏这条视频/报到 等），并优先体现 content_goal。
     restaurant = profile.store.restaurant_name.strip() or "这家小店"
-    dish = _dishes(profile)
+    main_dish = next(
+        (dish.strip() for dish in profile.store.signature_dishes if dish.strip()),
+        "招牌菜",
+    )
     goal = profile.audience.content_goal
     if goal == "团购转化":
-        return f"想尝尝{dish}，先收藏这条视频，再看看{restaurant}现在的团购。"
+        return f"想尝尝{main_dish}的话，可以看看{restaurant}现在的团购套餐。"
     if goal == "账号涨粉":
         return f"关注{restaurant}，下一条继续带你看一家小店每天真实发生的事。"
     if goal == "建立信任":
         return f"我们把过程拍给你看，也欢迎你到{restaurant}亲自验证。"
     if goal == "品牌认知":
-        return f"记住{restaurant}和{dish}，下次想吃这一口时就来找我们。"
-    return f"想尝尝{dish}，收藏这条视频，到{restaurant}报到。"
+        return f"记住{restaurant}和{main_dish}，下次想吃这一口时就来找我们。"
+    return f"想尝尝{main_dish}，来{restaurant}坐坐，看看今天现做的这口味道。"
 
 
 def _shots(
