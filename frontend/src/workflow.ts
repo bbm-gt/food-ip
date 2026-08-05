@@ -9,7 +9,7 @@ import type {
 
 export type ProjectStageKey = 'research' | 'ip' | 'creative' | 'script' | 'materials' | 'video'
 export type ProjectStageStatus = 'complete' | 'current' | 'pending' | 'skipped'
-export type ResumeView = 'setup' | 'candidates' | 'materials' | 'edit' | 'export'
+export type ResumeView = 'setup' | 'ip' | 'creative' | 'candidates' | 'materials' | 'edit' | 'export'
 
 export interface ProjectStage {
   key: ProjectStageKey
@@ -128,7 +128,13 @@ export function deriveProjectWorkflow({
         ? 'materials'
         : creativeComplete
           ? 'candidates'
-          : 'setup'
+          : hasConversation
+            ? 'creative'
+            : ipComplete
+              ? 'creative'
+              : researchComplete
+                ? 'ip'
+                : 'setup'
 
   return { stages, resumeView, hasCompleteMaterials: materialComplete, hasFinalVideo }
 }

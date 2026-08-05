@@ -27,12 +27,15 @@ import {
 } from './api/client'
 import type { Bgm, CreativeConversation, Edits, ExportJob, IPProfile, JunctionEdit, Material, Project, ResearchProfile, ScriptBundle, ScriptCandidate, ScriptModel, ScriptVersion, Shot, Timeline } from './api/types'
 import { deriveProjectWorkflow, hasCompleteMaterials } from './workflow'
+import { useCreativeFlow } from './useCreativeFlow'
 import { EditView, ExportView, MaterialsView } from './views/ProductionViews'
 import { CandidatesView, ProjectsView, ScriptView, SetupView } from './views/ProjectViews'
+import { CreativeView } from './views/CreativeView'
+import { IpProfileView } from './views/IpProfileView'
 import { ProjectFlowProgress, ShootingChecklistView } from './views/WorkflowViews'
 import './app.css'
 
-type View = 'list' | 'setup' | 'candidates' | 'script' | 'shooting' | 'materials' | 'edit' | 'export'
+type View = 'list' | 'setup' | 'ip' | 'creative' | 'candidates' | 'script' | 'shooting' | 'materials' | 'edit' | 'export'
 
 const EMPTY_RESEARCH: ResearchProfile = {
   schema_version: 1,
@@ -115,7 +118,7 @@ export default function App() {
 
   function startNewProject() {
     setProject(null); setResearch(EMPTY_RESEARCH); setBundle(null); setScript(null); setScriptVersions([])
-    setMaterials([]); setIpProfile(null); setCreativeConversations([]); setExports([])
+    setMaterials([]); setIpProfile(null); setCreativeConversations([]); creativeFlow.setCurrentConversation(null); setExports([])
     setEdits(null); setTimeline(null); setExportJobId(null)
     setExportJob(null); setBgm(null); setMessage(''); setError(''); setView('setup')
   }
@@ -143,7 +146,7 @@ export default function App() {
       setProject(fullProject); setResearch(fullProject.research ?? EMPTY_RESEARCH); setBgm(fullProject.bgm ?? null)
       setBundle(fullProject.script_bundle); setScript(fullProject.script); setScriptVersions(versions)
       setMaterials(loadedMaterials); setTimeline(loadedTimeline); setEdits(loadedEdits)
-      setIpProfile(loadedIpProfile); setCreativeConversations(conversations); setExports(exportFiles)
+      setIpProfile(loadedIpProfile); setCreativeConversations(conversations); creativeFlow.setCurrentConversation(conversations[0] ?? null); setExports(exportFiles)
       setExportJobId(null); setExportJob(null); setSelectedJunction(0)
       setView(workflow.resumeView)
     } catch (reason) { setError(reason instanceof Error ? reason.message : '项目打开失败') }
@@ -156,11 +159,24 @@ export default function App() {
       const activeProject = project ?? await createProject(research.store.restaurant_name || '未命名餐饮项目')
       if (!project) setProject(activeProject)
       const savedResearch = await putResearch(activeProject.id, research)
-      const generated = await generateScriptBundle(activeProject.id, savedResearch)
-      const updatedProject = { ...activeProject, research: savedResearch, script_bundle: generated }
-      setProject(updatedProject); setResearch(savedResearch); setBundle(generated)
-      setView('candidates'); setMessage(`已由 ${generated.model_name || 'AI'} 生成并通过结构校验。`)
-    } catch (reason) { setError(reason instanceof Error ? reason.message : '脚本方案生成失败') }
+      setResearch(savedResearch)
+      if (activeProject.script_bundle || activeProject.script) {
+        // 旧项目已有脚本或候选方案：保持原流程，直接按调研重新生成并进入候选页
+        const generated = await generateScriptBundle(activeProject.id, savedResearch)
+        setProject({ ...activeProject, research: savedResearch, script_bundle: generated })
+        setBundle(generated)
+        setView('candidates')
+        setMessage(`已由 ${generated.model_name || 'AI'} 生成并通过结构校验。`)
+        return
+      }
+      // 新项目：调研完成后先确认 IP 定位，再进入 AI 共创
+      const loadedIp = await getIpProfile(activeProject.id)
+      setIpProfile(loadedIp)
+      creativeFlow.setCurrentConversation(null)
+      setProject({ ...activeProject, research: savedResearch })
+      setMessage('调研已保存，请先确认 IP 定位。')
+      setView(loadedIp.confirmed ? 'creative' : 'ip')
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '提交调研失败') }
     finally { setBusy(false) }
   }
 
@@ -311,6 +327,20 @@ export default function App() {
     exportStatus: exportJob?.status,
   }) : null
 
+  const creativeFlow = useCreativeFlow({
+    project,
+    ipProfile,
+    research,
+    setProject,
+    setBundle,
+    setIpProfile,
+    setCreativeConversations,
+    setView: (view) => setView(view as View),
+    setBusy,
+    setError,
+    setMessage,
+  })
+
   return <div className="app-shell">
     <header className="topbar"><button className="brand" type="button" onClick={() => void backToProjects()}><span className="brand-mark">食</span><span><strong>Food IP Studio</strong><small>餐饮短视频脚本工坊</small></span></button>{view !== 'list' && <button className="ghost-button" type="button" onClick={() => void backToProjects()}>返回项目</button>}</header>
     <main className="page">
@@ -320,6 +350,8 @@ export default function App() {
       {view !== 'list' && workflow && <ProjectFlowProgress workflow={workflow} />}
       {view === 'list' && <ProjectsView busy={busy} projects={projects} onNew={startNewProject} onOpen={(item) => void openProject(item)} />}
       {view === 'setup' && <SetupView project={project} script={script} research={research} busy={busy} onResearchChange={setResearch} onSubmit={(event) => void submitSetup(event)} />}
+      {view === 'ip' && project && ipProfile && <IpProfileView project={project} profile={ipProfile} busy={busy} onRegenerate={() => void creativeFlow.regenerateIpProfile()} onConfirm={() => void creativeFlow.confirmIpPositioning()} onBack={() => setView('setup')} />}
+      {view === 'creative' && project && <CreativeView project={project} conversation={creativeFlow.currentConversation} busy={busy} onStart={(mode) => creativeFlow.startCreativeConversation(mode)} onSend={(content, clientMessageId) => creativeFlow.sendCreativeMessage(content, clientMessageId)} onConfirm={() => creativeFlow.confirmCreativeBriefAndGenerateTopics()} onGenerateTopics={() => creativeFlow.regenerateTopicCards()} onGenerateFromTopic={(card) => creativeFlow.generateBundleFromTopic(card)} onGenerate={() => creativeFlow.generateBundleFromBrief()} onDirectGenerate={() => creativeFlow.directGenerateBundle()} onBack={creativeFlow.leaveCreative} />}
       {view === 'candidates' && project && bundle && <CandidatesView project={project} bundle={bundle} busy={busy} onSelect={(candidate) => void chooseCandidate(candidate)} onRegenerate={() => void regenerateBundle()} onSetup={() => setView('setup')} />}
       {view === 'script' && script && <ScriptView project={project} script={script} versions={scriptVersions} busy={busy} hasAlternatives={Boolean(bundle)} onScriptChange={setScript} onUpdateShot={updateShot} onSetup={() => setView('setup')} onCandidates={() => setView('candidates')} onChecklist={() => setView('shooting')} onMaterials={() => void openMaterials()} onSave={() => void saveCurrentScript()} />}
       {view === 'shooting' && project && script && <ShootingChecklistView project={project} script={script} onScript={() => setView('script')} onMaterials={() => void openMaterials()} />}

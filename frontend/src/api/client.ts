@@ -2,8 +2,10 @@ import type {
   Bgm,
   BossInfo,
   CreativeConversation,
+  CreativeMode,
   Edits,
   ExportJob,
+  FactScope,
   IPProfile,
   Material,
   Project,
@@ -14,6 +16,7 @@ import type {
   ScriptModel,
   ScriptVersion,
   Timeline,
+  TopicCardSet,
 } from './types'
 
 const API_BASE = '/api'
@@ -130,6 +133,89 @@ export function getIpProfile(projectId: string): Promise<IPProfile> {
 export function listCreativeConversations(projectId: string): Promise<CreativeConversation[]> {
   return request<CreativeConversation[]>(
     `/projects/${encodeURIComponent(projectId)}/creative-conversations`,
+  )
+}
+
+export function generateIpProfileDraft(projectId: string): Promise<IPProfile> {
+  return request<IPProfile>(
+    `/projects/${encodeURIComponent(projectId)}/ip-profile/draft`,
+    { method: 'POST' },
+  )
+}
+
+export function confirmIpProfile(projectId: string): Promise<IPProfile> {
+  return request<IPProfile>(
+    `/projects/${encodeURIComponent(projectId)}/ip-profile/confirm`,
+    { method: 'POST' },
+  )
+}
+
+export function createCreativeConversation(
+  projectId: string,
+  mode: CreativeMode,
+): Promise<CreativeConversation> {
+  return request<CreativeConversation>(
+    `/projects/${encodeURIComponent(projectId)}/creative-conversations`,
+    { method: 'POST', body: JSON.stringify({ mode }) },
+  )
+}
+
+export function addOwnerMessage(
+  projectId: string,
+  conversationId: string,
+  content: string,
+  factScope: FactScope,
+  clientMessageId: string,
+): Promise<CreativeConversation> {
+  return request<CreativeConversation>(
+    `/projects/${encodeURIComponent(projectId)}/creative-conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        content,
+        fact_scope: factScope,
+        client_message_id: clientMessageId,
+      }),
+    },
+  )
+}
+
+export function confirmCreativeBrief(
+  projectId: string,
+  conversationId: string,
+): Promise<CreativeConversation> {
+  return request<CreativeConversation>(
+    `/projects/${encodeURIComponent(projectId)}/creative-conversations/${encodeURIComponent(conversationId)}/brief/confirm`,
+    { method: 'POST' },
+  )
+}
+
+export function generateTopicCards(
+  projectId: string,
+  conversationId: string,
+  cardCount = 4,
+): Promise<TopicCardSet> {
+  return request<TopicCardSet>(
+    `/projects/${encodeURIComponent(projectId)}/creative-conversations/${encodeURIComponent(conversationId)}/topic-cards/ai`,
+    { method: 'POST', body: JSON.stringify({ card_count: cardCount }) },
+  )
+}
+
+export function generateFromBrief(
+  projectId: string,
+  conversationId: string,
+  candidateCount = 3,
+  topicCardId?: string,
+): Promise<ScriptBundle> {
+  return request<ScriptBundle>(
+    `/projects/${encodeURIComponent(projectId)}/creative-conversations/${encodeURIComponent(conversationId)}/script-bundles/ai`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        candidate_count: candidateCount,
+        topic_card_id: topicCardId ?? null,
+      }),
+    },
   )
 }
 
