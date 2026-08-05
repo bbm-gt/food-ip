@@ -18,6 +18,7 @@ from ..core.store import (
 from ..scriptgen.bundles import generate_script_bundle
 from ..scriptgen.ai import (
     AIConfigurationError,
+    AIResponseError,
     AIScriptError,
     generate_ai_script_bundle,
 )
@@ -119,6 +120,21 @@ def generate_ai_script_bundle_route(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"message": str(exc)}
         ) from exc
+    except AIResponseError as exc:
+        # AI 返回结构错误 / schema 校验失败 / 质量检查失败 → 规则模板兜底，
+        # 保证用户始终有可用方案；不吞掉配置缺失(503)与服务异常(502)。
+        fallback = generate_script_bundle(body.research, body.candidate_count)
+        fallback = fallback.model_copy(
+            update={
+                "generator": "template_fallback",
+                "model_name": "",
+                "warnings": [
+                    *fallback.warnings,
+                    f"AI 生成未通过质检，已用规则模板兜底：{exc}",
+                ],
+            }
+        )
+        return save_script_bundle(project_id, fallback)
     except AIScriptError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

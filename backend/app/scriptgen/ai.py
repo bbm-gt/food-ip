@@ -139,16 +139,32 @@ def _required_ctas(
         "pain_point": f"顾客关心的问题，{restaurant}愿意用真实过程回答。",
         "daily": f"这就是{restaurant}每天真实发生的事。",
     }
+    # 目标感知：只有排第一的候选 CTA 体现老板选定的内容目标；
+    # 其余候选仍保持三种不同动作类型，满足「三套 CTA 差异 + 最多一套到店」质量门禁。
+    goal = profile.audience.content_goal
+    goal_first = {
+        "团购转化": f"想尝尝{main_dish}的话，可以看看{restaurant}现在的团购套餐。",
+        "账号涨粉": f"关注{restaurant}，下一条继续带你看一家小店每天真实发生的事。",
+        "建立信任": f"我们把过程拍给你看，也欢迎你到{restaurant}亲自验证。",
+        "品牌认知": f"记住{restaurant}和{main_dish}，下次想吃这一口时就来找我们。",
+        "吸引到店": f"想尝尝{main_dish}，来{restaurant}坐坐，看看今天现做的这口味道。",
+    }
+    location = f"我们在{district}，" if district else ""
     result: dict[str, str] = {}
     for index, strategy in enumerate(strategies):
         if index == 0:
+            result[strategy.key] = goal_first[goal]
+        elif index == 1 and goal in {"账号涨粉", "品牌认知"}:
             result[strategy.key] = comment_questions[strategy.key]
+        elif index == 2 and goal == "品牌认知":
+            result[strategy.key] = (
+                f"关注我们，下一条继续拍{follow_topics[strategy.key]}。"
+            )
         elif index == 1:
             result[strategy.key] = (
                 f"关注我们，下一条继续拍{follow_topics[strategy.key]}。"
             )
         elif index == 2:
-            location = f"我们在{district}，" if district else ""
             result[strategy.key] = (
                 f"{location}想尝{main_dish}，路过时可以来店里看看。"
             )

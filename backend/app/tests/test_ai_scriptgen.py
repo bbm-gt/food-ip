@@ -262,3 +262,56 @@ def test_ai_endpoint_does_not_replace_bundle_without_key(
     assert client.get(
         f"/api/projects/{project_id}/script-bundles/latest"
     ).status_code == 404
+
+
+def test_group_buy_goal_injects_group_buy_cta_in_top_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    research = profile().model_copy(
+        update={
+            "audience": profile().audience.model_copy(
+                update={"content_goal": "团购转化"}
+            ),
+        }
+    )
+    strategies = [item.key for item in ai._eligible_strategies(research, 3)]
+    monkeypatch.setattr(
+        ai, "_request_json", lambda messages: generated_payload(strategies)
+    )
+
+    bundle = ai.generate_ai_script_bundle(research)
+
+    assert bundle.generator == "ai"
+    assert len(bundle.candidates) == 3
+    ctas = [candidate.script.cta for candidate in bundle.candidates]
+    assert "团购" in ctas[0]
+    assert len(set(ctas)) == 3
+
+
+def test_ai_quality_failure_falls_back_to_template(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ..api import script as script_api
+
+    monkeypatch.setattr(config, "PROJECTS_ROOT", str(tmp_path / "projects"))
+    client = TestClient(app)
+    project_id = client.post("/api/projects", json={"name": "AI 兜底测试"}).json()["id"]
+
+    def boom(*args: object, **kwargs: object) -> object:
+        raise ai.AIResponseError("两次输出均未通过质量校验")
+
+    monkeypatch.setattr(script_api, "generate_ai_script_bundle", boom)
+
+    response = client.post(
+        f"/api/projects/{project_id}/script-bundles/ai",
+        json={"research": profile().model_dump(mode="json"), "candidate_count": 3},
+    )
+
+    assert response.status_code == 200
+    bundle = response.json()
+    assert bundle["generator"] == "template_fallback"
+    assert len(bundle["candidates"]) == 3
+    assert any("兜底" in warning for warning in bundle["warnings"])
+    assert client.get(
+        f"/api/projects/{project_id}/script-bundles/latest"
+    ).status_code == 200
