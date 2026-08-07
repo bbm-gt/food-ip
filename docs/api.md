@@ -102,11 +102,16 @@
 - `200`：由规则选题、AI 成稿并经程序质检的 `ScriptBundle`。`generator` 为 `ai`，`model_name` 记录实际配置的模型。
 - 每个 `shot` 额外包含镜头目的、主体、动作步骤、手机机位、运镜、声音、光线、道具、字幕、剪辑提示、常见错误、重拍条件，以及语气、情绪、语速、停顿和表达方式。
 - `script.quality_risks` 为生成后的轻量风险提示，分类为真实性、可拍摄性和 IP 一致性；提示不会自动改写脚本，也不构成法律审核。
-- `502`：模型服务异常或两次输出均未通过校验；`503`：未配置或密钥无效。失败不会覆盖最近一次方案。
+- `ScriptBundle` 可选包含 `review` 与 `review_error`（AI 路径生成并通过程序硬校验后自动附加）：
+  - `review`：AI 编导 9 维审稿结果（每候选含各维度 1-10 分、`overall_score`、`issues`、`strengths`、`should_revise`）。
+  - `review_error`：仅当审稿失败时存在，表示审稿未完成；**不代表脚本生成失败**——候选脚本仍正常返回，只记录 warning。
+  - 两个字段均为可选；旧数据没有这些字段仍能正常读取。
+- 程序质检失败（`AIResponseError`）→ 正常 `200`，返回 `generator=template_fallback` 的规则模板兜底方案（写入 `script_bundle.json`，会覆盖最近一次方案），`warnings` 注明原因。
+- `502`：模型服务异常（超时/连接/429/截断等）；`503`：未配置或密钥无效。两者失败都不会覆盖最近一次方案。
 
 ### `GET /api/projects/{project_id}/script-bundles/latest`
 
-- `200`：最近生成的 `ScriptBundle`。
+- `200`：最近生成的 `ScriptBundle`；AI 路径生成的方案同样包含可选的 `review` / `review_error`。
 - 错误：`400`、`404`（项目或方案不存在）。
 
 ### `POST /api/projects/{project_id}/script-bundles/{bundle_id}/select/{script_id}`

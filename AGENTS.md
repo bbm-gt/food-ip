@@ -28,7 +28,7 @@ backend/.venv/Scripts/python.exe -m uvicorn backend.app.main:app --reload --port
 backend/app/
   api/          REST 路由：项目、脚本、素材、编辑、导出、润色
   core/store.py 文件夹持久化和兼容读取
-  scriptgen/    调研模型、规则选题、DeepSeek 生成与本地质检
+  scriptgen/    调研模型、规则选题、DeepSeek 生成、本地质检与 AI 编导审稿
   engine/       时间轴、媒体探测、接缝预览、FFmpeg 成片导出
   polish/       AI 视频润色契约及尚未配置的 null provider
   tests/        pytest 测试
@@ -44,6 +44,8 @@ runtime/projects/<id>/
 
 - 项目采用**文件夹持久化**，每个项目的数据位于 `runtime/projects/<id>/`；读写集中在 `backend/app/core/store.py`。
 - 当前 AI 脚本主路径是**规则选题 + DeepSeek 结构化生成 + 程序质检**，入口为 `POST /api/projects/{id}/script-bundles/ai`。规则方案接口仍保留，供离线或兼容场景使用。
+- AI 编导审稿：AI 路径生成并通过程序硬校验后自动附加可选 `review`（9 维 1-10 评分）与 `review_error`；编导只读，不重新选题、不修改事实 / IP / Brief / TopicCard。审稿失败不丢弃候选，仅记录 `review_error` 与 warning。
+- TopicCard 锁题：选中 TopicCard 后三套候选必须锁定同一主题；锁题模式下 `strategy` 只是表现角度。程序化低分判定 `review.judge_revision_needed` 已实现；**自动局部修稿尚未实现**。
 - `scriptgen/generators/template.py` 和旧 `POST /script/template` 是旧单脚本兼容入口；`scriptgen/generators/codex.py` 只是会抛出 `NotImplementedError` 的兼容占位，不可当作生产生成链路。
 - AI 视频润色尚未实现：当前仅 `null` provider，接口返回 `not_configured`。不要把该能力描述为已接入或实现真实模型调用。
 - 成片时长的唯一权威来源是 `backend/app/engine/timeline.py` 的 `compute_timeline()`。UI、预览、接缝和导出不得各自计算或覆盖总时长。

@@ -2,6 +2,8 @@
 
 > 生成日期：2026-08-03。本文件是任何 agent / 新会话接手本项目的**第一入口**。
 > 先读本文件 → 再读 `CLAUDE.md` → 需要细节时查 `docs/architecture.md`。
+>
+> ⚠️ **历史交接文档**：本文反映 2026-08-03 的早期 MVP 状态，部分描述已过时。当前真实状态以 `AGENTS.md`、`docs/architecture.md`、`docs/api.md` 及代码 / 测试为准。脚本生成已升级为「规则选题 + DeepSeek 生成 + 程序质检」，并新增 IP 定位 / AI 共创 / TopicCard 锁题 / AI 编导审稿（自动局部修稿未上线）；文中「纯规则模板」「AI 对话共创未实现」等均为旧状态。
 
 ---
 
@@ -35,7 +37,7 @@
 
 - **后端**：Python 3.10+（当前 venv 为 3.12.13，位于 `backend/.venv`）+ FastAPI + uvicorn + Pydantic；`imageio-ffmpeg` 内置静态 ffmpeg（缺少 ffprobe 时自动回退探测）。
 - **前端**：Vite + React 19 + TypeScript（`frontend/`），dev proxy `/api → 127.0.0.1:8000`。
-- **脚本生成**：纯规则模板（确定性，零 LLM）。Codex AI 生成器为占位（raise NotImplementedError）。
+- **脚本生成**：规则选题 + DeepSeek 生成 + 程序质检为主路径（旧模板保留为兼容入口）。Codex AI 生成器为占位（raise NotImplementedError）。
 - **剪辑引擎**：`engine/`，ffmpeg 后端渲染。
 
 ## 4. 关键目录结构
@@ -72,7 +74,7 @@ food-ip/
 ## 6. 运行与测试
 
 ```bash
-# 后端测试（全部 34 个）
+# 后端测试（当前 104 个）
 cd C:\Users\HP\food-ip
 backend\.venv\Scripts\python.exe -m pytest backend\app\tests -q
 
@@ -99,7 +101,7 @@ backend\.venv\Scripts\python.exe backend\scripts\e2e_smoke.py
 ## 8. v2 路线图（未实现，按优先级）
 
 1. **引导问卷升级**：`docs/questionnaire-design.md` 的 4 步引导（需给 `BossInfo` 加 `usp/story/cta_goal` 3 字段）。
-2. **AI 对话共创 agent**：老板与 AI 聊天打磨脚本（需 LLM 接入 + 流式，成本/规模化权衡已记录）。
+2. **AI 对话共创 agent**：已实现（IP 定位 + CreativeConversation 共创，见 `AGENTS.md` / `docs/architecture.md`）；此处为旧路线图遗留项。流式体验与打磨仍为后续方向。
 3. 正式 ffmpeg/ffprobe 安装（winget 或静态包）。
 4. 手机端 / 云端部署（`docs/deploy.md` 有思路：后端搬云 + 前端适配）。
 

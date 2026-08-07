@@ -1,13 +1,31 @@
 # 待办任务（Next Tasks）
 
-> 记录日期：2026-08-05。汇总 T111（Creative 流程接入前端）及后续修复后的剩余任务，供下次接手按优先级处理。
+> 记录日期：2026-08-07。汇总 T111（Creative 流程接入前端）及后续脚本质量阶段的剩余任务，供下次接手按优先级处理。
 >
-> 本轮已完成并提交（按顺序）：
+> 已完成并提交（按顺序）：
 > - `daf2412` 修复用户可见错误信息乱码
 > - `c4c231e` 前端接入 IP 定位 + AI 共创流程（含 useCreativeFlow hook）
 > - `0050e56` AI 脚本 CTA 目标感知 + 质检失败 template_fallback 兜底
 > - `9aafdce` 规则路径 CTA 文案与 AI 路径对齐、去除禁用表达
 > - `209d6aa` 话术校验改为上下文约束（放行开场「先别划走」、结尾「收藏/报到」，保留夸大词硬禁）
+> - `b88d8d3` TopicCard 锁题 + AI 编导审稿管线（9 维评分、ScriptBundle review 接入、审稿失败隔离、程序化低分判定）
+
+## 本阶段已完成（2026-08-07 提交 `b88d8d3`）
+
+- selected TopicCard 锁题：选中后三套候选锁定同一主题，锁题模式下 `strategy` 只是表现角度（Hook / 叙事 / 证据展示 / 老板表达 / 镜头组织）
+- 非锁题模式保留原 strategy 各开一题逻辑，行为不变
+- 独立 AI 编导审稿（`scriptgen/review.py`）：9 维 1-10 评分 + issues（定位 shot/字段）/ strengths / should_revise
+- `ScriptBundle` 新增可选 `review` / `review_error`，旧数据无此字段仍兼容读取
+- 审稿失败隔离：不丢弃已生成候选，仅记录 `review_error` 与 warning
+- 程序化低分判定 `review.judge_revision_needed`（纯程序规则，不调 AI）
+
+## 下一步（尚未实现，勿标记为已完成）
+
+低分候选
+→ 定位具体低质量镜头 / 字段
+→ AI 局部修稿
+→ 再次程序硬校验
+→ 必要时重新审稿
 
 ---
 
@@ -20,18 +38,12 @@
 
 ## P0 ｜ 文档更新（当前文档已失真）
 
-### 2. 修正 `docs/api.md` 中 `/script-bundles/ai` 的 502 语义
-- 第 105 行目前写：`502：模型服务异常或两次输出均未通过校验；503：未配置或密钥无效。失败不会覆盖最近一次方案。`
-- 实际现状：
-  - 两次输出未通过校验 → **200 + `generator=template_fallback`**（并写入 `script_bundle.json`，覆盖最近一次方案）；
-  - 仅服务异常（`AIServiceError`：超时/连接/429/截断）→ 502；
-  - 未配置/密钥无效（`AIConfigurationError`）→ 503。
+### 2. ✅ 修正 `docs/api.md` 中 `/script-bundles/ai` 的 502 语义（已完成，2026-08-07）
+- 已同步：两次输出未通过校验 → **200 + `generator=template_fallback`**（并写入 `script_bundle.json`，覆盖最近一次方案）；服务异常（`AIScriptError`：超时/连接/429/截断）→ 502；未配置/密钥无效（`AIConfigurationError`）→ 503。
 
 ### 3. 重写 `HANDOFF.md`
-- 目前严重过时：
-  - 第 38 行还写「脚本生成：纯规则模板（确定性，零 LLM）」
-  - 第 99 行把 IP 定位 / AI 共创列为「v2 路线图（未实现）」
-- 需更新到真实状态：DeepSeek 为主路径、IP 定位 / AI 共创已实现、T111 前端已接入、目标感知 CTA、上下文话术校验、质检失败 template_fallback。
+- 2026-08-07 已做必要修正并加历史说明标注（纯规则模板、AI 共创未实现等旧描述已更正），但完整重写仍待。
+- 需更新到真实状态：DeepSeek 为主路径、IP 定位 / AI 共创已实现、TopicCard 锁题、AI 编导审稿、质检失败 template_fallback。
 
 ---
 
