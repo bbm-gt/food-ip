@@ -9,6 +9,8 @@
 > - `9aafdce` 规则路径 CTA 文案与 AI 路径对齐、去除禁用表达
 > - `209d6aa` 话术校验改为上下文约束（放行开场「先别划走」、结尾「收藏/报到」，保留夸大词硬禁）
 > - `b88d8d3` TopicCard 锁题 + AI 编导审稿管线（9 维评分、ScriptBundle review 接入、审稿失败隔离、程序化低分判定）
+> - `b532a6a` AI 局部修稿（`revise_script_candidate`：补丁式只修 issues 指定位置、锁题不可换题、修稿后过现有硬校验）
+> - `900aea8` 恢复主 Schema（`AIBundleOutput.candidates` 保持 min_length=2）；抽出 `_validate_candidates` 供单候选修稿复用硬校验
 
 ## 本阶段已完成（2026-08-07 提交 `b88d8d3`）
 
@@ -19,13 +21,16 @@
 - 审稿失败隔离：不丢弃已生成候选，仅记录 `review_error` 与 warning
 - 程序化低分判定 `review.judge_revision_needed`（纯程序规则，不调 AI）
 
+## 后续已完成（2026-08-07 提交 `b532a6a` / `900aea8`）
+
+- AI 局部修稿 `review.revise_script_candidate`：输入原候选 + 编导审稿 + 低分判定 + 调研档案 + creative_context，输出修稿后的新候选。只修改 verdict / issues 指向的镜头或字段（锚点限制）；补丁式输出（`extra=forbid`）结构上杜绝整篇重写；`candidate_id` / `strategy` 不可变；selected TopicCard 锁题时禁止改标题（防换题）；修稿后复用现有程序硬规则校验并重新生成 `quality_risks`；修稿 Prompt 独立于编剧与编导审稿。
+- 恢复主生成 Schema：`AIBundleOutput.candidates` 保持 `min_length=2`，不为局部修稿放宽；从 `_validate_quality` 抽出可复用核心 `_validate_candidates`，单候选修稿直接复用同一套硬校验。
+
 ## 下一步（尚未实现，勿标记为已完成）
 
-低分候选
-→ 定位具体低质量镜头 / 字段
-→ AI 局部修稿
-→ 再次程序硬校验
-→ 必要时重新审稿
+- 自动触发：低分候选自动调用局部修稿（接入生成流程 / 前端展示修稿结果与用户选择），当前 `revise_script_candidate` 只是独立函数，未自动接线。
+- 重新审稿：修稿后对结果再次 AI 编导审稿（当前仅局部修稿 + 程序硬校验，未重新评分）。
+- 与用户确认：修稿结果作为新候选保留还是替换原候选。
 
 ---
 

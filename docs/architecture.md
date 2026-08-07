@@ -8,7 +8,7 @@
 2. IP 定位确认（`IPProfile`）→ AI 共创确认 `CreativeBrief`（均可跳过）
 3. `TopicCard` 推荐选题（可跳过；一旦选定，三套候选锁同一主题）
 4. `ScriptBundle` 生成（规则模板 / AI 生成）→ 程序硬规则校验
-5. AI Director Review：独立只读 9 维评分 → 程序化低分判定（自动局部修稿尚未实现）
+5. AI Director Review：独立只读 9 维评分 → 程序化低分判定 → AI 局部修稿（只修指定低质量位置）→ 再次程序硬规则校验（自动触发修稿尚未接入）
 6. 老板比较并选择候选，可手工修改 → 产出当前 `script.json`
 7. 老板按脚本拍摄 N 个镜头素材
 8. 素材自动拼接、接缝调节并导出成片
@@ -64,7 +64,8 @@ food-ip/
 - AI 生成后增加轻量风险标记，分类为真实性、可拍摄性和 IP 一致性；只提示，不自动修改脚本，不作为法律审核。
 - TopicCard 锁题：用户选择 TopicCard 后，三套候选必须围绕同一主题；锁题模式下 `strategy` 只是表现角度（Hook、叙事方式、证据展示、老板表达、镜头组织），底层 strategy 不再拆成不同主题；未选 TopicCard 时保留原 strategy 各开一题逻辑。
 - AI 编导审稿（`review.py`）：通过程序硬校验后自动对候选做独立 9 维评分（opening_hook_strength、oral_naturalness、information_density、progression、evidence_strength、ip_alignment、shootability、ad_feeling、distinctiveness，各 1-10）；编导只读，不重写脚本、不重新选题、不修改事实 / IP / Brief / TopicCard。`ScriptBundle` 新增可选 `review` / `review_error`，旧数据无此字段仍兼容读取。
-- 程序化低分判定（`review.judge_revision_needed`）：纯程序规则，总分 < 7.0 或任一关键维度（opening_hook_strength / oral_naturalness / progression / evidence_strength / shootability）< 6 判定需修稿；AI 的 `should_revise` 仅作参考。**自动局部修稿尚未实现**。
+- 程序化低分判定（`review.judge_revision_needed`）：纯程序规则，总分 < 7.0 或任一关键维度（opening_hook_strength / oral_naturalness / progression / evidence_strength / shootability）< 6 判定需修稿；AI 的 `should_revise` 仅作参考。
+- AI 局部修稿（`review.revise_script_candidate`）：只修改 verdict / issues 指向的镜头或字段（锚点限制），补丁式输出（`extra=forbid`）结构上杜绝整篇重写；`candidate_id` / `strategy` 不可变；锁题时禁止改标题（防换题）；修稿后复用 `ai._validate_candidates` 现有硬规则校验并重新生成 `quality_risks`。主生成 Schema `AIBundleOutput.candidates` 保持 `min_length=2` 不放宽。**自动根据低分触发修稿尚未接入生成流程**。
 - 审稿失败隔离：AI 编导审稿失败不丢弃已生成候选，仅记录 `review_error` 与 warning；`review_error` 只代表审稿失败，不代表脚本生成失败。
 
 ### 剪辑引擎（engine/）
