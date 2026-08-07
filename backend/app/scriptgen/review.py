@@ -242,8 +242,6 @@ class RevisionPatch(BaseModel):
 
 
 _TOPLEVEL_PATCHABLE = ("title", "opening_hook", "cta")
-# 复用现有程序硬校验时，单候选 AIBundleOutput 的 research_summary 需要 ≥6 字。
-_VALIDATION_SUMMARY = "修稿后的单个候选脚本程序校验。"
 
 _REVISION_SYSTEM_PROMPT = """
 你是餐饮老板短视频的 AI 局部修稿执行者，职责与「编剧」和「编导」完全分离：
@@ -398,7 +396,7 @@ def _validate_revision(
     revised: ScriptModel,
     profile: ResearchProfile,
 ) -> None:
-    """修稿后的脚本必须再次通过现有程序硬规则校验（复用 ai._validate_quality）。"""
+    """修稿后的脚本必须再次通过现有程序硬规则校验（复用 ai._validate_candidates）。"""
     if len(revised.shots) != len(original.script.shots):
         raise ai.AIResponseError("修稿改变了镜头数量")
     if [shot.shot_index for shot in revised.shots] != [
@@ -416,11 +414,13 @@ def _validate_revision(
         raise ai.AIResponseError(
             f"找不到候选 {original.strategy} 对应的策略规则"
         )
-    output = ai.AIBundleOutput(
-        research_summary=_VALIDATION_SUMMARY,
-        candidates=[_to_ai_candidate(original.strategy, revised)],
+    # 复用现有硬规则核心校验单个候选，不构造多候选 AIBundleOutput，
+    # 因此不需要放宽主生成路径的 candidates 数量约束。
+    ai._validate_candidates(
+        [_to_ai_candidate(original.strategy, revised)],
+        profile,
+        strategies,
     )
-    ai._validate_quality(output, profile, strategies)
 
 
 def _build_revision_messages(

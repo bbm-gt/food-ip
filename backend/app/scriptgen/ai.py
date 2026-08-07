@@ -74,10 +74,7 @@ class AIGeneratedCandidate(BaseModel):
 
 class AIBundleOutput(BaseModel):
     research_summary: str = Field(min_length=6)
-    # min_length 放宽到 1：生成路径仍由 candidate_count≥2 + _validate_quality 的
-    # strategy 顺序校验保证至少两套；允许单候选构造是为了复用本 validator 校验
-    # AI 局部修稿后的单个候选。
-    candidates: list[AIGeneratedCandidate] = Field(min_length=1, max_length=5)
+    candidates: list[AIGeneratedCandidate] = Field(min_length=2, max_length=5)
 
 
 def _eligible_strategies(
@@ -396,26 +393,53 @@ def _validate_quality(
     profile: ResearchProfile,
     strategies: list[StrategyScore],
 ) -> None:
+    # 主生成路径的整组硬校验；校验逻辑本体在 _validate_candidates。
+    _validate_candidates(
+        output.candidates,
+        profile,
+        strategies,
+        research_summary=output.research_summary,
+    )
+
+
+def _validate_candidates(
+    candidates: list[AIGeneratedCandidate],
+    profile: ResearchProfile,
+    strategies: list[StrategyScore],
+    *,
+    research_summary: str = "",
+) -> None:
+    """现有程序硬规则校验的可复用核心：可校验整组或单个候选。
+
+    主生成路径经 _validate_quality 调用；AI 局部修稿校验单个候选时直接调用本函数，
+    不需要放宽 AIBundleOutput.candidates 的数量约束。
+    """
     # strategy 顺序/数量校验是“候选标签完整性”保护（还防止下方 by_strategy 查找 KeyError），
     # 只校验标签是否齐全有序，不判断候选内容是否同题。锁题模式下三套候选围绕同一主题依然适用，
     # 因此这里刻意不新增任何“主题差异”判断（语义同题检查由 AI 编导阶段负责）。
     expected = [item.key for item in strategies]
-    actual = [item.strategy for item in output.candidates]
+    actual = [item.strategy for item in candidates]
     errors: list[str] = []
     if actual != expected:
         errors.append(f"strategy 顺序或数量错误，应为 {expected}")
 
-    ctas = [re.sub(r"[\s，。！？,.!?]", "", item.cta) for item in output.candidates]
+    ctas = [re.sub(r"[\s，。！？,.!?]", "", item.cta) for item in candidates]
     if len(set(ctas)) != len(ctas):
         errors.append("三套脚本的 CTA 存在重复")
 
-    all_text = json.dumps(output.model_dump(mode="json"), ensure_ascii=False)
+    all_text = json.dumps(
+        {
+            "research_summary": research_summary,
+            "candidates": [item.model_dump(mode="json") for item in candidates],
+        },
+        ensure_ascii=False,
+    )
     # 夸大或假权威表达：任何位置都不允许。
     for phrase in ("我赌你", "天花板", "闭眼冲", "导航搜"):
         if phrase in all_text:
             errors.append(f"包含夸大或假权威表达：{phrase}")
     # 语境话术：只在合适位置最多出现一次；堆叠仍不合格。
-    for candidate in output.candidates:
+    for candidate in candidates:
         shots = candidate.shots
         if not shots:
             continue
@@ -451,13 +475,13 @@ def _validate_quality(
         if len(clean_topic) >= 2 and clean_topic in all_text:
             errors.append(f"涉及老板明确要求避开的话题：{clean_topic}")
 
-    for candidate in output.candidates:
+    for candidate in candidates:
         if candidate.opening_hook not in candidate.shots[0].lines:
             errors.append(f"{candidate.strategy} 的开场钩子未出现在第1镜头")
         if candidate.cta not in candidate.shots[-1].lines:
             errors.append(f"{candidate.strategy} 的 CTA 未出现在第6镜头")
 
-    cta_kinds = [_cta_kind(candidate.cta) for candidate in output.candidates]
+    cta_kinds = [_cta_kind(candidate.cta) for candidate in candidates]
     if len(set(cta_kinds)) < min(3, len(cta_kinds)):
         errors.append("三套 CTA 的动作类型不够多样")
     if cta_kinds.count("visit") > 1:
@@ -469,13 +493,13 @@ def _validate_quality(
             continue
         if any(
             clean_location in shot.location
-            for candidate in output.candidates
+            for candidate in candidates
             for shot in candidate.shots
         ):
             errors.append(f"安排了明确不可拍区域：{clean_location}")
 
     if not profile.shooting.can_show_kitchen:
-        for candidate in output.candidates:
+        for candidate in candidates:
             for shot in candidate.shots:
                 if any(place in shot.location for place in ("后厨", "备料区", "灶台")):
                     errors.append("在后厨不可拍的情况下安排了后厨镜头")

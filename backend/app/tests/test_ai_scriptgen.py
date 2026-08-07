@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from .. import config
 from ..main import app
@@ -523,6 +524,34 @@ def test_non_lock_mode_strategy_order_still_enforced() -> None:
 
     with pytest.raises(ai.AIResponseError, match="strategy 顺序或数量错误"):
         ai._validate_quality(output, research, strategies)
+
+
+def test_ai_bundle_schema_rejects_single_candidate() -> None:
+    # 主生成路径 Schema 约束已恢复：AIBundleOutput.candidates 至少为 2，
+    # 单个候选仍然被 Pydantic 拒绝。
+    research = profile()
+    strategies = [item.key for item in ai._eligible_strategies(research, 3)]
+    payload = generated_payload(strategies[:1])
+
+    with pytest.raises(ValidationError):
+        ai.AIBundleOutput.model_validate(payload)
+
+
+def test_single_candidate_passes_existing_hard_rules() -> None:
+    # 局部修稿校验单个候选时复用 _validate_candidates，不依赖放宽主 bundle schema。
+    research = profile()
+    strategies = [
+        item for item in ai._score_strategies(research) if item.key == "dish"
+    ]
+    candidate = ai.AIGeneratedCandidate.model_validate(
+        generated_payload(["dish"])["candidates"][0]
+    )
+
+    ai._validate_candidates([candidate], research, strategies)  # 不应抛异常
+
+    bad = candidate.model_copy(update={"title": "我赌你吃完还想来"})
+    with pytest.raises(ai.AIResponseError, match="我赌你"):
+        ai._validate_candidates([bad], research, strategies)
 
 
 REVIEW_DIMENSIONS = [
