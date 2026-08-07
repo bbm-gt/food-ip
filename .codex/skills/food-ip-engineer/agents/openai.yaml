@@ -1,0 +1,4 @@
+interface:
+  display_name: "Food IP Engineer"
+  short_description: "维护 Food IP Studio 的前后端、AI 脚本生成、素材处理、时间轴编辑和视频导出流程，重点遵守事实约束、Creative Flow、脚本质量和兼容性规则。"
+  default_prompt: "请按 Food IP Studio 项目约束分析现状、说明方案，然后以最小范围修改并补充测试。"
