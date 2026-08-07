@@ -13,7 +13,7 @@ ResearchProfile（深度调研）
 → IPProfile（IP定位）
 → CreativeConversation（AI编导共创）
 → CreativeBrief 确认
-→ TopicCard（选题锁题）
+→ TopicCard（推荐选题层，可跳过）
 → ScriptBundle（多脚本候选）
 → 用户选择候选
 → script.json（当前脚本）
@@ -341,11 +341,23 @@ AI生成内容：
 - 自动生成未经确认的事实。
 
 
-AI输出需要：
+AI 对业务状态产生实际变更时，需要按对应流程获得用户确认。
 
-- 结构化解析。
-- 程序校验。
-- 用户确认。
+以下内部处理可以自动执行：
+
+- 结构化解析
+- 程序校验
+- AI 编导评分
+- 局部自动修稿
+- 再次质检
+
+自动处理不得修改：
+
+- 已确认事实
+- 长期档案
+- 已确认 IP 定位
+- selected TopicCard
+- 用户最终脚本选择
 
 
 ## 6. 视频流程规则
@@ -373,3 +385,4 @@ AI输出需要：
 
 ```bash
 pytest backend/app/tests -q
+```
