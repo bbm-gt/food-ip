@@ -6,7 +6,13 @@ from enum import Enum
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 
 _LIST_SEPARATOR = re.compile(r"[\n、,，;；/\\]+")
@@ -193,6 +199,76 @@ class ScriptCandidate(BaseModel):
     script: ScriptModel
 
 
+# --- AI 编导审稿结果（与脚本生成完全独立：只读、不改写、不选题） ---
+
+
+class DirectorDimensionScores(BaseModel):
+    """AI 编导 9 维内容质量评分，统一 1-10（数值越大越好）。"""
+
+    opening_hook_strength: int = Field(ge=1, le=10)
+    oral_naturalness: int = Field(ge=1, le=10)
+    information_density: int = Field(ge=1, le=10)
+    progression: int = Field(ge=1, le=10)
+    evidence_strength: int = Field(ge=1, le=10)
+    ip_alignment: int = Field(ge=1, le=10)
+    shootability: int = Field(ge=1, le=10)
+    ad_feeling: int = Field(ge=1, le=10)
+    distinctiveness: int = Field(ge=1, le=10)
+
+
+class DirectorIssue(BaseModel):
+    """一条可执行的审稿问题，必须定位到具体镜头或字段，禁止泛泛评价。"""
+
+    dimension: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    shot_index: int | None = Field(default=None, ge=1, le=8)
+    field: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _must_be_actionable(self) -> "DirectorIssue":
+        if self.shot_index is None and not (self.field or "").strip():
+            raise ValueError("审稿问题必须指出具体 shot_index 或具体字段")
+        return self
+
+
+class DirectorCandidateReview(BaseModel):
+    """单个候选脚本的 AI 编导审稿结果。"""
+
+    candidate_id: str = Field(min_length=1)
+    strategy: str = Field(min_length=1)
+    scores: DirectorDimensionScores
+    issues: list[DirectorIssue] = Field(default_factory=list)
+    strengths: list[str] = Field(default_factory=list)
+    should_revise: bool = False
+
+    @computed_field
+    @property
+    def overall_score(self) -> float:
+        values = self.scores.model_dump().values()
+        return round(sum(values) / len(values), 1)
+
+
+class DirectorReview(BaseModel):
+    """一组候选脚本的 AI 编导审稿结果（不修改任何脚本内容）。"""
+
+    bundle_id: str = ""
+    generated_at: str = Field(
+        default_factory=lambda: datetime.now(UTC).isoformat()
+    )
+    model_name: str = ""
+    reviews: list[DirectorCandidateReview] = Field(min_length=1, max_length=8)
+
+
+class DirectorRevisionVerdict(BaseModel):
+    """纯程序低分判定结果：由评分规则决定是否需要修稿，不完全信任 AI 的 should_revise。"""
+
+    candidate_id: str = Field(min_length=1)
+    needs_revision: bool
+    weak_dimensions: list[str] = Field(default_factory=list)
+    reasons: list[str] = Field(default_factory=list)
+    issues: list[DirectorIssue] = Field(default_factory=list)
+
+
 class ScriptBundle(BaseModel):
     id: str
     generated_at: str
@@ -202,6 +278,10 @@ class ScriptBundle(BaseModel):
     generator: Literal["template", "ai", "template_fallback"] = "template"
     model_name: str = ""
     warnings: list[str] = Field(default_factory=list)
+    # AI 编导审稿结果（可选）：AI 生成路径通过程序硬校验后自动附加。
+    # 旧版 script_bundle.json 没有这两个字段时，默认 None，读取兼容。
+    review: DirectorReview | None = None
+    review_error: str | None = None
 
 
 class ScriptVersion(BaseModel):

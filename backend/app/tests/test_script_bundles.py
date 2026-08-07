@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -153,3 +154,33 @@ def test_research_bundle_selection_api(bundle_client: TestClient) -> None:
     project = bundle_client.get(f"/api/projects/{project_id}").json()
     assert project["research"] == research
     assert project["script_bundle"]["id"] == bundle["id"]
+
+
+def test_old_bundle_without_review_still_loads(
+    bundle_client: TestClient,
+) -> None:
+    project_id = bundle_client.post(
+        "/api/projects", json={"name": "旧版 bundle 兼容"}
+    ).json()["id"]
+    research = rich_profile().model_dump(mode="json")
+    generated = bundle_client.post(
+        f"/api/projects/{project_id}/script-bundles/template",
+        json={"research": research, "candidate_count": 3},
+    )
+    assert generated.status_code == 200
+    old_bundle = generated.json()
+    # 模拟旧版数据：去掉 review / review_error 字段后再写回磁盘
+    old_bundle.pop("review", None)
+    old_bundle.pop("review_error", None)
+    bundle_path = Path(config.PROJECTS_ROOT) / project_id / "script_bundle.json"
+    bundle_path.write_text(
+        json.dumps(old_bundle, ensure_ascii=False), encoding="utf-8"
+    )
+
+    latest = bundle_client.get(
+        f"/api/projects/{project_id}/script-bundles/latest"
+    ).json()
+
+    assert latest["id"] == old_bundle["id"]
+    assert latest["review"] is None
+    assert latest.get("review_error") is None

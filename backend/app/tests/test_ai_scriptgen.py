@@ -201,6 +201,8 @@ def test_invalid_ai_output_is_retried(
 
     def fake_request(messages: list[dict[str, str]]) -> dict[str, object]:
         calls.append(messages)
+        if "审稿" in messages[0]["content"]:
+            return {"reviews": []}  # 审稿失败：不影响候选返回
         return next(responses)
 
     monkeypatch.setattr(ai, "_request_json", fake_request)
@@ -208,9 +210,13 @@ def test_invalid_ai_output_is_retried(
     bundle = ai.generate_ai_script_bundle(research)
 
     assert bundle.generator == "ai"
-    assert len(calls) == 2
-    repair_payload = json.loads(calls[1][1]["content"])
+    generation_calls = [
+        message for message in calls if "审稿" not in message[0]["content"]
+    ]
+    assert len(generation_calls) == 2
+    repair_payload = json.loads(generation_calls[1][1]["content"])
     assert "previous_output_errors" in repair_payload
+    assert bundle.review is None
 
 
 def test_same_street_tenure_cannot_be_invented() -> None:
@@ -367,3 +373,263 @@ def test_cta_phrase_stacking_rejected() -> None:
 
     with pytest.raises(ai.AIResponseError, match="堆叠"):
         ai._validate_quality(output, research, scored)
+
+
+def topic_card_payload() -> dict[str, object]:
+    return {
+        "id": "tc-abc",
+        "title": "碳烤大油边为什么是招牌",
+        "hook": "刚上桌的大油边，先看这口油脂",
+        "angle": "从顾客最关心的口感到食材来源",
+        "target_customer": "附近喜欢夜宵的人",
+        "ip_alignment": "真实、现切现烤",
+        "evidence_needed": ["当天鲜羊肉", "炭火烤制过程"],
+        "shoot_difficulty": "medium",
+        "estimated_duration_sec": 48,
+        "cta": "想尝尝这口大油边，评论区告诉我们。",
+    }
+
+
+def test_lock_mode_forces_same_topic_when_topic_card_selected() -> None:
+    research = profile()
+    strategies = ai._eligible_strategies(research, 3)
+    messages = ai._build_messages(
+        research,
+        strategies,
+        creative_context={"selected_topic_card": topic_card_payload()},
+    )
+    system = messages[0]["content"]
+    # 规则 2 被覆盖为“锁同一主题”，并追加锁题规则 16
+    assert "不得更换主题" in system
+    assert "同一主题下的表现角度" in system
+    assert "selected_topic_card" in system
+    user = json.loads(messages[1]["content"])
+    assert (
+        user["confirmed_creative_context"]["selected_topic_card"]
+        == topic_card_payload()
+    )
+    # 锁题模式下 strategy 只保留标签与 CTA，不再携带会拉开主题的定位/场景
+    assert len(user["strategies"]) == 3
+    assert all("positioning" not in item for item in user["strategies"])
+    assert all("required_scenes" not in item for item in user["strategies"])
+
+
+def test_no_topic_card_keeps_strategy_theme_logic() -> None:
+    research = profile()
+    strategies = ai._eligible_strategies(research, 3)
+    messages = ai._build_messages(
+        research,
+        strategies,
+        creative_context={"ip_profile": {"name": "测试"}},
+    )
+    system = messages[0]["content"]
+    # 非锁题模式：保留“按 strategy 分主题”的原有规则
+    assert "主题、开场、叙事路线和结尾明显不同" in system
+    assert "不得更换主题" not in system
+    user = json.loads(messages[1]["content"])
+    assert all("positioning" in item for item in user["strategies"])
+    assert all("required_scenes" in item for item in user["strategies"])
+
+
+def test_ai_bundle_lock_mode_generates_three_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    research = profile()
+    strategies = [item.key for item in ai._eligible_strategies(research, 3)]
+    monkeypatch.setattr(
+        ai, "_request_json", lambda messages: generated_payload(strategies)
+    )
+
+    bundle = ai.generate_ai_script_bundle(
+        research,
+        creative_context={"selected_topic_card": topic_card_payload()},
+    )
+
+    assert bundle.generator == "ai"
+    assert len(bundle.candidates) == 3
+    assert len({candidate.script.cta for candidate in bundle.candidates}) == 3
+
+
+def same_topic_payload(strategies: list[str]) -> dict[str, object]:
+    """三套候选围绕同一主题：标题一致、正文都讲同一道菜，
+    仅 strategy 标签与 CTA 不同 —— 用于验证锁题模式不被 validator 误拒。"""
+    payload = generated_payload(strategies)
+    shared_title = "碳烤大油边为什么值得专门跑一趟"
+    for candidate in payload["candidates"]:
+        candidate["title"] = shared_title
+        for shot in candidate["shots"]:
+            shot["lines"] = f"碳烤大油边。{shot['lines']}"
+    return payload
+
+
+def test_lock_mode_same_topic_candidates_pass_validation() -> None:
+    research = profile()
+    strategies = ai._eligible_strategies(research, 3)
+    payload = same_topic_payload([item.key for item in strategies])
+    output = ai.AIBundleOutput.model_validate(payload)
+    output = ai._apply_required_ctas(output, research, strategies)
+
+    ai._validate_quality(output, research, strategies)  # 不应抛异常
+
+    assert len({candidate.title for candidate in output.candidates}) == 1
+
+
+def test_lock_mode_bundle_accepts_same_topic_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    research = profile()
+    strategies = [item.key for item in ai._eligible_strategies(research, 3)]
+    monkeypatch.setattr(
+        ai, "_request_json", lambda messages: same_topic_payload(strategies)
+    )
+
+    bundle = ai.generate_ai_script_bundle(
+        research,
+        creative_context={"selected_topic_card": topic_card_payload()},
+    )
+
+    assert bundle.generator == "ai"
+    assert len(bundle.candidates) == 3
+
+
+def test_lock_mode_still_rejects_exaggerated_phrase() -> None:
+    research = profile()
+    strategies = ai._eligible_strategies(research, 3)
+    payload = same_topic_payload([item.key for item in strategies])
+    payload["candidates"][0]["shots"][2]["lines"] += "我赌你吃完还想来。"
+    output = ai.AIBundleOutput.model_validate(payload)
+
+    with pytest.raises(ai.AIResponseError, match="我赌你"):
+        ai._validate_quality(output, research, strategies)
+
+
+def test_lock_mode_still_rejects_hook_outside_first_shot() -> None:
+    research = profile()
+    strategies = ai._eligible_strategies(research, 3)
+    payload = same_topic_payload([item.key for item in strategies])
+    payload["candidates"][0]["opening_hook"] = "一个完全不同的开场"
+    output = ai.AIBundleOutput.model_validate(payload)
+
+    with pytest.raises(ai.AIResponseError, match="开场钩子未出现在第1镜头"):
+        ai._validate_quality(output, research, strategies)
+
+
+def test_non_lock_mode_strategy_order_still_enforced() -> None:
+    research = profile()
+    strategies = ai._eligible_strategies(research, 3)
+    payload = generated_payload([item.key for item in strategies])
+    payload["candidates"] = list(reversed(payload["candidates"]))
+    output = ai.AIBundleOutput.model_validate(payload)
+
+    with pytest.raises(ai.AIResponseError, match="strategy 顺序或数量错误"):
+        ai._validate_quality(output, research, strategies)
+
+
+REVIEW_DIMENSIONS = [
+    "opening_hook_strength",
+    "oral_naturalness",
+    "information_density",
+    "progression",
+    "evidence_strength",
+    "ip_alignment",
+    "shootability",
+    "ad_feeling",
+    "distinctiveness",
+]
+
+
+def review_payload_for(messages: list[dict[str, str]]) -> dict[str, object]:
+    user = json.loads(messages[1]["content"])
+    return {
+        "reviews": [
+            {
+                "candidate_id": candidate["candidate_id"],
+                "strategy": candidate["strategy"],
+                "scores": {name: 7 for name in REVIEW_DIMENSIONS},
+                "issues": [
+                    {
+                        "dimension": "oral_naturalness",
+                        "message": "第3镜头台词偏书面，像念稿。",
+                        "shot_index": 3,
+                    }
+                ],
+                "strengths": ["开场钩子简洁有力"],
+                "should_revise": False,
+            }
+            for candidate in user["candidates"]
+        ]
+    }
+
+
+def test_ai_bundle_runs_director_review_after_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    research = profile()
+    strategies = [item.key for item in ai._eligible_strategies(research, 3)]
+    gen_payload = generated_payload(strategies)
+    calls: list[list[dict[str, str]]] = []
+
+    def fake_request(messages: list[dict[str, str]]) -> dict[str, object]:
+        calls.append(messages)
+        if "审稿" in messages[0]["content"]:
+            return review_payload_for(messages)
+        return gen_payload
+
+    monkeypatch.setattr(ai, "_request_json", fake_request)
+
+    bundle = ai.generate_ai_script_bundle(research)
+
+    review_calls = [message for message in calls if "审稿" in message[0]["content"]]
+    assert len(review_calls) == 1
+    assert bundle.review is not None
+    assert bundle.review.bundle_id == bundle.id
+    assert len(bundle.review.reviews) == 3
+    assert bundle.review_error is None
+
+
+def test_ai_bundle_survives_director_review_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    research = profile()
+    strategies = [item.key for item in ai._eligible_strategies(research, 3)]
+    gen_payload = generated_payload(strategies)
+
+    def fake_request(messages: list[dict[str, str]]) -> dict[str, object]:
+        if "审稿" in messages[0]["content"]:
+            return {"reviews": []}  # 审稿输出为空 → 校验失败
+        return gen_payload
+
+    monkeypatch.setattr(ai, "_request_json", fake_request)
+
+    bundle = ai.generate_ai_script_bundle(research)
+
+    assert bundle.generator == "ai"
+    assert len(bundle.candidates) == 3
+    assert bundle.review is None
+    assert bundle.review_error
+    assert any("编导审稿" in warning for warning in bundle.warnings)
+
+
+def test_lock_mode_review_receives_locked_topic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    research = profile()
+    strategies = [item.key for item in ai._eligible_strategies(research, 3)]
+    gen_payload = same_topic_payload(strategies)
+    captured_review_user: dict[str, object] = {}
+
+    def fake_request(messages: list[dict[str, str]]) -> dict[str, object]:
+        if "审稿" in messages[0]["content"]:
+            captured_review_user["data"] = json.loads(messages[1]["content"])
+            return review_payload_for(messages)
+        return gen_payload
+
+    monkeypatch.setattr(ai, "_request_json", fake_request)
+
+    context = {"selected_topic_card": topic_card_payload()}
+    bundle = ai.generate_ai_script_bundle(research, creative_context=context)
+
+    assert bundle.generator == "ai"
+    assert len(bundle.candidates) == 3
+    assert bundle.review is not None
+    assert captured_review_user["data"]["locked_topic"] is True
