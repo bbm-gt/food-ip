@@ -74,7 +74,10 @@ class AIGeneratedCandidate(BaseModel):
 
 class AIBundleOutput(BaseModel):
     research_summary: str = Field(min_length=6)
-    candidates: list[AIGeneratedCandidate] = Field(min_length=2, max_length=5)
+    # min_length 放宽到 1：生成路径仍由 candidate_count≥2 + _validate_quality 的
+    # strategy 顺序校验保证至少两套；允许单候选构造是为了复用本 validator 校验
+    # AI 局部修稿后的单个候选。
+    candidates: list[AIGeneratedCandidate] = Field(min_length=1, max_length=5)
 
 
 def _eligible_strategies(
