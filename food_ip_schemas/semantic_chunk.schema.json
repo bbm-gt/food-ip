@@ -1,0 +1,87 @@
+{
+  "$defs": {
+    "KnowledgeType": {
+      "enum": [
+        "principle",
+        "technique",
+        "case",
+        "anti_pattern",
+        "creative_format",
+        "operation"
+      ],
+      "title": "KnowledgeType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "An independent knowledge unit covering one or more ASR segments.\nTimestamps are PROGRAMMATICALLY computed from segments, NEVER from LLM.",
+  "properties": {
+    "chunk_id": {
+      "description": "Deterministic hash-based ID",
+      "title": "Chunk Id",
+      "type": "string"
+    },
+    "source_id": {
+      "pattern": "^SRC\\d{4}$",
+      "title": "Source Id",
+      "type": "string"
+    },
+    "segment_ids": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Segment Ids",
+      "type": "array"
+    },
+    "knowledge_type_hint": {
+      "$ref": "#/$defs/KnowledgeType",
+      "default": "technique"
+    },
+    "brief": {
+      "default": "",
+      "maxLength": 40,
+      "title": "Brief",
+      "type": "string"
+    },
+    "chunk_text": {
+      "minLength": 10,
+      "title": "Chunk Text",
+      "type": "string"
+    },
+    "start_sec": {
+      "default": 0.0,
+      "title": "Start Sec",
+      "type": "number"
+    },
+    "end_sec": {
+      "default": 0.0,
+      "title": "End Sec",
+      "type": "number"
+    },
+    "start_time": {
+      "default": "",
+      "title": "Start Time",
+      "type": "string"
+    },
+    "end_time": {
+      "default": "",
+      "title": "End Time",
+      "type": "string"
+    },
+    "retrieval_context": {
+      "default": "",
+      "description": "Reserved for future, can be empty",
+      "title": "Retrieval Context",
+      "type": "string"
+    }
+  },
+  "required": [
+    "chunk_id",
+    "source_id",
+    "segment_ids",
+    "chunk_text"
+  ],
+  "title": "SemanticChunk",
+  "type": "object"
+}

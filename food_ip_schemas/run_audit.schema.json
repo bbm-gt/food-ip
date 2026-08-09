@@ -1,0 +1,76 @@
+{
+  "additionalProperties": false,
+  "description": "Run-level audit trail.",
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "pipeline_version": {
+      "title": "Pipeline Version",
+      "type": "string"
+    },
+    "model": {
+      "title": "Model",
+      "type": "string"
+    },
+    "prompt_version": {
+      "default": "3.0",
+      "title": "Prompt Version",
+      "type": "string"
+    },
+    "question_tree_version": {
+      "default": "",
+      "title": "Question Tree Version",
+      "type": "string"
+    },
+    "glossary_version": {
+      "default": "",
+      "title": "Glossary Version",
+      "type": "string"
+    },
+    "domain": {
+      "default": "food-ip",
+      "title": "Domain",
+      "type": "string"
+    },
+    "started_at": {
+      "title": "Started At",
+      "type": "string"
+    },
+    "completed_at": {
+      "default": "",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "sources_total": {
+      "default": 0,
+      "title": "Sources Total",
+      "type": "integer"
+    },
+    "sources_completed": {
+      "default": 0,
+      "title": "Sources Completed",
+      "type": "integer"
+    },
+    "sources_failed": {
+      "default": 0,
+      "title": "Sources Failed",
+      "type": "integer"
+    },
+    "deferred_items": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Deferred Items",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "pipeline_version",
+    "model"
+  ],
+  "title": "RunAudit",
+  "type": "object"
+}
