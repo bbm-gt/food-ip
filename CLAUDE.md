@@ -147,6 +147,34 @@ cases.jsonl
 
 are rebuildable indexes, not the only durable copy.
 
+Global index rebuild is STRICT:
+
+* Every line read from a per-source authoritative file must parse as JSON,
+  validate against its persisted Pydantic model (extra="forbid"), and belong to
+  that Source (source ownership). A corrupt line, a schema-invalid item (valid
+  JSON is not a valid artifact), or a cross-source item raises instead of being
+  silently dropped or absorbed (explicit failure > silent corruption).
+* Eligibility: only formally releasable Sources contribute to the global
+  snapshot — (a) a Source that is already `done` with all five refine artifacts
+  complete/valid, or (b) the Source currently committing its artifacts (its
+  state is still `processing` because mark_done runs after the rebuild, so it is
+  passed explicitly). failed / processing / pending / never-started Sources
+  contribute NOTHING; a `done` Source with a missing/corrupt artifact, or a
+  Source with a corrupt state file, fails fast (never silently skip a Source
+  that claims to be done).
+* Snapshot atomicity: the five global files are committed as ONE snapshot.
+  All per-source data is collected and validated BEFORE any global file is
+  written; the files are then staged and swapped in as a set with backup +
+  rollback, so a rebuild that fails raises and rolls back to the previous
+  complete snapshot — never a mixed generation. An interrupted commit is
+  deterministically recovered to the previous complete snapshot on the next
+  rebuild.
+
+Source "done" semantics: a Source is marked completed ONLY after (a) its
+per-source artifacts are durably saved AND (b) the global indexes were
+successfully rebuilt from them. A global rebuild failure marks the Source
+FAILED — never a bare done marker backed by a stale or missing global index.
+
 Preferred persistence flow:
 
 status = processing
@@ -194,6 +222,18 @@ Chunk ID
 Knowledge ID
 
 Do not use processing order or display sequence numbers as the sole identity.
+
+Segment ID contract (exact implementation of the rule above): a Segment ID is
+{source_id}-SEG{ordinal} where the ordinal is the position of the segment in
+that Source's authoritative Whisper transcription. It is namespaced under the
+stable content-derived Source ID (a SEG number alone is never an identity), so
+it is NOT a bare display sequence. Segment IDs are stable across reruns of the
+same authoritative transcription — the contract the P0 idempotency/crash tests
+exercise. Evidence references are validated strictly against the Source's
+current authoritative ASR segments (semantic_chunker rejects unknown segment_ids;
+no sentinel evidence). Re-transcribing a Source with changed segmentation defines
+a new Segment set for that Source, which requires re-running refine against the
+new ASR (default transcription --resume skips re-transcription of a known Source).
 
 Renaming the same source file should not automatically create a different logical Source.
 

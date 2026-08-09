@@ -10,7 +10,9 @@ Design:
   - Source state machine: pending → processing → done | failed
   - Stale recovery: status=processing with a dead/missing owner pid → reset to
     pending and reprocess; a processing marker with a LIVE owner is never preempted
-  - Global JSONL files are rebuildable indices, NOT the source of truth
+  - Global JSONL files are rebuildable indices, NOT the source of truth; they
+    are committed as ONE snapshot (stage all -> backup -> swap -> rollback on
+    failure), so a rebuild never exposes a mixed generation
 
 Usage:
   from food_ip_persistence import SourcePersistence, rebuild_global_indices
@@ -69,6 +71,17 @@ REFINE_ARTIFACTS = {
     "anti_patterns.jsonl": (AntiPattern, lambda m: m.source.source_id),
     "creative_formats.jsonl": (CreativeFormat, lambda m: m.source.source_id),
 }
+
+# The global knowledge indexes are committed as a single snapshot: every file
+# is staged, then all are swapped in (with backup + rollback on failure). A
+# reader never sees a mix of old and new generations.
+GLOBAL_INDEX_FILES = (
+    "chunks.jsonl",
+    "knowledge_cards.jsonl",
+    "case_cards.jsonl",
+    "anti_patterns.jsonl",
+    "creative_formats.jsonl",
+)
 
 
 class StateOwnershipError(Exception):
@@ -305,8 +318,8 @@ class SourcePersistence:
     def _artifact_is_valid(self, filename: str, model, owner) -> bool:
         """File exists and every non-empty line is a schema-valid, this-source item.
 
-        Deliberately stricter than _load_jsonl (which skips corrupt lines for
-        index rebuilds). For completion validation each line must:
+        Complements _load_jsonl (which now also raises on corrupt lines). For
+        completion validation each line must:
           1. parse as JSON,
           2. validate against the artifact's persisted Pydantic model (extra="forbid"),
           3. carry THIS source's source_id.
@@ -383,67 +396,268 @@ class SourcePersistence:
         return self._load_jsonl("knowledge_cards.jsonl")
 
     def _load_jsonl(self, filename: str) -> list[dict]:
+        """Read a per-source JSONL file STRICTLY.
+
+        Per-source data is the authoritative truth behind the global indexes and
+        the completion stats. A corrupt line must never be silently skipped —
+        that would make the global index silently incomplete (explicit failure
+        > silent corruption). Raise instead so the corruption is visible.
+        """
         path = self.source_dir / filename
         if not path.exists():
             return []
         items = []
         with open(path, "r", encoding="utf-8") as f:
-            for line in f:
+            for lineno, line in enumerate(f, 1):
                 line = line.strip()
-                if line:
-                    try:
-                        items.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        pass
+                if not line:
+                    continue
+                try:
+                    items.append(json.loads(line))
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(
+                        f"{self.source_id}/{filename} line {lineno} is not valid "
+                        f"JSON (corrupt authoritative per-source data): {exc}"
+                    ) from exc
         return items
 
+    def load_artifact_strict(self, filename: str, model, owner) -> list[dict]:
+        """Load a per-source artifact file with FULL validation.
+
+        Every non-empty line must (1) parse as JSON, (2) validate against the
+        artifact's persisted Pydantic model (extra="forbid"), and (3) carry THIS
+        source's source_id. Any violation raises RuntimeError naming the source,
+        file, line, and problem — a global snapshot must never absorb a
+        schema-invalid or cross-source item (valid JSON is not a valid artifact).
+        Returns the validated items as JSON dicts.
+
+        A missing file is treated as empty (a card type may legitimately have
+        zero items); whether a *done* source may be missing an artifact at all is
+        enforced separately via ``refine_artifacts_complete`` / the rebuild
+        eligibility check.
+        """
+        path = self.source_dir / filename
+        if not path.exists():
+            return []
+        items = []
+        with open(path, "r", encoding="utf-8") as f:
+            for lineno, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(
+                        f"{self.source_id}/{filename} line {lineno} is not valid "
+                        f"JSON (corrupt authoritative per-source data): {exc}"
+                    ) from exc
+                try:
+                    item = model.model_validate(obj)
+                except ValidationError as exc:
+                    raise RuntimeError(
+                        f"{self.source_id}/{filename} line {lineno} is valid JSON "
+                        f"but not a valid {model.__name__}: {exc}"
+                    ) from exc
+                if owner(item) != self.source_id:
+                    raise RuntimeError(
+                        f"{self.source_id}/{filename} line {lineno} belongs to "
+                        f"source {owner(item)!r}, not {self.source_id} "
+                        f"(cross-source artifact)"
+                    )
+                items.append(item.model_dump(mode="json"))
+        return items
+
+    def missing_or_invalid_artifact(self) -> Optional[str]:
+        """Return the name of the first refine artifact that is missing or fails
+        validation (parse + persisted-model + ownership), or None when all five
+        are valid.
+
+        Mirrors ``refine_artifacts_complete()`` but NAMES the offending artifact
+        so a global rebuild can report which per-source file blocks a coherent
+        snapshot (never silently skip a source that claims to be done).
+        """
+        for name, (model, owner) in REFINE_ARTIFACTS.items():
+            if not self._artifact_is_valid(name, model, owner):
+                return name
+        return None
+
 
 # ============================================================================
-# Global index rebuild
+# Global index rebuild — snapshot atomicity
 # ============================================================================
 
-def rebuild_global_indices():
+def _global_targets() -> list[Path]:
+    """Canonical global index file paths, in GLOBAL_INDEX_FILES order."""
+    return [ATOMIC_DIR / name for name in GLOBAL_INDEX_FILES]
+
+
+def _stage_jsonl(path: Path, items: list[dict]):
+    """Write a global file's content to ``<name>.tmp`` WITHOUT touching the
+    canonical file. Staged data is invisible until the commit phase swaps it in,
+    so a crash or exception while staging leaves the previous snapshot intact."""
+    tmp = Path(str(path) + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        for item in items:
+            f.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+
+def _rollback_interrupted_commit(targets: list[Path]) -> bool:
+    """Deterministic recovery of an interrupted snapshot commit.
+
+    If any canonical target has a ``.bak`` (created by _commit_global_snapshot),
+    the previous commit did not finish cleanly: restore every backup and drop
+    every staged ``.tmp`` so the canonical files return to the last complete
+    snapshot BEFORE any new rebuild. The only way a ``.bak`` survives is a commit
+    that was interrupted before its cleanup, so restoring is always safe (a
+    completed-but-uncleaned commit is rebuilt again with identical data right
+    after). Returns True if a torn commit was rolled back.
+    """
+    restored = False
+    for t in targets:
+        bak = Path(str(t) + ".bak")
+        tmp = Path(str(t) + ".tmp")
+        if bak.exists():
+            os.replace(bak, t)  # old target back into place (atomic on NTFS)
+            restored = True
+        if tmp.exists():
+            tmp.unlink()        # staged-but-uncommitted data is never read
+    return restored
+
+
+def _commit_global_snapshot(targets: list[Path]):
+    """Swap a fully-staged snapshot into place as a set, with rollback.
+
+    Every existing target is backed up (target → ``.bak``), then every staged
+    file is swapped in (``.tmp`` → target). If ANY swap fails, all backups are
+    restored and every staged file is removed, so the canonical files never
+    expose a mixed generation; the exception propagates to the caller. On
+    success the backups and staging files are removed.
+
+    Windows note: every move is ``os.replace`` within the same directory, which
+    is atomic on NTFS. The five-file swap is not single-instruction atomic, but
+    an exception is always rolled back here and a hard interruption is recovered
+    by ``_rollback_interrupted_commit`` on the next rebuild — so a failed rebuild
+    always leaves the previous complete snapshot usable.
+    """
+    backed_up = set()
+    committed = set()
+    try:
+        for t in targets:
+            if t.exists():
+                os.replace(t, Path(str(t) + ".bak"))
+                backed_up.add(t)
+        for t in targets:
+            os.replace(Path(str(t) + ".tmp"), t)
+            committed.add(t)
+    except Exception:
+        # Restore exactly the targets whose old content was moved aside; drop a
+        # freshly-committed file that had no previous snapshot; leave untouched
+        # any target the backup phase never reached (it still holds its old
+        # content). Always remove staged data.
+        for t in targets:
+            bak = Path(str(t) + ".bak")
+            tmp = Path(str(t) + ".tmp")
+            if t in backed_up:
+                os.replace(bak, t)
+            elif t in committed:
+                t.unlink(missing_ok=True)
+            if tmp.exists():
+                tmp.unlink()
+        raise
+    else:
+        for t in targets:
+            Path(str(t) + ".bak").unlink(missing_ok=True)
+            Path(str(t) + ".tmp").unlink(missing_ok=True)
+
+
+def rebuild_global_indices(commit_source_id: Optional[str] = None):
     """
     Rebuild all global JSONL files from per-source data.
     Called after each source completes, and at pipeline end.
 
-    P0-Round2: also rebuilds a global chunks.jsonl so the per-source chunks
-    written by food_ip_refine are reflected in the global index.
+    STRICT contract (P0-FINAL):
+
+    * Per-source data is the authoritative truth. A corrupt line, a
+      schema-invalid item (valid JSON but not a valid persisted model), or a
+      cross-source item in ANY eligible per-source file raises RuntimeError —
+      never silently omitted, never absorbed into the global index.
+    * Eligibility: only formally releasable sources contribute to the snapshot.
+      A source contributes when it is (a) already ``done`` with all five refine
+      artifacts complete/valid, or (b) the source currently committing
+      (``commit_source_id``) — its artifacts were just durably saved. failed /
+      processing / pending / never-started sources contribute NOTHING; a done
+      source with a missing/corrupt artifact and a source with a corrupt state
+      file fail fast (explicit failure > silent corruption; never silently skip
+      a source that claims to be done).
+    * Snapshot atomicity: all per-source data is collected and validated BEFORE
+      any global file is written. The five global files are then staged and
+      committed as one snapshot — a commit that raises rolls back to the
+      previous complete snapshot (never a mixed generation), and an interrupted
+      commit is deterministically recovered on the next rebuild. A source is
+      only marked done after its rebuild committed successfully
+      (see food_ip_refine._persist_source / run_source).
+
+    ``commit_source_id`` is the source whose per-source artifacts were just saved
+    by the caller but whose state is still ``processing`` (mark_done happens
+    after the rebuild). Without it, that source would be excluded by the
+    done-only eligibility rule and would be missing from its own snapshot.
     """
     ensure_dirs()
+    targets = _global_targets()
+    _rollback_interrupted_commit(targets)  # recover a torn commit deterministically
 
-    # Collect all per-source data
-    all_chunks = []
-    all_knowledge = []
-    all_cases = []
-    all_anti = []
-    all_formats = []
+    # ── Collect + validate ALL per-source data first (no global write yet) ──
+    all_chunks, all_knowledge, all_cases, all_anti, all_formats = [], [], [], [], []
 
     if ATOMIC_BY_SOURCE_DIR.exists():
         for src_dir in sorted(ATOMIC_BY_SOURCE_DIR.iterdir()):
             if not src_dir.is_dir():
                 continue
-            sp = SourcePersistence(src_dir.name)
-            all_chunks.extend(sp.load_chunks())
-            all_knowledge.extend(sp.load_knowledge_cards())
-            all_cases.extend(sp._load_jsonl("case_cards.jsonl"))
-            all_anti.extend(sp._load_jsonl("anti_patterns.jsonl"))
-            all_formats.extend(sp._load_jsonl("creative_formats.jsonl"))
+            sid = src_dir.name
+            sp = SourcePersistence(sid, stage="refine")
 
-    # Atomic write for each global index
-    def _write_jsonl(path, items):
-        tmp = Path(str(path) + ".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            for item in items:
-                f.write(json.dumps(item, ensure_ascii=False) + "\n")
-        tmp.replace(path)
+            # Eligibility: done+complete, or the current committing source.
+            if sid != commit_source_id:
+                if not sp.is_completed():
+                    # failed / processing / pending / missing state / a refine
+                    # stage that never reached done → never contributes to the
+                    # global snapshot (corrupt state raises from is_completed).
+                    continue
 
+            # A releasable source must have all five artifacts complete/valid.
+            # done-but-damaged → fail fast, never silently skipped.
+            bad = sp.missing_or_invalid_artifact()
+            if bad is not None:
+                model, owner = REFINE_ARTIFACTS[bad]
+                try:
+                    # Precise reason: corrupt line / schema-invalid / cross-source.
+                    sp.load_artifact_strict(bad, model, owner)
+                except RuntimeError:
+                    raise
+                raise RuntimeError(
+                    f"{sid} is not releasable into the global snapshot: refine "
+                    f"artifact {bad!r} is MISSING even though the source state "
+                    f"claims completion — fix or reset the source"
+                )
+
+            all_chunks.extend(sp.load_artifact_strict(
+                "chunks.jsonl", SemanticChunk, lambda m: m.source_id))
+            all_knowledge.extend(sp.load_artifact_strict(
+                "knowledge_cards.jsonl", KnowledgeCard, lambda m: m.source.source_id))
+            all_cases.extend(sp.load_artifact_strict(
+                "case_cards.jsonl", CaseCard, lambda m: m.source.source_id))
+            all_anti.extend(sp.load_artifact_strict(
+                "anti_patterns.jsonl", AntiPattern, lambda m: m.source.source_id))
+            all_formats.extend(sp.load_artifact_strict(
+                "creative_formats.jsonl", CreativeFormat, lambda m: m.source.source_id))
+
+    # ── Stage everything, then commit the snapshot as ONE set ──
     ATOMIC_DIR.mkdir(parents=True, exist_ok=True)
-    _write_jsonl(ATOMIC_DIR / "chunks.jsonl", all_chunks)
-    _write_jsonl(ATOMIC_DIR / "knowledge_cards.jsonl", all_knowledge)
-    _write_jsonl(ATOMIC_DIR / "case_cards.jsonl", all_cases)
-    _write_jsonl(ATOMIC_DIR / "anti_patterns.jsonl", all_anti)
-    _write_jsonl(ATOMIC_DIR / "creative_formats.jsonl", all_formats)
+    for t, items in zip(targets, [all_chunks, all_knowledge, all_cases,
+                                  all_anti, all_formats]):
+        _stage_jsonl(t, items)
+    _commit_global_snapshot(targets)
 
     return {
         "chunks": len(all_chunks),
@@ -455,7 +669,12 @@ def rebuild_global_indices():
 
 
 def rebuild_sources_index():
-    """Rebuild global sources.jsonl from per-source manifests."""
+    """Rebuild global sources.jsonl from per-source manifests.
+
+    STRICT (P0-FINAL): the per-source manifest is the Source-level source of
+    truth. A corrupt/unreadable manifest raises instead of silently dropping
+    that source from the global index (explicit failure > silent corruption).
+    """
     ensure_dirs()
     sources = []
 
@@ -464,8 +683,11 @@ def rebuild_sources_index():
             try:
                 with open(mf, "r", encoding="utf-8") as f:
                     sources.append(json.load(f))
-            except (json.JSONDecodeError, IOError):
-                pass
+            except (json.JSONDecodeError, IOError) as exc:
+                raise RuntimeError(
+                    f"per-source manifest {mf.name} is corrupt; cannot rebuild "
+                    f"the sources index: {exc}"
+                ) from exc
 
     tmp = MANIFESTS_DIR / ".sources.jsonl.tmp"
     with open(tmp, "w", encoding="utf-8") as f:

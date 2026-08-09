@@ -387,6 +387,13 @@ class FoodIPRefiner:
         processing (live owner) → refuse (never preempt another running process)
         processing → exception → failed (original exception re-raised)
 
+        COMPLETION ("done") CONTRACT (P0-FINAL): a source is marked done ONLY
+        after (a) its per-source refine artifacts are durably saved AND (b) the
+        global indexes were successfully rebuilt from them (see
+        _persist_source). If the global rebuild fails — e.g. corrupt per-source
+        data in any source — the source is marked FAILED, never done: a bare
+        done marker backed by a stale or missing global index must not form.
+
         Completed sources are skipped WITHOUT calling the LLM. Skip is not
         blind: state=done is only trusted when (a) the state file belongs to
         THIS source/stage and passes strict SourceState validation, and
@@ -462,11 +469,19 @@ class FoodIPRefiner:
         sp.save_creative_formats(self.creative_formats[mark_format:])
 
         # Keep the global knowledge indexes consistent with per-source truth.
-        try:
-            counts = rebuild_global_indices()
-        except Exception as e:
-            print(f"  [persist] WARN: global index rebuild failed: {e}")
-            counts = {}
+        # STRICT (P0-FINAL): rebuild failure (e.g. corrupt per-source data in
+        # ANY source) propagates instead of being a WARN-and-forget. It must
+        # never form a "looks-complete" state backed by a stale/missing global
+        # index — run_source catches this and marks the source failed. The
+        # per-source artifacts already saved above are preserved (valid data is
+        # never cleared by a rebuild failure).
+        #
+        # THIS source is still status=processing here (mark_done happens after
+        # the rebuild), so it is passed as the explicit committing source: only
+        # done+complete historical sources and this in-flight source are allowed
+        # into the snapshot, and its freshly-saved artifacts are validated
+        # strictly (Pydantic model + source ownership) before they can enter.
+        counts = rebuild_global_indices(commit_source_id=source_id)
 
         print(f"  [persist] {source_id} saved per-source "
               f"(chunks={len(chunks)}, knowledge={len(self.knowledge_cards)-mark_knowledge}, "
@@ -887,12 +902,12 @@ class FoodIPRefiner:
         ensure_dirs()
 
         # Global knowledge indexes: rebuild from per-source truth.
+        # STRICT (P0-FINAL): a rebuild failure (e.g. corrupt per-source data)
+        # propagates instead of printing a WARN and reporting a successful run
+        # with a stale index. A run whose global index cannot be rebuilt must
+        # fail loudly, never report DONE.
         from food_ip_persistence import rebuild_global_indices
-        try:
-            counts = rebuild_global_indices()
-        except Exception as e:
-            print(f"  [flush] WARN: global index rebuild failed: {e}")
-            counts = {}
+        counts = rebuild_global_indices()
 
         self._write_jsonl(GRAPH_DIR / "question_links.jsonl", self.question_links)
         self._write_jsonl(GRAPH_DIR / "knowledge_relations.jsonl", self.relations)

@@ -2181,6 +2181,44 @@ class TestPerSourcePersistence(unittest.TestCase):
                     food_ip_refine.main()
         return card_llm
 
+    def _mark_state(self, source_id, status, error=""):
+        """Write a refine-stage state file with the given status, for building
+        done/failed/processing eligibility fixtures. Returns the source dir."""
+        with patch('food_ip_persistence.ATOMIC_BY_SOURCE_DIR',
+                   self.work / "atomic/by_source"):
+            sp = SourcePersistence(source_id, stage="refine")
+            if status == "done":
+                sp.mark_done()
+            elif status == "failed":
+                sp.mark_failed(error or "injected failure")
+            else:  # processing
+                sp.start_processing("run-eligibility-test")
+        return sp.source_dir
+
+    def _write_all_artifacts(self, source_id, overrides=None):
+        """Write all five per-source artifact files (empty), then apply
+        ``overrides`` {filename: content}. Returns the source dir."""
+        src = self.work / "atomic/by_source" / source_id
+        src.mkdir(parents=True, exist_ok=True)
+        for name in ["chunks.jsonl", "knowledge_cards.jsonl", "case_cards.jsonl",
+                     "anti_patterns.jsonl", "creative_formats.jsonl"]:
+            (src / name).write_text("", encoding="utf-8")
+        for name, content in (overrides or {}).items():
+            (src / name).write_text(content, encoding="utf-8")
+        return src
+
+    def _valid_chunk_for(self, source_id, tag="elig"):
+        """A schema-valid SemanticChunk JSON line belonging to ``source_id``."""
+        return json.dumps({
+            "chunk_id": f"CHK_{tag}_{source_id}",
+            "source_id": source_id,
+            "segment_ids": [f"{source_id}-SEG0001"],
+            "knowledge_type_hint": "technique",
+            "brief": f"{tag}块",
+            "chunk_text": "这是一段用于资格过滤测试的足够长的知识块文本内容。",
+            "start_sec": 0.0, "end_sec": 5.0, "start_time": "", "end_time": "",
+        }, ensure_ascii=False) + "\n"
+
     def test_incremental_sources_both_in_global_after_rebuild(self):
         """First SRC0001, then only SRC0002 → global index keeps BOTH."""
         self._write_asr("SRC0001")
@@ -2651,6 +2689,657 @@ class TestPerSourcePersistence(unittest.TestCase):
         self.assertTrue(state_path.exists(), "corrupt state must not be deleted")
         self.assertEqual(state_path.read_text(encoding="utf-8"), corrupt,
                          "corrupt state must not be silently rewritten")
+
+    # ── P0-FINAL acceptance: pid<=0 stale, rerun idempotency, crash-before-
+    # mark_done, persistence failure (Cases C/F/G/H) ──
+
+    def test_pid_zero_processing_treated_as_stale_reprocesses(self):
+        """status=processing with pid=0 (no recorded owner) must be treated as
+        stale: reclaimed and reprocessed to done — NOT skipped, NOT kept."""
+        self._write_asr("SRC0001")
+        src_dir = self._write_stale_state(
+            "SRC0001", pid=0, run_id="run_pid0")
+
+        card_llm = MagicMock(return_value=self._card_json("SRC0001"))
+        self._run_refine("SRC0001", card_llm=card_llm)
+        self.assertGreater(card_llm.call_count, 0,
+                           "pid=0 processing must be reclaimed (LLM called)")
+
+        state = json.loads((src_dir / "source_state_refine.json")
+                           .read_text(encoding="utf-8"))
+        self.assertEqual(state["status"], "done",
+                         "pid=0 stale marker must be reprocessed to done")
+
+    def test_pid_negative_processing_treated_as_stale_reprocesses(self):
+        """status=processing with pid<0 must be treated as stale: reclaimed
+        and reprocessed to done."""
+        self._write_asr("SRC0001")
+        src_dir = self._write_stale_state(
+            "SRC0001", pid=-42, run_id="run_pidneg")
+
+        card_llm = MagicMock(return_value=self._card_json("SRC0001"))
+        self._run_refine("SRC0001", card_llm=card_llm)
+        self.assertGreater(card_llm.call_count, 0,
+                           "pid<0 processing must be reclaimed (LLM called)")
+
+        state = json.loads((src_dir / "source_state_refine.json")
+                           .read_text(encoding="utf-8"))
+        self.assertEqual(state["status"], "done",
+                         "pid<0 stale marker must be reprocessed to done")
+
+    def test_reset_and_rerun_idempotent_no_duplicates(self):
+        """Full lifecycle twice (explicit reset between runs): Source/Segment/
+        Chunk/Knowledge identity is stable, and per-source + global data contain
+        NO duplicate entities after the second run."""
+        self._write_asr("SRC0001")
+
+        # ── First full run ──
+        self._run_refine("SRC0001")
+        src_dir = self.work / "atomic/by_source/SRC0001"
+        chunks1 = [json.loads(l) for l in (src_dir / "chunks.jsonl")
+                   .read_text(encoding="utf-8").splitlines() if l.strip()]
+        cards1 = [json.loads(l) for l in (src_dir / "knowledge_cards.jsonl")
+                  .read_text(encoding="utf-8").splitlines() if l.strip()]
+        self.assertEqual(len(chunks1), 1)
+        self.assertEqual(len(cards1), 1)
+        chunk_id1 = chunks1[0]["chunk_id"]
+        kid1 = cards1[0]["knowledge_id"]
+        seg_ids1 = chunks1[0]["segment_ids"]
+
+        # ── Explicit reset to pending (test-only recovery flow) ──
+        # Must stay inside the patched dir scope — never touch real E:\ output.
+        with patch('food_ip_persistence.ATOMIC_BY_SOURCE_DIR',
+                   self.work / "atomic/by_source"):
+            sp = SourcePersistence("SRC0001", stage="refine")
+            sp.reset_to_pending("P0-FINAL rerun idempotency check")
+
+        # ── Second full run: same deterministic identity, no duplicates ──
+        self._run_refine("SRC0001")
+        chunks2 = [json.loads(l) for l in (src_dir / "chunks.jsonl")
+                   .read_text(encoding="utf-8").splitlines() if l.strip()]
+        cards2 = [json.loads(l) for l in (src_dir / "knowledge_cards.jsonl")
+                  .read_text(encoding="utf-8").splitlines() if l.strip()]
+
+        self.assertEqual(len(chunks2), 1, "rerun must not duplicate chunks")
+        self.assertEqual(len(cards2), 1, "rerun must not duplicate knowledge")
+        self.assertEqual(chunks2[0]["chunk_id"], chunk_id1,
+                         "chunk identity must be stable across reruns")
+        self.assertEqual(chunks2[0]["segment_ids"], seg_ids1,
+                         "chunk evidence segments must be stable across reruns")
+        self.assertEqual(cards2[0]["knowledge_id"], kid1,
+                         "knowledge identity must be stable across reruns")
+        self.assertEqual(cards2[0]["source"]["source_id"], "SRC0001")
+
+        # Global index rebuilt from per-source → still exactly one card.
+        global_cards = [l for l in (self.work / "atomic" / "knowledge_cards.jsonl")
+                        .read_text(encoding="utf-8").splitlines() if l.strip()]
+        self.assertEqual(len(global_cards), 1,
+                         "global index must not accumulate duplicate cards")
+        global_chunks = [l for l in (self.work / "atomic" / "chunks.jsonl")
+                         .read_text(encoding="utf-8").splitlines() if l.strip()]
+        self.assertEqual(len(global_chunks), 1,
+                         "global index must not accumulate duplicate chunks")
+
+        state = json.loads((src_dir / "source_state_refine.json")
+                           .read_text(encoding="utf-8"))
+        self.assertEqual(state["status"], "done",
+                         "rerun must end in the completed state")
+
+    def test_crash_after_persist_before_mark_done_no_duplicates(self):
+        """Case G: complete per-source artifacts are on disk but the run crashed
+        BEFORE mark_done (state=processing, dead pid). The next run reclaims the
+        stale marker, reprocesses, and produces NO duplicate chunks/knowledge —
+        deterministic IDs + overwrite persistence guarantee it."""
+        self._write_asr("SRC0001")
+        src_dir = self.work / "atomic/by_source/SRC0001"
+
+        # Simulate a run that persisted successfully then crashed pre-mark_done:
+        # run once to produce the complete artifact set, then flip the state to
+        # a processing marker owned by a now-dead pid.
+        self._run_refine("SRC0001")
+        chunks_before = len([l for l in (src_dir / "chunks.jsonl")
+                             .read_text(encoding="utf-8").splitlines() if l.strip()])
+        cards_before = len([l for l in (src_dir / "knowledge_cards.jsonl")
+                            .read_text(encoding="utf-8").splitlines() if l.strip()])
+        self.assertEqual(chunks_before, 1)
+        self.assertEqual(cards_before, 1)
+
+        self._write_stale_state("SRC0001", pid=99999997, run_id="run_crashed_after_persist")
+
+        # ── Recovery run ──
+        card_llm = MagicMock(return_value=self._card_json("SRC0001"))
+        self._run_refine("SRC0001", card_llm=card_llm)
+        self.assertGreater(card_llm.call_count, 0,
+                           "crash-before-mark_done must be reprocessed (LLM called)")
+
+        # No duplicate entities: per-source files hold exactly one of each.
+        chunks_after = [json.loads(l) for l in (src_dir / "chunks.jsonl")
+                        .read_text(encoding="utf-8").splitlines() if l.strip()]
+        cards_after = [json.loads(l) for l in (src_dir / "knowledge_cards.jsonl")
+                       .read_text(encoding="utf-8").splitlines() if l.strip()]
+        self.assertEqual(len(chunks_after), 1,
+                         "crash-before-mark_done must not duplicate chunks")
+        self.assertEqual(len(cards_after), 1,
+                         "crash-before-mark_done must not duplicate knowledge")
+        self.assertEqual(chunks_after[0]["source_id"], "SRC0001")
+        self.assertEqual(cards_after[0]["source"]["source_id"], "SRC0001")
+
+        # Global index consistent.
+        global_cards = [l for l in (self.work / "atomic" / "knowledge_cards.jsonl")
+                        .read_text(encoding="utf-8").splitlines() if l.strip()]
+        self.assertEqual(len(global_cards), 1,
+                         "crash-before-mark_done must not duplicate global cards")
+
+        state = json.loads((src_dir / "source_state_refine.json")
+                           .read_text(encoding="utf-8"))
+        self.assertEqual(state["status"], "done",
+                         "recovery must end in the completed state")
+
+    def test_persistence_failure_marks_failed_not_done(self):
+        """Case H: a failure DURING per-source persistence must never leave a
+        bare completed marker. The source is marked failed, the exception
+        propagates, and the state is NOT done (no 'done but not saved')."""
+        self._write_asr("SRC0001")
+        src_dir = self.work / "atomic/by_source/SRC0001"
+
+        from food_ip_persistence import SourcePersistence as _SP
+        with patch.object(_SP, 'save_knowledge_cards',
+                          side_effect=RuntimeError("disk full during persistence")):
+            with self.assertRaises(RuntimeError) as ctx:
+                self._run_refine("SRC0001")
+            self.assertIn("disk full during persistence", str(ctx.exception),
+                          "persistence failure must propagate")
+
+        state = json.loads((src_dir / "source_state_refine.json")
+                           .read_text(encoding="utf-8"))
+        self.assertEqual(state["status"], "failed",
+                         "persistence failure must mark the source failed, NOT done")
+        self.assertIn("disk full during persistence", state["error"])
+        # is_completed reads the state file — keep it inside the patched scope.
+        with patch('food_ip_persistence.ATOMIC_BY_SOURCE_DIR',
+                   self.work / "atomic/by_source"):
+            sp = SourcePersistence("SRC0001", stage="refine")
+            self.assertFalse(sp.is_completed(),
+                             "a failed persistence must never look completed")
+
+    # ── P0-FINAL acceptance: full Evidence / Provenance trace-back ──
+
+    def test_evidence_chain_card_to_chunk_to_asr_segment_to_source(self):
+        """Walk one persisted KnowledgeCard all the way back to its evidence:
+        Card → chunk (chunk_id) → segment_ids → ASRSegments on disk →
+        Whisper-native timestamps + raw_text → Source manifest. Proves the
+        final knowledge is traceable to the real Source and evidence positions.
+        Also asserts the teacher's original words (raw_text) are preserved
+        separately from the corrected text."""
+        self._write_asr("SRC0001")
+        self._run_refine("SRC0001")
+
+        src_dir = self.work / "atomic/by_source/SRC0001"
+
+        # ── Card (top of the chain) ──
+        cards = [json.loads(l) for l in (src_dir / "knowledge_cards.jsonl")
+                 .read_text(encoding="utf-8").splitlines() if l.strip()]
+        self.assertEqual(len(cards), 1)
+        card = cards[0]
+        self.assertTrue(card["knowledge_id"].startswith("KID_"),
+                        "knowledge_id must be deterministic (KID_)")
+        self.assertTrue(card["chunk_id"].startswith("CHK_"),
+                        "card must carry its backing chunk_id")
+
+        # ── Atomic → Chunk ──
+        chunks = {c["chunk_id"]: c for c in
+                  (json.loads(l) for l in (src_dir / "chunks.jsonl")
+                   .read_text(encoding="utf-8").splitlines() if l.strip())}
+        chunk = chunks.get(card["chunk_id"])
+        self.assertIsNotNone(chunk,
+                             "card.chunk_id must resolve to a persisted chunk")
+        self.assertEqual(chunk["source_id"], "SRC0001")
+        seg_ids = chunk["segment_ids"]
+        self.assertEqual(seg_ids, ["SRC0001-SEG0001", "SRC0001-SEG0002"])
+
+        # ── Chunk → ASR Segments on disk (Whisper-native authority) ──
+        asr = json.loads((self.whisper_segments /
+                          "SRC0001_asr_whisper_segments.json")
+                         .read_text(encoding="utf-8"))
+        seg_map = {s["segment_id"]: s for s in asr["segments"]}
+        for sid in seg_ids:
+            seg = seg_map.get(sid)
+            self.assertIsNotNone(seg, f"evidence segment {sid} must exist in ASR file")
+            self.assertEqual(seg["source_id"], "SRC0001")
+            self.assertIn("start_sec", seg)
+            self.assertIn("end_sec", seg)
+            self.assertTrue(seg["raw_text"], f"{sid} must keep the teacher's raw_text")
+
+        # ── Chunk → timestamp → Source (programmatic, from segments) ──
+        self.assertEqual(chunk["start_sec"], 0.0)
+        self.assertEqual(chunk["end_sec"], 10.0)
+        self.assertEqual(card["source"]["source_id"], "SRC0001")
+        self.assertEqual(card["source"]["start_sec"], 0.0)
+        self.assertEqual(card["source"]["end_sec"], 10.0)
+
+        # Evidence fields on the card must reference the SAME segments.
+        self.assertEqual(card["evidence_segment_ids"], seg_ids)
+
+        # ── raw_text (teacher words) vs corrected_text stay distinct ──
+        seg1 = seg_map["SRC0001-SEG0001"]
+        self.assertEqual(seg1["raw_text"], "第一条测试文本")
+        self.assertEqual(seg1["corrected_text"], "第一条测试文本")
+        self.assertEqual(seg1["segment_id"], "SRC0001-SEG0001")
+
+        # Source manifest exists and anchors the Source identity. (The full
+        # transcription manifest contract — asr_segments_path + segment_count —
+        # is asserted by the real transcription CLI in
+        # TestTranscribeToRefineIntegration; the minimal helper manifest used
+        # here only carries what refine reads: source_id + title.)
+        manifest = json.loads((self.manifests / "SRC0001.json")
+                              .read_text(encoding="utf-8"))
+        self.assertEqual(manifest["source_id"], "SRC0001")
+
+    # ── P0-FINAL Issue 1: global index rebuild is STRICT (no silent corruption)
+    #    and a rebuild failure blocks mark_done (source → failed, never a bare
+    #    done marker backed by a stale/missing global index). ──
+
+    def test_load_jsonl_raises_on_corrupt_authoritative_line(self):
+        """Issue 1: a corrupt line in authoritative per-source data must RAISE,
+        never be silently skipped (silent skipping makes the global index
+        silently incomplete)."""
+        with patch('food_ip_persistence.ATOMIC_BY_SOURCE_DIR',
+                   self.work / "atomic/by_source"):
+            sp = SourcePersistence("SRC0001", stage="refine")
+            (sp.source_dir / "chunks.jsonl").write_text(
+                '{"chunk_id": "CHK_a"}\n{this is not json}\n',
+                encoding="utf-8")
+            with self.assertRaises(RuntimeError) as ctx:
+                sp.load_chunks()
+            self.assertIn("chunks.jsonl", str(ctx.exception),
+                          "error must name the corrupt file")
+            self.assertIn("SRC0001", str(ctx.exception),
+                          "error must name the source")
+
+    def test_rebuild_global_indices_raises_on_corrupt_per_source_line(self):
+        """Issue 1: rebuild_global_indices must not swallow corrupt per-source
+        data. A corrupt line in ANY source makes it RAISE, and the global files
+        are left untouched — never a partially/incompletely rebuilt index."""
+        self._write_asr("SRC0001")
+        self._run_refine("SRC0001")  # clean rebuild → global index exists
+        global_cards = self.work / "atomic/knowledge_cards.jsonl"
+        before = global_cards.read_text(encoding="utf-8")
+        self.assertTrue(before.strip())
+
+        # Corrupt a DIFFERENT, already-DONE source's authoritative per-source
+        # data. Done sources are eligible for the snapshot, so the corrupt line
+        # must RAISE (never silently dropped from the index).
+        bad = self._mark_state("SRC0002", "done")
+        (bad / "chunks.jsonl").write_text("{not json}\n", encoding="utf-8")
+
+        from food_ip_persistence import rebuild_global_indices
+        with patch('food_ip_persistence.ATOMIC_DIR', self.work / "atomic"):
+            with patch('food_ip_persistence.ATOMIC_BY_SOURCE_DIR',
+                       self.work / "atomic/by_source"):
+                with patch('food_ip_persistence.ensure_dirs'):
+                    with self.assertRaises(RuntimeError) as ctx:
+                        rebuild_global_indices()
+                    self.assertIn("SRC0002", str(ctx.exception),
+                                  "error must name the corrupt source")
+        self.assertEqual(global_cards.read_text(encoding="utf-8"), before,
+                         "a failed rebuild must not rewrite the global index")
+
+    def test_rebuild_global_indices_recovers_after_corruption_fixed(self):
+        """Issue 1: recovery is deterministic — once the corrupt per-source data
+        is fixed, rebuild succeeds and the global index matches per-source truth."""
+        self._write_asr("SRC0001")
+        self._run_refine("SRC0001")
+        src_dir = self.work / "atomic/by_source/SRC0001"
+        valid_chunks = (src_dir / "chunks.jsonl").read_text(encoding="utf-8")
+
+        # Corrupt SRC0001's own chunks → rebuild raises.
+        (src_dir / "chunks.jsonl").write_text("{not json}\n", encoding="utf-8")
+
+        from food_ip_persistence import rebuild_global_indices
+        with patch('food_ip_persistence.ATOMIC_DIR', self.work / "atomic"):
+            with patch('food_ip_persistence.ATOMIC_BY_SOURCE_DIR',
+                       self.work / "atomic/by_source"):
+                with patch('food_ip_persistence.ensure_dirs'):
+                    with self.assertRaises(RuntimeError):
+                        rebuild_global_indices()
+                    # Fix the corruption → rebuild succeeds and equals truth.
+                    (src_dir / "chunks.jsonl").write_text(
+                        valid_chunks, encoding="utf-8")
+                    counts = rebuild_global_indices()
+
+        per_source = len([l for l in valid_chunks.splitlines() if l.strip()])
+        self.assertEqual(counts["chunks"], per_source,
+                         "after recovery the global index must equal per-source truth")
+        global_chunks = self.work / "atomic/chunks.jsonl"
+        self.assertEqual(len([l for l in global_chunks.read_text(encoding="utf-8")
+                              .splitlines() if l.strip()]), per_source)
+
+    def test_rebuild_failure_blocks_mark_done_marks_failed(self):
+        """Issue 1 / Case H re-audit: a global-rebuild failure must NOT be a
+        WARN-and-forget. The source that hits it is marked FAILED — never done
+        with a stale/missing global index — the error is visible in state, and
+        its already-saved per-source artifacts are preserved (valid data is
+        never cleared)."""
+        self._write_asr("SRC0001")
+        # Corrupt authoritative data in ANOTHER, already-DONE source dir so the
+        # rebuild (which reads ALL eligible per-source dirs) fails for SRC0001
+        # as well — a done source's corrupt data must never be silently skipped.
+        bad = self._mark_state("SRC0002", "done")
+        (bad / "chunks.jsonl").write_text("{not json}\n", encoding="utf-8")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            self._run_refine("SRC0001")
+        self.assertIn("chunks.jsonl", str(ctx.exception),
+                      "the rebuild failure must propagate, not be swallowed")
+
+        src_dir = self.work / "atomic/by_source/SRC0001"
+        state = json.loads((src_dir / "source_state_refine.json")
+                           .read_text(encoding="utf-8"))
+        self.assertEqual(state["status"], "failed",
+                         "rebuild failure must mark the source failed, NOT done")
+        self.assertIn("chunks.jsonl", state["error"],
+                      "the failure must be visible in the source state")
+
+        # Per-source artifacts were saved BEFORE the rebuild — preserved.
+        self.assertTrue((src_dir / "chunks.jsonl").is_file())
+        self.assertTrue((src_dir / "knowledge_cards.jsonl").is_file())
+        # The global index must not claim success (no partial/empty write).
+        self.assertFalse((self.work / "atomic/knowledge_cards.jsonl").exists(),
+                         "a failed rebuild must not leave a 'looks-successful' "
+                         "global index")
+
+    def test_rebuild_sources_index_raises_on_corrupt_manifest(self):
+        """Issue 1: rebuild_sources_index must not silently drop a corrupt
+        per-source manifest from the global sources index."""
+        (self.manifests / "SRC0009.json").write_text("{not json}", encoding="utf-8")
+        from food_ip_persistence import rebuild_sources_index
+        with patch('food_ip_persistence.PER_SOURCE_MANIFESTS_DIR', self.manifests):
+            with patch('food_ip_persistence.MANIFESTS_DIR', self.work / "manifests"):
+                with patch('food_ip_persistence.ensure_dirs'):
+                    with self.assertRaises(RuntimeError) as ctx:
+                        rebuild_sources_index()
+                    self.assertIn("SRC0009.json", str(ctx.exception),
+                                  "error must name the corrupt manifest")
+
+    # ── P0-FINAL Global Snapshot Integrity (2026-08-09): the 5-file global
+    #    index is committed as ONE snapshot (no mixed generation on a failed
+    #    rebuild), only releasable sources (done+complete, or the explicitly
+    #    committing source) may contribute, and every line is validated against
+    #    its persisted Pydantic model + source ownership — not just JSON syntax. ──
+
+    def test_rebuild_mid_commit_failure_preserves_previous_snapshot(self):
+        """Issue A: a rebuild whose 2nd/3rd global-file swap raises must NOT
+        leave a mixed-generation snapshot. The previous complete snapshot is
+        rolled back onto disk (all five files identical), no .bak/.tmp staged
+        leftovers survive, and a clean rerun rebuilds a coherent snapshot."""
+        self._write_asr("SRC0001")
+        self._run_refine("SRC0001")
+        atomic = self.work / "atomic"
+        names = ["chunks.jsonl", "knowledge_cards.jsonl", "case_cards.jsonl",
+                 "anti_patterns.jsonl", "creative_formats.jsonl"]
+        before = {name: (atomic / name).read_text(encoding="utf-8") for name in names}
+        self.assertTrue(before["chunks.jsonl"].strip(),
+                        "previous snapshot must be non-empty")
+
+        from food_ip_persistence import rebuild_global_indices
+        real_replace = os.replace
+        counter = {"n": 0}
+
+        def flaky_replace(src, dst):
+            counter["n"] += 1
+            if counter["n"] == 7:  # chunks swapped (1st), knowledge_cards swap fails
+                raise OSError("injected OSError on the knowledge_cards swap")
+            return real_replace(src, dst)
+
+        with patch('food_ip_persistence.os.replace', side_effect=flaky_replace):
+            with patch('food_ip_persistence.ATOMIC_DIR', atomic):
+                with patch('food_ip_persistence.ATOMIC_BY_SOURCE_DIR',
+                           self.work / "atomic/by_source"):
+                    with patch('food_ip_persistence.ensure_dirs'):
+                        with self.assertRaises(OSError) as ctx:
+                            rebuild_global_indices()
+                        self.assertIn("knowledge_cards swap", str(ctx.exception))
+
+        # No mixed generation: every canonical file equals the previous snapshot.
+        for name in names:
+            self.assertEqual((atomic / name).read_text(encoding="utf-8"),
+                             before[name],
+                             f"failed rebuild must roll back {name}")
+        self.assertEqual(list(atomic.glob("*.bak")), [],
+                         "no backup files may survive a rolled-back commit")
+        self.assertEqual(list(atomic.glob("*.tmp")), [],
+                         "no staged files may survive a rolled-back commit")
+
+        # A clean rerun (no injection) commits a coherent snapshot.
+        with patch('food_ip_persistence.ATOMIC_DIR', atomic):
+            with patch('food_ip_persistence.ATOMIC_BY_SOURCE_DIR',
+                       self.work / "atomic/by_source"):
+                with patch('food_ip_persistence.ensure_dirs'):
+                    counts = rebuild_global_indices()
+        self.assertEqual(counts["chunks"], 1)
+        self.assertEqual(counts["knowledge_cards"], 1)
+        self.assertEqual(list(atomic.glob("*.bak")), [])
+        self.assertEqual(list(atomic.glob("*.tmp")), [])
+
+    def test_rebuild_excludes_failed_source_partial_artifacts(self):
+        """Issue B / Test 2: a FAILED source with partial (schema-valid)
+        artifacts contributes ZERO to the global snapshot; only the done
+        source's data enters."""
+        self._write_asr("SRC0001")
+        self._run_refine("SRC0001")
+        bad = self._mark_state("SRC0002", "failed", error="disk full")
+        (bad / "chunks.jsonl").write_text(
+            self._valid_chunk_for("SRC0002", "fail"), encoding="utf-8")
+
+        from food_ip_persistence import rebuild_global_indices
+        with patch('food_ip_persistence.ATOMIC_DIR', self.work / "atomic"):
+            with patch('food_ip_persistence.ATOMIC_BY_SOURCE_DIR',
+                       self.work / "atomic/by_source"):
+                with patch('food_ip_persistence.ensure_dirs'):
+                    counts = rebuild_global_indices()
+        self.assertEqual(counts["chunks"], 1,
+                         "failed source must contribute ZERO chunks")
+        self.assertEqual(counts["knowledge_cards"], 1)
+        lines = [l for l in (self.work / "atomic/chunks.jsonl")
+                 .read_text(encoding="utf-8").splitlines() if l.strip()]
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(json.loads(lines[0])["source_id"], "SRC0001",
+                         "only the done source's chunk may enter the snapshot")
+
+    def test_rebuild_excludes_processing_unrelated_source(self):
+        """Issue B / Test 3: an unrelated source that is currently PROCESSING
+        (partial artifacts) must NOT contaminate the global snapshot."""
+        self._write_asr("SRC0001")
+        self._run_refine("SRC0001")
+        bad = self._mark_state("SRC0002", "processing")
+        (bad / "chunks.jsonl").write_text(
+            self._valid_chunk_for("SRC0002", "proc"), encoding="utf-8")
+
+        from food_ip_persistence import rebuild_global_indices
+        with patch('food_ip_persistence.ATOMIC_DIR', self.work / "atomic"):
+            with patch('food_ip_persistence.ATOMIC_BY_SOURCE_DIR',
+                       self.work / "atomic/by_source"):
+                with patch('food_ip_persistence.ensure_dirs'):
+                    counts = rebuild_global_indices()
+        self.assertEqual(counts["chunks"], 1,
+                         "processing source must not contaminate the snapshot")
+
+    def test_rebuild_fails_fast_on_done_source_missing_artifact(self):
+        """Issue B / Test 4: a source that claims done but is missing a required
+        artifact must fail-fast — never silently skipped from the snapshot."""
+        self._write_asr("SRC0001")
+        self._run_refine("SRC0001")
+        atomic = self.work / "atomic"
+        before = (atomic / "knowledge_cards.jsonl").read_text(encoding="utf-8")
+        self._mark_state("SRC0002", "done")  # done, but ZERO artifacts on disk
+
+        from food_ip_persistence import rebuild_global_indices
+        with patch('food_ip_persistence.ATOMIC_DIR', atomic):
+            with patch('food_ip_persistence.ATOMIC_BY_SOURCE_DIR',
+                       self.work / "atomic/by_source"):
+                with patch('food_ip_persistence.ensure_dirs'):
+                    with self.assertRaises(RuntimeError) as ctx:
+                        rebuild_global_indices()
+                    self.assertIn("SRC0002", str(ctx.exception))
+                    self.assertIn("chunks.jsonl", str(ctx.exception))
+        self.assertEqual((atomic / "knowledge_cards.jsonl")
+                         .read_text(encoding="utf-8"), before,
+                         "failed rebuild must not rewrite the previous snapshot")
+
+    def test_rebuild_raises_on_valid_json_invalid_schema(self):
+        """Issue C / Test 5: a line that is valid JSON but NOT a valid persisted
+        model must fail-fast — JSON syntax validity is not artifact validity."""
+        self._write_asr("SRC0001")
+        self._run_refine("SRC0001")
+        atomic = self.work / "atomic"
+        before = (atomic / "knowledge_cards.jsonl").read_text(encoding="utf-8")
+        self._write_all_artifacts("SRC0002", overrides={
+            "chunks.jsonl": '{"junk": "still valid json"}\n',
+        })
+        self._mark_state("SRC0002", "done")
+
+        from food_ip_persistence import rebuild_global_indices
+        with patch('food_ip_persistence.ATOMIC_DIR', atomic):
+            with patch('food_ip_persistence.ATOMIC_BY_SOURCE_DIR',
+                       self.work / "atomic/by_source"):
+                with patch('food_ip_persistence.ensure_dirs'):
+                    with self.assertRaises(RuntimeError) as ctx:
+                        rebuild_global_indices()
+                    self.assertIn("SRC0002", str(ctx.exception))
+                    self.assertIn("SemanticChunk", str(ctx.exception),
+                                  "error must cite the rejected persisted model")
+        self.assertEqual((atomic / "knowledge_cards.jsonl")
+                         .read_text(encoding="utf-8"), before,
+                         "failed rebuild must not rewrite the previous snapshot")
+
+    def test_rebuild_raises_on_cross_source_artifact(self):
+        """Issue C / Test 6: a schema-valid artifact whose source_id belongs to a
+        DIFFERENT source must fail-fast (cross-source contamination)."""
+        self._write_asr("SRC0001")
+        self._run_refine("SRC0001")
+        atomic = self.work / "atomic"
+        before = (atomic / "knowledge_cards.jsonl").read_text(encoding="utf-8")
+        # A VALID SemanticChunk owned by SRC0001, stored under SRC0002's dir.
+        self._write_all_artifacts("SRC0002", overrides={
+            "chunks.jsonl": self._valid_chunk_for("SRC0001", "xsrc"),
+        })
+        self._mark_state("SRC0002", "done")
+
+        from food_ip_persistence import rebuild_global_indices
+        with patch('food_ip_persistence.ATOMIC_DIR', atomic):
+            with patch('food_ip_persistence.ATOMIC_BY_SOURCE_DIR',
+                       self.work / "atomic/by_source"):
+                with patch('food_ip_persistence.ensure_dirs'):
+                    with self.assertRaises(RuntimeError) as ctx:
+                        rebuild_global_indices()
+                    self.assertIn("SRC0002", str(ctx.exception))
+                    self.assertIn("SRC0001", str(ctx.exception))
+                    self.assertIn("cross-source", str(ctx.exception))
+        self.assertEqual((atomic / "knowledge_cards.jsonl")
+                         .read_text(encoding="utf-8"), before,
+                         "failed rebuild must not rewrite the previous snapshot")
+
+    def test_rebuild_includes_current_committing_source(self):
+        """Issue B / Test 7: the currently-committing source (passed explicitly,
+        still status=processing because mark_done runs after the rebuild) DOES
+        enter the resulting global snapshot; without the explicit commit arg, a
+        processing source is excluded."""
+        self._write_asr("SRC0001")
+        self._run_refine("SRC0001")
+        self._write_all_artifacts("SRC0002", overrides={
+            "chunks.jsonl": self._valid_chunk_for("SRC0002", "commit"),
+        })
+        self._mark_state("SRC0002", "processing")
+
+        from food_ip_persistence import rebuild_global_indices
+        with patch('food_ip_persistence.ATOMIC_DIR', self.work / "atomic"):
+            with patch('food_ip_persistence.ATOMIC_BY_SOURCE_DIR',
+                       self.work / "atomic/by_source"):
+                with patch('food_ip_persistence.ensure_dirs'):
+                    # Plain rebuild: processing SRC0002 is NOT releasable.
+                    counts = rebuild_global_indices()
+                    self.assertEqual(counts["chunks"], 1)
+                    # Explicit committing source: it IS included.
+                    counts = rebuild_global_indices(commit_source_id="SRC0002")
+        self.assertEqual(counts["chunks"], 2,
+                         "the committing source must enter its own snapshot")
+        self.assertEqual(counts["knowledge_cards"], 1)
+        sids = sorted(json.loads(l)["source_id"]
+                      for l in (self.work / "atomic/chunks.jsonl")
+                      .read_text(encoding="utf-8").splitlines() if l.strip())
+        self.assertEqual(sids, ["SRC0001", "SRC0002"])
+
+    def test_rebuild_after_failure_repaired_runs_done_with_coherent_snapshot(self):
+        """Issue B / Test 8: a done source's corruption blocks a NEW source's
+        completion (rebuild fail-fast); once repaired, the rerun reaches done and
+        the global snapshot is coherent across ALL eligible sources."""
+        self._write_asr("SRC0001")
+        self._write_asr("SRC0002")
+        self._run_refine("SRC0001")
+        src1 = self.work / "atomic/by_source/SRC0001"
+        valid_chunks = (src1 / "chunks.jsonl").read_text(encoding="utf-8")
+        (src1 / "chunks.jsonl").write_text("{not json}\n", encoding="utf-8")
+
+        # SRC0002 cannot complete while SRC0001 (done) is corrupt → failed.
+        with self.assertRaises(RuntimeError):
+            self._run_refine("SRC0002")
+        src2 = self.work / "atomic/by_source/SRC0002"
+        state = json.loads((src2 / "source_state_refine.json")
+                           .read_text(encoding="utf-8"))
+        self.assertEqual(state["status"], "failed",
+                         "a corrupt done source must block a new source's done")
+
+        # Repair the corruption → rerun SRC0002 → done + coherent snapshot.
+        (src1 / "chunks.jsonl").write_text(valid_chunks, encoding="utf-8")
+        self._run_refine("SRC0002")
+        state = json.loads((src2 / "source_state_refine.json")
+                           .read_text(encoding="utf-8"))
+        self.assertEqual(state["status"], "done",
+                         "after repair the rerun must reach done")
+
+        lines = [l for l in (self.work / "atomic/chunks.jsonl")
+                 .read_text(encoding="utf-8").splitlines() if l.strip()]
+        self.assertEqual(len(lines), 2, "coherent snapshot: both sources present")
+        self.assertEqual(sorted(json.loads(l)["source_id"] for l in lines),
+                         ["SRC0001", "SRC0002"])
+
+    # ── P0-FINAL Issue 2: Segment identity contract. Segment ID is
+    #    {source_id}-SEG{ordinal} of the authoritative transcription — stable
+    #    across reruns of the same transcription; evidence stays Whisper-native.
+    #    (The rules in CLAUDE.md §10 document this exact contract.) ──
+
+    def test_segment_identity_contract_stable_across_identical_retranscription(self):
+        """Issue 2: identical Whisper output → identical Segment IDs, and the
+        downstream chunk_id (hash(source, seg_min, seg_max)) is deterministic —
+        so the index-based Segment identity does NOT drift across reruns of the
+        same transcription (the P0 idempotency contract). Timestamps stay
+        Whisper-native."""
+        from food_ip_segments import extract_segments
+        from food_ip_models import make_chunk_id
+
+        class _Seg:
+            def __init__(self, start, end, text):
+                self.start = start
+                self.end = end
+                self.text = text
+
+        run1 = [_Seg(0.0, 5.0, "a"), _Seg(5.0, 10.0, "b"), _Seg(10.0, 15.0, "c")]
+        run2 = [_Seg(0.0, 5.0, "a"), _Seg(5.0, 10.0, "b"), _Seg(10.0, 15.0, "c")]
+        out1 = extract_segments(run1, "SRC0001")
+        out2 = extract_segments(run2, "SRC0001")
+
+        ids = [s["segment_id"] for s in out1]
+        self.assertEqual(ids,
+                         ["SRC0001-SEG0001", "SRC0001-SEG0002", "SRC0001-SEG0003"],
+                         "Segment ID = source_id + within-transcription ordinal")
+        self.assertEqual(ids, [s["segment_id"] for s in out2],
+                         "identical Whisper output must yield identical Segment IDs")
+
+        self.assertEqual(make_chunk_id("SRC0001", "SRC0001-SEG0001", "SRC0001-SEG0002"),
+                         make_chunk_id("SRC0001", "SRC0001-SEG0001", "SRC0001-SEG0002"),
+                         "chunk_id must be deterministic from the segment span")
+        self.assertEqual(out1[0]["start_sec"], 0.0)
+        self.assertEqual(out1[2]["end_sec"], 15.0)
 
 
 # ============================================================================
