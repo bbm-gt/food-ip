@@ -134,6 +134,22 @@ def _enrich_chunks(raw_chunks: list, source_id: str, segments: list) -> list:
             print(f"[chunker] REJECT chunk {i}: unknown segment_ids={unknown}")
             continue
         valid_seg_ids = list(seg_ids)
+        valid_seg_set = set(valid_seg_ids)
+
+        # B1: rebuild chunk_text from the authoritative ASRSegments. The LLM may
+        # decide WHICH segment_ids a chunk maps to, but never what those segments
+        # authoritatively say. Selection order per segment: non-empty
+        # corrected_text, else raw_text — joined in authoritative segment order.
+        # No fuzzy similarity / embedding / LLM re-verification; the LLM's
+        # chunk_text is simply not used.
+        text_parts = []
+        for seg in segments:  # authoritative segment order
+            if seg.get("segment_id") not in valid_seg_set:
+                continue
+            part = seg.get("corrected_text") or seg.get("raw_text", "")
+            if part:
+                text_parts.append(part)
+        authoritative_text = "\n".join(text_parts)
 
         # P0-5: Deterministic chunk ID
         seg_min = min(valid_seg_ids)
@@ -153,7 +169,7 @@ def _enrich_chunks(raw_chunks: list, source_id: str, segments: list) -> list:
             "segment_ids": valid_seg_ids,
             "knowledge_type_hint": chunk.get("knowledge_type", "technique"),
             "brief": chunk.get("brief", ""),
-            "chunk_text": chunk.get("chunk_text", ""),
+            "chunk_text": authoritative_text,
             "start_sec": start_sec,
             "end_sec": end_sec,
             "start_time": start_time,
@@ -211,9 +227,14 @@ def _call_llm(system_prompt, user_prompt, api_key, base_url, model,
         ],
         "temperature": temperature,
         "max_tokens": max_tokens,
+        # Phase 0.5: disable thinking on reasoning models (e.g. deepseek-v4-*).
+        # With thinking enabled, internal reasoning consumes the max_tokens
+        # budget and the actual content can be truncated or empty.
+        "thinking": {"type": "disabled"},
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
+    last_error = None
     for attempt in range(3):
         try:
             resp = requests.post(base_url, json=payload, headers=headers, timeout=300)
@@ -222,12 +243,18 @@ def _call_llm(system_prompt, user_prompt, api_key, base_url, model,
             elif resp.status_code == 429:
                 time.sleep([5, 15, 60][attempt])
             else:
+                last_error = RuntimeError(
+                    f"LLM HTTP {resp.status_code}: {resp.text[:200]}"
+                )
                 if attempt < 2:
                     time.sleep(5)
         except Exception as e:
+            last_error = e
             if attempt < 2:
                 time.sleep(5)
-    return None
+    # Phase 0.5: a failed extraction call must fail loudly, not silently
+    # return None and let the Source complete with 0 chunks.
+    raise last_error if last_error else RuntimeError("LLM call failed after retries")
 
 
 def _parse_chunks(llm_output, source_id):

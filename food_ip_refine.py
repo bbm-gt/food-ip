@@ -104,6 +104,7 @@ KNOWLEDGE_CARD_PROMPT = """请从以下餐饮IP课程的语义块中提取结构
 - origin: 老师明确说的=explicit，AI从案例推断的=inferred。inferred必须有inference_basis。
 - knowledge_scope: 如果是直接从案例事实推导的写methodology；如果是案例餐厅的具体背景facts则不生成这张卡。
 - confidence: 表述清晰+有案例支撑→0.85+; 模糊推断→0.5-0.75
+- stages: 只能取值 planning|writing|shooting|review|operation，多个用数组；不适用则留空 []，禁止填其他值。
 - 不要制造硬规则，用条件判断
 - 课程没讲的内容不要编造
 
@@ -181,9 +182,15 @@ __CONFLICTS__
 
 ## 约束 (P0-13)
 - conflict_resolution 必须选: agreement(观点一致) | conditional_difference(条件差异) | exception(例外情况) | unresolved(无法判断)
+- 数组字段类型严格区分：
+  - decision_logic、common_mistakes、related_cases、evidence_sources 都是字符串数组：每个元素必须是一段纯文本字符串，禁止输出对象/结构。
+    - decision_logic: 每个元素是一句话描述一个决策步骤
+    - common_mistakes: 每个元素是一句话描述一个常见错误
+    - evidence_sources: 每个元素是一个知识ID或案例ID字符串（如 KID_xxx / CID_xxx）
+  - conditions 是字典数组：每个元素必须是 {"条件": "...", "影响": "..."} 这样的键值对字典，禁止输出纯字符串。每一条条件写一个 {条件, 影响} 对。
 - 冲突观点保留，标注条件差异，不要强行融合
 - 合成答案必须是条件化判断，不能是硬规则
-- origin 固定为 "synthesized"
+- 不要输出 origin 字段（该字段由系统自动设置），也不要输出 schema 未列出的任何额外字段
 - 不要为了综合而综合—如果证据不足，如实标记 confidence 低"""
 
 
@@ -952,16 +959,17 @@ class FoodIPRefiner:
     # ── P0-14: Origin Validation ──
 
     def _validate_origin(self, card, chunk):
-        """P0-14: Semantic origin validation."""
-        origin = card.get("origin", "inferred")
-        segment_ids = chunk.get("segment_ids", [])
-        card["evidence_segment_ids"] = segment_ids
+        """P0-14 + B2: Deterministic provenance enrichment ONLY.
 
-        if origin == "explicit" and not segment_ids:
-            # Fallback: mark as inferred if no evidence segments
-            card["origin"] = "inferred"
-        if origin == "inferred" and not card.get("inference_basis"):
-            card["inference_basis"] = f"推断自: {card.get('core_idea', '')[:80]}"
+        The program may deterministically fill ``evidence_segment_ids`` from the
+        chunk's real validated segment_ids (metadata enrichment). It must NEVER:
+          - rewrite the LLM's ``origin`` (e.g. explicit → inferred) to dodge
+            validation, or
+          - fabricate ``inference_basis`` (or any other missing provenance).
+        Missing provenance is rejected by the persisted KnowledgeCard validator
+        in ``_validate_persisted`` (fail-fast), never auto-repaired.
+        """
+        card["evidence_segment_ids"] = chunk.get("segment_ids", [])
 
     # ── P0-15: Question Growth ──
 
@@ -994,9 +1002,14 @@ class FoodIPRefiner:
             ],
             "temperature": LLM_TEMPERATURE,
             "max_tokens": max_tokens,
+            # Phase 0.5: disable thinking on reasoning models (e.g. deepseek-v4-*).
+            # With thinking enabled, internal reasoning consumes the max_tokens
+            # budget and the actual content can be truncated or empty.
+            "thinking": {"type": "disabled"},
         }
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
+        last_error = None
         for attempt in range(3):
             try:
                 resp = requests.post(LLM_BASE_URL, json=payload, headers=headers, timeout=300)
@@ -1005,12 +1018,18 @@ class FoodIPRefiner:
                 elif resp.status_code == 429:
                     time.sleep([5, 15, 60][attempt])
                 else:
+                    last_error = RuntimeError(
+                        f"LLM HTTP {resp.status_code}: {resp.text[:200]}"
+                    )
                     if attempt < 2:
                         time.sleep(5)
-            except Exception:
+            except Exception as e:
+                last_error = e
                 if attempt < 2:
                     time.sleep(5)
-        return None
+        # Phase 0.5: a failed extraction call must fail the Source loudly,
+        # not silently return None and let the Source complete with 0 chunks.
+        raise last_error if last_error else RuntimeError("LLM call failed after retries")
 
     # ── P0-8 + P0-9: JSON Parse + Pydantic Validation ──
 

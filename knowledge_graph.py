@@ -111,7 +111,7 @@ def generate_candidates(knowledge_cards: list[dict]) -> list[tuple]:
         for a in range(len(indices)):
             for b in range(a + 1, len(indices)):
                 pair = (indices[a], indices[b])
-                if (pair[0], pair[1], _, _) not in {(p[0], p[1]) for p in candidates}:
+                if pair not in {(p[0], p[1]) for p in candidates}:
                     candidates.add((indices[a], indices[b], "shared_stage", 2))
 
     # Strategy 3: Same content_format (priority 3)
@@ -119,7 +119,7 @@ def generate_candidates(knowledge_cards: list[dict]) -> list[tuple]:
         for a in range(len(indices)):
             for b in range(a + 1, len(indices)):
                 pair = (indices[a], indices[b])
-                if (pair[0], pair[1], _, _) not in {(p[0], p[1]) for p in candidates}:
+                if pair not in {(p[0], p[1]) for p in candidates}:
                     candidates.add((indices[a], indices[b], "shared_format", 3))
 
     # Strategy 4: Cross-type pairs (priority 3)
@@ -129,8 +129,8 @@ def generate_candidates(knowledge_cards: list[dict]) -> list[tuple]:
         for ia in indices_a[:10]:  # Limit per type to avoid combinatorial explosion
             for ib in indices_b[:10]:
                 pair = (ia, ib)
-                if (ia, ib, _, _) not in {(p[0], p[1]) for p in candidates} and \
-                   (ib, ia, _, _) not in {(p[0], p[1]) for p in candidates}:
+                if pair not in {(p[0], p[1]) for p in candidates} and \
+                   (ib, ia) not in {(p[0], p[1]) for p in candidates}:
                     candidates.add((ia, ib, f"cross_{type_a}_{type_b}", 3))
 
     # If not enough candidates, fallback to lexical similarity

@@ -1773,6 +1773,80 @@ class TestRound1FinalSeal(unittest.TestCase):
         }]
         self.assertEqual(_enrich_chunks(raw, "SRC0001", segments), [])
 
+    def test_b1_chunk_text_rebuilt_from_authoritative_segments(self):
+        """B1: the LLM's rewritten/hallucinated chunk_text is NOT persisted —
+        the persisted chunk_text is rebuilt deterministically from the
+        authoritative ASRSegments (corrected_text, else raw_text), joined in
+        authoritative segment order."""
+        from semantic_chunker import _enrich_chunks
+        segments = [
+            {
+                "segment_id": "SRC0001-SEG0001",
+                "source_id": "SRC0001",
+                "start_sec": 0.0, "end_sec": 5.0,
+                "raw_text": "原始第一段文本内容",
+                "corrected_text": "修正第一段文本内容",
+                "asr_fix_count": 1, "asr_fixes_applied": [],
+            },
+            {
+                "segment_id": "SRC0001-SEG0002",
+                "source_id": "SRC0001",
+                "start_sec": 5.0, "end_sec": 10.0,
+                "raw_text": "原始第二段文本内容",
+                "corrected_text": "修正第二段文本内容",
+                "asr_fix_count": 0, "asr_fixes_applied": [],
+            },
+        ]
+        raw = [{
+            "segment_ids": ["SRC0001-SEG0001", "SRC0001-SEG0002"],
+            "knowledge_type": "technique",
+            "brief": "重建正文",
+            # LLM rewrote / hallucinated the text — must never be persisted
+            "chunk_text": "这是LLM改写的一段完全不同的错误文本内容",
+        }]
+        out = _enrich_chunks(raw, "SRC0001", segments)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["chunk_text"],
+                         "修正第一段文本内容\n修正第二段文本内容")
+        self.assertNotIn("LLM改写", out[0]["chunk_text"])
+
+    def test_b1_chunk_text_falls_back_to_raw_text_when_corrected_empty(self):
+        """B1: per-segment text selection — non-empty corrected_text first,
+        else raw_text — joined in AUTHORITATIVE segment order (not the order
+        the LLM listed the segment_ids)."""
+        from semantic_chunker import _enrich_chunks
+        segments = [
+            {
+                "segment_id": "SRC0001-SEG0001",
+                "source_id": "SRC0001",
+                "start_sec": 0.0, "end_sec": 5.0,
+                "raw_text": "第一条原始内容没有修正",
+                "corrected_text": "",  # empty → fallback to raw_text
+                "asr_fix_count": 0, "asr_fixes_applied": [],
+            },
+            {
+                "segment_id": "SRC0001-SEG0002",
+                "source_id": "SRC0001",
+                "start_sec": 5.0, "end_sec": 10.0,
+                "raw_text": "第二条原始内容",
+                "corrected_text": "第二条修正内容",
+                "asr_fix_count": 1, "asr_fixes_applied": [],
+            },
+        ]
+        raw = [{
+            "segment_ids": ["SRC0001-SEG0002", "SRC0001-SEG0001"],  # out of order
+            "knowledge_type": "technique",
+            "brief": "回退测试",
+            "chunk_text": "忽略这段LLM文本",
+        }]
+        out = _enrich_chunks(raw, "SRC0001", segments)
+        self.assertEqual(len(out), 1)
+        # Authoritative order (SEG0001 then SEG0002), corrected where non-empty
+        # else raw_text; the LLM's listed order and chunk_text are ignored.
+        self.assertEqual(out[0]["chunk_text"],
+                         "第一条原始内容没有修正\n第二条修正内容")
+        self.assertNotIn("忽略这段LLM文本", out[0]["chunk_text"])
+
     def test_asr_corrected_text_reaches_semantic_chunk_llm_prompt(self):
         from food_ip_refine import FoodIPRefiner
         import food_ip_refine
@@ -1791,7 +1865,7 @@ class TestRound1FinalSeal(unittest.TestCase):
                     "start_sec": 2.0,
                     "end_sec": 7.0,
                     "raw_text": "完播绿非常重要",
-                    "corrected_text": "完播率非常重要",
+                    "corrected_text": "完播率非常重要，这是完整知识块文本内容",
                     "asr_fix_count": 1,
                     "asr_fixes_applied": [{"wrong": "完播绿", "right": "完播率", "count": 1}],
                 }],
@@ -1801,11 +1875,14 @@ class TestRound1FinalSeal(unittest.TestCase):
             with patch.object(food_ip_refine, 'WHISPER_SEGMENTS_DIR', seg_dir):
                 segments = refiner._load_segments("SRC0500")
 
+            # B1: the LLM's chunk_text is a rewritten/hallucinated copy and must
+            # NOT be persisted — the persisted chunk_text is rebuilt from the
+            # authoritative ASRSegment (corrected_text).
             fake_response = json.dumps([{
                 "segment_ids": ["SRC0500-SEG0001"],
                 "knowledge_type": "technique",
                 "brief": "完播率",
-                "chunk_text": "完播率非常重要，这是完整知识块文本",
+                "chunk_text": "这是LLM改写的一段完全不同错误文本",
             }], ensure_ascii=False)
             with patch('semantic_chunker._call_llm', return_value=fake_response) as llm:
                 chunks = semantic_chunker.chunk_transcript(
@@ -1819,6 +1896,11 @@ class TestRound1FinalSeal(unittest.TestCase):
             self.assertEqual(chunks[0]["segment_ids"], ["SRC0500-SEG0001"])
             self.assertEqual(chunks[0]["start_sec"], 2.0)
             self.assertEqual(chunks[0]["end_sec"], 7.0)
+            # B1: persisted chunk_text must be the authoritative segment text,
+            # never the LLM's rewritten copy.
+            self.assertEqual(chunks[0]["chunk_text"],
+                             "完播率非常重要，这是完整知识块文本内容")
+            self.assertNotIn("LLM改写", chunks[0]["chunk_text"])
 
     def test_process_source_does_not_call_chunker_without_asr(self):
         from food_ip_refine import FoodIPRefiner
@@ -2272,6 +2354,42 @@ class TestPerSourcePersistence(unittest.TestCase):
                          ["SRC0001-SEG0001", "SRC0001-SEG0002"])
         self.assertEqual(cards1[0]["source"]["start_sec"], 0.0)
         self.assertEqual(cards1[0]["source"]["end_sec"], 10.0)
+
+    def test_b2_inferred_without_basis_rejected_not_fabricated(self):
+        """B2: origin=inferred with an empty inference_basis is REJECTED by the
+        persisted validator (fail-fast). The program must never fabricate a
+        '推断自...' basis, the invalid card must not enter the per-source or
+        global knowledge artifacts, and the source still completes cleanly."""
+        self._write_asr("SRC0001")
+        card_llm = MagicMock(return_value=json.dumps({
+            "title": "SRC0001推断卡",
+            "knowledge_type": "technique",
+            "question_ids": [],
+            "core_idea": "从案例推断的核心观点内容足够长",
+            "why_it_works": "端到端验证",
+            "confidence": 0.7,
+            "origin": "inferred",
+            "inference_basis": "",  # missing basis → must be rejected
+            "knowledge_scope": "methodology",
+        }, ensure_ascii=False))
+        self._run_refine("SRC0001", card_llm=card_llm)
+
+        src_dir = self.work / "atomic/by_source/SRC0001"
+        card_lines = [l for l in (src_dir / "knowledge_cards.jsonl")
+                      .read_text(encoding="utf-8").splitlines() if l.strip()]
+        self.assertEqual(len(card_lines), 0,
+                         "inferred-without-basis card must NOT enter the "
+                         "per-source knowledge artifacts")
+        global_cards = (self.work / "atomic" / "knowledge_cards.jsonl") \
+            .read_text(encoding="utf-8")
+        self.assertNotIn("推断自", global_cards,
+                         "the program must never fabricate a '推断自...' basis")
+        self.assertNotIn("从案例推断", global_cards,
+                         "the rejected card must not appear in the global index")
+        state = json.loads((src_dir / "source_state_refine.json")
+                           .read_text(encoding="utf-8"))
+        self.assertEqual(state["status"], "done",
+                         "a rejected card must not fail the source run")
 
     # ── Round 2B-1: refine state machine + completed skip ──
 
@@ -3340,6 +3458,183 @@ class TestPerSourcePersistence(unittest.TestCase):
                          "chunk_id must be deterministic from the segment span")
         self.assertEqual(out1[0]["start_sec"], 0.0)
         self.assertEqual(out1[2]["end_sec"], 15.0)
+
+
+class TestPhase05ThinkingDisabledAndLoudFailure(unittest.TestCase):
+    """Phase 0.5 extraction fixes:
+      (1) reasoning models (deepseek-v4-*) must be called with
+          thinking={"type": "disabled"} so internal reasoning does not consume
+          the max_tokens budget and truncate/empty the actual content;
+      (2) an LLM call that fails after retries must RAISE instead of returning
+          None, so the Source is marked failed — never completed with 0 chunks.
+    """
+
+    def test_refiner_call_llm_sends_thinking_disabled(self):
+        """Refiner._call_llm payload must carry thinking disabled."""
+        import requests
+        from food_ip_refine import FoodIPRefiner
+
+        sent = {}
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            sent["payload"] = json
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {
+                "choices": [{"message": {"content": "ok"}}]
+            }
+            return resp
+
+        with patch.object(requests, "post", side_effect=fake_post):
+            refiner = FoodIPRefiner(api_key="fake-key")
+            out = refiner._call_llm("sys", "user", max_tokens=100)
+        self.assertEqual(out, "ok")
+        self.assertEqual(sent["payload"].get("thinking"),
+                         {"type": "disabled"},
+                         "Refiner LLM payload must disable thinking")
+
+    def test_chunker_call_llm_sends_thinking_disabled(self):
+        """semantic_chunker._call_llm payload must carry thinking disabled."""
+        import requests
+        from semantic_chunker import _call_llm
+
+        sent = {}
+
+        def fake_post(url, json=None, headers=None, timeout=None):
+            sent["payload"] = json
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {
+                "choices": [{"message": {"content": "ok"}}]
+            }
+            return resp
+
+        with patch.object(requests, "post", side_effect=fake_post):
+            out = _call_llm("sys", "user", api_key="k", base_url="http://x",
+                            model="deepseek-v4-flash", max_tokens=100)
+        self.assertEqual(out, "ok")
+        self.assertEqual(sent["payload"].get("thinking"),
+                         {"type": "disabled"},
+                         "chunker LLM payload must disable thinking")
+
+    def test_refiner_call_llm_raises_after_retries_not_none(self):
+        """A persistently failing LLM call must RAISE, not return None.
+
+        Returning None used to let the Source complete with 0 chunks. Now the
+        failure propagates so run_source marks the Source failed.
+        """
+        import requests
+        from food_ip_refine import FoodIPRefiner
+
+        resp = MagicMock()
+        resp.status_code = 500
+        resp.text = "internal error"
+
+        with patch.object(requests, "post", return_value=resp):
+            refiner = FoodIPRefiner(api_key="fake-key")
+            with self.assertRaises(RuntimeError) as ctx:
+                refiner._call_llm("sys", "user", max_tokens=100)
+        self.assertIn("500", str(ctx.exception))
+
+    def test_chunker_call_llm_raises_after_retries_not_none(self):
+        """Chunker LLM call failure must raise after retries, not return None."""
+        import requests
+        from semantic_chunker import _call_llm
+
+        resp = MagicMock()
+        resp.status_code = 503
+        resp.text = "overloaded"
+
+        with patch.object(requests, "post", return_value=resp):
+            with self.assertRaises(RuntimeError) as ctx:
+                _call_llm("sys", "user", api_key="k", base_url="http://x",
+                          model="deepseek-v4-flash", max_tokens=100)
+        self.assertIn("503", str(ctx.exception))
+
+
+class TestKnowledgeGraphCandidates(unittest.TestCase):
+    """Phase 0.5: knowledge_graph.generate_candidates must not crash with
+    NameError (`_` was referenced but never defined) and must dedupe pairs."""
+
+    def test_generate_candidates_no_nameerror_and_dedupes(self):
+        from knowledge_graph import generate_candidates
+
+        cards = [
+            # Two cards sharing question Q001 (candidate via shared_qid).
+            {"knowledge_id": "KID_a", "question_ids": ["Q001"],
+             "stages": ["planning"], "content_format": [],
+             "knowledge_type": "principle"},
+            {"knowledge_id": "KID_b", "question_ids": ["Q001"],
+             "stages": ["planning"], "content_format": [],
+             "knowledge_type": "technique"},
+        ]
+        cands = generate_candidates(cards)
+        self.assertIsInstance(cands, list)
+        self.assertGreater(len(cands), 0, "shared question must produce candidates")
+        # (a,b) appears at most once regardless of strategy overlap.
+        pairs = [(c[0]["knowledge_id"], c[1]["knowledge_id"]) for c in cands]
+        self.assertEqual(len(pairs), len(set(pairs)),
+                         "candidate pairs must be deduplicated")
+
+    def test_generate_candidates_single_card_returns_empty(self):
+        from knowledge_graph import generate_candidates
+
+        cards = [{"knowledge_id": "KID_a", "question_ids": ["Q001"],
+                  "stages": [], "content_format": [], "knowledge_type": "principle"}]
+        self.assertEqual(generate_candidates(cards), [])
+
+
+class TestQuestionSynthesisPromptSchemaConsistency(unittest.TestCase):
+    """Phase 0.5: QUESTION_SYNTHESIS_PROMPT must match the persisted
+    QuestionSynthesisLLMOutput schema. The conditions field is
+    list[dict[str, str]] — the prompt must instruct dict objects, not strings.
+    """
+
+    def test_prompt_tells_conditions_are_dict_array_not_string(self):
+        from food_ip_refine import QUESTION_SYNTHESIS_PROMPT
+        # The prompt must describe conditions as a dict array (matching
+        # list[dict[str, str]]), NOT lump conditions into the string arrays.
+        self.assertIn("conditions 是字典数组", QUESTION_SYNTHESIS_PROMPT)
+        self.assertIn('{"条件": "...", "影响": "..."}', QUESTION_SYNTHESIS_PROMPT)
+        # And it must NOT claim conditions is a string array.
+        self.assertNotIn(
+            "decision_logic、conditions、common_mistakes、related_cases、"
+            "evidence_sources 都是字符串数组",
+            QUESTION_SYNTHESIS_PROMPT)
+
+    def test_schema_accepts_dict_conditions_rejects_string_conditions(self):
+        from food_ip_models import QuestionSynthesisLLMOutput
+        # A synthesis whose conditions are dict objects must validate.
+        ok = QuestionSynthesisLLMOutput(
+            summary="这是一个足够长度的综合答案文本内容",
+            conditions=[{"条件": "目标是营销门店型", "影响": "应强调到店理由"}],
+            conflict_resolution="agreement",
+        )
+        self.assertEqual(ok.conditions[0]["条件"], "目标是营销门店型")
+        # A string condition (what the old prompt produced) must be rejected.
+        with self.assertRaises(Exception):
+            QuestionSynthesisLLMOutput(
+                summary="这是一个足够长度的综合答案文本内容",
+                conditions=["条件是营销门店型时应当如何"],
+            )
+
+    def test_prompt_does_not_instruct_llm_to_output_origin(self):
+        from food_ip_refine import QUESTION_SYNTHESIS_PROMPT
+        # origin is a persisted-model field set by the program (synth["origin"]
+        # = "synthesized"), NOT part of QuestionSynthesisLLMOutput. The prompt
+        # must not tell the LLM to emit it, or extra_forbid rejects the output.
+        self.assertNotIn('origin 固定为 "synthesized"', QUESTION_SYNTHESIS_PROMPT)
+        self.assertIn("不要输出 origin 字段", QUESTION_SYNTHESIS_PROMPT)
+
+    def test_schema_rejects_origin_extra_field(self):
+        from food_ip_models import QuestionSynthesisLLMOutput
+        # extra="forbid": an LLM output carrying origin must be rejected, which
+        # is exactly why the prompt must not instruct the LLM to emit it.
+        with self.assertRaises(Exception):
+            QuestionSynthesisLLMOutput(
+                summary="这是一个足够长度的综合答案文本内容",
+                origin="synthesized",
+            )
 
 
 # ============================================================================

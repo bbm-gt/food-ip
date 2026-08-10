@@ -78,7 +78,7 @@ WHISPER_MODEL = "large-v3"
 MODEL_DOWNLOAD_ROOT = "E:/WhisperModels"
 
 # LLM 配置
-LLM_MODEL = "deepseek-chat"
+LLM_MODEL = "deepseek-v4-flash"
 LLM_BASE_URL = "https://api.deepseek.com/v1/chat/completions"
 LLM_TEMPERATURE = 0.3
 LLM_MAX_TOKENS = 8000
