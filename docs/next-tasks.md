@@ -14,10 +14,18 @@
 
 ## 方向调整（2026-08-11）
 
-- 未来主链：`Owner Input → Intent / Business Objective → confirmed_facts → missing_facts → 少量相关 Memory → 少量 relevant Knowledge → Creative Decision → Writer → Critic → Directed Rewrite → Shoot-ready Script`（详见 `AGENTS.md` / `docs/architecture.md`）。
+**当前主线：**
+
+```text
+Minimal Creative Decision / Fact Boundary
++
+Minimal Retrieval Validation
+```
+
+- 产品主链（未来）：`Owner Input → Intent / Business Objective → confirmed_facts → missing_facts → 少量相关 Memory → 少量 relevant Knowledge → Creative Decision → Writer → Critic → Directed Rewrite → Shoot-ready Script`（详见 `AGENTS.md` / `docs/architecture.md`）。
 - 旧脚本系统不再作为未来主架构，定位为 **Legacy Script Generation = compatibility + baseline + reusable capabilities**；未来主链优先复用其模块，不推倒重写、也不无限打补丁。**DO NOT build Multi-Agent**；优先 Workflow + structured modules。
-- 知识系统状态：Phase 0.5 Creative Value Gate = PARTIAL / STRONG POSITIVE（非 PASS），blocker = **Fact Boundary**；下一阶段方向 = **Minimal Creative Decision / Fact Boundary + Minimal Retrieval Validation**。
-- 下列 P1/P2 待办仍作为 legacy 路径维护有效；新产品方向的下一步以"方向调整"为准，两者并行不冲突。
+- 知识系统状态：Phase 0.5 Creative Value Gate = PARTIAL / STRONG POSITIVE（非 PASS），blocker = **Fact Boundary**。
+- 下列 P1/P2 待办与下方"Legacy 路径待办"仍作为 legacy 路径维护有效；**未经用户明确授权，不继续推进 legacy 脚本生成待办**；新产品方向的下一步以"当前主线"为准。
 
 ## 本阶段已完成（2026-08-07 提交 `b88d8d3`）
 
@@ -33,7 +41,9 @@
 - AI 局部修稿 `review.revise_script_candidate`：输入原候选 + 编导审稿 + 低分判定 + 调研档案 + creative_context，输出修稿后的新候选。只修改 verdict / issues 指向的镜头或字段（锚点限制）；补丁式输出（`extra=forbid`）结构上杜绝整篇重写；`candidate_id` / `strategy` 不可变；selected TopicCard 锁题时禁止改标题（防换题）；修稿后复用现有程序硬规则校验并重新生成 `quality_risks`；修稿 Prompt 独立于编剧与编导审稿。
 - 恢复主生成 Schema：`AIBundleOutput.candidates` 保持 `min_length=2`，不为局部修稿放宽；从 `_validate_quality` 抽出可复用核心 `_validate_candidates`，单候选修稿直接复用同一套硬校验。
 
-## 下一步（尚未实现，勿标记为已完成）
+## Legacy 路径待办（非当前主线；未实现，勿标记为已完成）
+
+> 属于 Legacy Script Generation 的旧待办，不是当前产品主线。未经用户明确授权，不继续推进。
 
 - 自动触发：低分候选自动调用局部修稿（接入生成流程 / 前端展示修稿结果与用户选择），当前 `revise_script_candidate` 只是独立函数，未自动接线。
 - 重新审稿：修稿后对结果再次 AI 编导审稿（当前仅局部修稿 + 程序硬校验，未重新评分）。
