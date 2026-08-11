@@ -5,8 +5,9 @@
 """
 import os, re, json
 from pathlib import Path
+from food_ip_config import LEGACY_TRANSCRIPTS_DIR
 
-SRC = Path(r"E:\video_transcripts")
+SRC = LEGACY_TRANSCRIPTS_DIR
 
 def parse_duration(s):
     s = s.strip().strip('[]')

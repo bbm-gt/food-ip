@@ -10,12 +10,13 @@ TikTok 转录文件预处理脚本 v2 - 分类、清理、合并
 """
 import re, json, os, sys
 from pathlib import Path
+from food_ip_config import LEGACY_TRANSCRIPTS_DIR
 
 # 修复 GBK 输出
 sys.stdout.reconfigure(encoding='utf-8') if hasattr(sys.stdout, 'reconfigure') else None
 
-TRANSCRIPTS_DIR = Path(r"E:\video_transcripts\transcripts")
-REFINED_DIR = Path(r"E:\video_transcripts\refined")
+TRANSCRIPTS_DIR = LEGACY_TRANSCRIPTS_DIR / "transcripts"
+REFINED_DIR = LEGACY_TRANSCRIPTS_DIR / "refined"
 OUT = REFINED_DIR / "temp_merged"
 OUT.mkdir(parents=True, exist_ok=True)
 

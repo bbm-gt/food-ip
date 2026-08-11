@@ -16,8 +16,9 @@ TikTok 知识库验证脚本 - 检查精炼输出质量
 """
 import os, re, json
 from pathlib import Path
+from food_ip_config import LEGACY_TRANSCRIPTS_DIR
 
-OUT_DIR = Path(r"E:\video_transcripts\refined")
+OUT_DIR = LEGACY_TRANSCRIPTS_DIR / "refined"
 
 # 期望的输出文件
 EXPECTED_FILES = [

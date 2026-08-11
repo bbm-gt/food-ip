@@ -12,6 +12,7 @@ TikTok 知识库精炼脚本 - 调用 DeepSeek API 精炼合并文件
 import os, sys, json, time, re
 from datetime import datetime, timedelta
 from pathlib import Path
+from food_ip_config import LEGACY_TRANSCRIPTS_DIR
 
 # ── 配置 ──
 API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
@@ -47,7 +48,7 @@ def get_current_price_multiplier():
         return PEAK_MULTIPLIER
     return 1.0
 
-REFINED_DIR = Path(r"E:\video_transcripts\refined")
+REFINED_DIR = LEGACY_TRANSCRIPTS_DIR / "refined"
 MERGED_DIR = REFINED_DIR / "temp_merged"
 OUT_DIR = REFINED_DIR
 OUT_DIR.mkdir(parents=True, exist_ok=True)

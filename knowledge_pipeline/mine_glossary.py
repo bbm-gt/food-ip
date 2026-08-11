@@ -20,6 +20,7 @@ ASR 错误自动挖掘脚本 - 用 LLM 从转录文件中批量发现 ASR 误识
 import os, sys, json, time, re, argparse
 from datetime import datetime, timedelta
 from pathlib import Path
+from food_ip_config import LEGACY_TRANSCRIPTS_DIR
 
 # ── 配置 ──
 API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
@@ -30,7 +31,7 @@ MAX_TOKENS = 4000
 MAX_RETRIES = 3
 RETRY_DELAY = [5, 15, 60]
 
-TRANSCRIPTS_DIR = Path(r"E:\video_transcripts\transcripts")
+TRANSCRIPTS_DIR = LEGACY_TRANSCRIPTS_DIR / "transcripts"
 GLOSSARY_PATH = Path(__file__).parent / "asr_glossary.json"
 CANDIDATES_PATH = Path(__file__).parent / "asr_candidates.jsonl"
 STATE_PATH = Path(__file__).parent / "asr_mine_state.json"

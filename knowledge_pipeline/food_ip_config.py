@@ -47,6 +47,9 @@ FOOD_IP_SOURCES_DIR = _env_path("FOOD_IP_SOURCES_DIR", r"E:\food_ip_sources")
 FOOD_IP_KNOWLEDGE_DIR = _env_path(
     "FOOD_IP_KNOWLEDGE_DIR", r"E:\food_ip_knowledge"
 )
+LEGACY_TRANSCRIPTS_DIR = _env_path(
+    "FOOD_IP_LEGACY_TRANSCRIPTS_DIR", r"E:\video_transcripts"
+)
 
 # 子目录
 TRANSCRIPTS_DIR = FOOD_IP_SOURCES_DIR / "transcripts"

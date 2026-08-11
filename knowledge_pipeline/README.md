@@ -39,6 +39,7 @@ for compatibility and can be overridden with environment variables:
 - `FOOD_IP_WHISPER_VENV`
 - `FOOD_IP_FFMPEG_BIN`
 - `FOOD_IP_MODEL_DOWNLOAD_ROOT`
+- `FOOD_IP_LEGACY_TRANSCRIPTS_DIR` (legacy scripts; default `E:\video_transcripts`)
 
 The legacy CLI `--output` option is not a complete relocation mechanism; use
 the environment variables above when all source and knowledge roots must move.
