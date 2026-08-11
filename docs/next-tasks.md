@@ -12,6 +12,13 @@
 > - `b532a6a` AI 局部修稿（`revise_script_candidate`：补丁式只修 issues 指定位置、锁题不可换题、修稿后过现有硬校验）
 > - `900aea8` 恢复主 Schema（`AIBundleOutput.candidates` 保持 min_length=2）；抽出 `_validate_candidates` 供单候选修稿复用硬校验
 
+## 方向调整（2026-08-11）
+
+- 未来主链：`Owner Input → Intent / Business Objective → confirmed_facts → missing_facts → 少量相关 Memory → 少量 relevant Knowledge → Creative Decision → Writer → Critic → Directed Rewrite → Shoot-ready Script`（详见 `AGENTS.md` / `docs/architecture.md`）。
+- 旧脚本系统不再作为未来主架构，定位为 **Legacy Script Generation = compatibility + baseline + reusable capabilities**；未来主链优先复用其模块，不推倒重写、也不无限打补丁。**DO NOT build Multi-Agent**；优先 Workflow + structured modules。
+- 知识系统状态：Phase 0.5 Creative Value Gate = PARTIAL / STRONG POSITIVE（非 PASS），blocker = **Fact Boundary**；下一阶段方向 = **Minimal Creative Decision / Fact Boundary + Minimal Retrieval Validation**。
+- 下列 P1/P2 待办仍作为 legacy 路径维护有效；新产品方向的下一步以"方向调整"为准，两者并行不冲突。
+
 ## 本阶段已完成（2026-08-07 提交 `b88d8d3`）
 
 - selected TopicCard 锁题：选中后三套候选锁定同一主题，锁题模式下 `strategy` 只是表现角度（Hook / 叙事 / 证据展示 / 老板表达 / 镜头组织）

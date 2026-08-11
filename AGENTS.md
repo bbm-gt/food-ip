@@ -2,6 +2,84 @@
 
 本仓库是已有的 Food IP Studio 项目；维护时以代码、测试和本文档为准，不从零搭建或重构既有流程。
 
+## 产品方向（当前决策状态）
+
+未来主链（food-ip 作为老板使用的产品）：
+
+```text
+Owner Input
+→ Intent / Business Objective
+→ confirmed_facts
+→ missing_facts
+→ 少量相关 Memory
+→ 少量 relevant Knowledge
+→ Creative Decision
+→ Writer
+→ Critic
+→ Directed Rewrite
+→ Shoot-ready Script
+```
+
+核心目标：老板只需说今天发生了什么、有什么想法或生意目标，AI 判断什么值得拍，只问必要信息，最后生成像老板本人、能直接拍的内容。前台必须简单，内部不要堆 Multi-Agent：
+
+```text
+DO NOT build Multi-Agent
+优先 Workflow + structured modules
+```
+
+两个仓库的关系：
+
+```text
+food-ip-knowledge-pipeline = 专业 Creative Knowledge 系统
+food-ip                    = 老板最终使用的产品
+```
+
+Knowledge 最终服务于 Food-IP 的 Creative Decision。知识系统当前状态：Phase 0.5 Creative Value Gate = PARTIAL / STRONG POSITIVE（非 PASS），当前 blocker = **Fact Boundary**，下一阶段方向 = **Minimal Creative Decision / Fact Boundary + Minimal Retrieval Validation**。
+
+### 事实边界（Fact Boundary）— 最重要原则
+
+区分三类：
+
+```text
+confirmed_facts   = 老板明确提供，或可信 Memory 中已确认的事实
+creative_decision = AI 的创作判断与建议
+missing_facts     = 创作需要但尚未确认的信息
+```
+
+Knowledge 只教 AI **怎么判断**，不能告诉 AI **当前老板实际上发生了什么**。例：老板只说"每天去市场挑海鲜"，AI 不得直接断言他会翻蟹脐、按虾、和摊主熟识等——必须标"需确认"或"如果事实成立，可以这样拍"。事实边界由 system / validation 层强制，不能指望知识本身提供。
+
+### 旧系统新定位：Legacy Script Generation
+
+旧脚本系统不删除，但不再作为未来主架构：
+
+```text
+Legacy Script Generation
+= compatibility + baseline + reusable capabilities
+```
+
+优先复用：
+
+- `ResearchProfile`：事实 / Memory 来源，不得机械注入每条脚本
+- `IPProfile`：长期定位和表达约束
+- `CreativeConversation`：未来用于理解 Intent 和询问 missing facts
+- `CreativeBrief`：保留，是否扩展暂不决定
+- `TopicCard`：改为 optional interaction，不再必须生成
+- Writer：保留，但未来只根据 Creative Decision 写脚本
+- Director Review：优先复用为 Critic
+- `revise_script_candidate`：优先复用为 Directed Rewrite
+- materials / timeline / FFmpeg / export：全部保留
+
+固定 strategy / 内容桶继续服务 legacy，但不再决定未来"今天拍什么"。
+
+```text
+不要推倒重写
+也不要继续无限给旧系统打补丁
+
+Legacy path = 兼容与 baseline
+New path = 最小新创作 workflow
+优先复用已有模块
+```
+
 ## 开始工作
 
 修改前依次阅读根目录 `AGENTS.md`、`README.md`、`HANDOFF.md`、`docs/architecture.md`、`docs/api.md`，再阅读本任务涉及的前后端代码及测试。先执行 `git status --short`，保护工作区已有修改，不覆盖无关内容。
@@ -56,6 +134,8 @@ runtime/projects/<id>/
 - 保持旧项目及其 `project.json`、`script.json`、`script_bundle.json` 可打开；`ResearchProfile` 与旧 `BossInfo` 必须双向兼容。
 - 不修改 `engine/timeline.py` 的权威职责，不改为前端或 FFmpeg 输出反推时长。
 - 不删除已有项目创建、调研、脚本、上传、时间轴、接缝或导出能力；不做任务无关的大规模重构。
+- **不构建 Multi-Agent**；内部优先 Workflow + structured modules（见"产品方向"）。
+- **不删除 legacy 脚本系统**：它作为 compatibility + baseline + reusable capabilities 保留；未来主链优先复用其模块，而不是推倒重写或继续无限打补丁。
 - 不擅自删除文件、提交、推送，或修改密钥与 `.env`。业务变更必须补充测试。
 
 完成任务前运行相关 pytest 与 `npm.cmd run build`，检查 `git diff`，并说明修改文件、验证结果、兼容处理和剩余风险。

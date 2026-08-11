@@ -4,6 +4,8 @@
 > 先读本文件 → 再读 `CLAUDE.md` → 需要细节时查 `docs/architecture.md`。
 >
 > ⚠️ **历史交接文档**：本文反映 2026-08-03 的早期 MVP 状态，部分描述已过时。当前真实状态以 `AGENTS.md`、`docs/architecture.md`、`docs/api.md` 及代码 / 测试为准。脚本生成已升级为「规则选题 + DeepSeek 生成 + 程序质检」，并新增 IP 定位 / AI 共创 / TopicCard 锁题 / AI 编导审稿与 AI 局部修稿（局部修稿已实现，尚未自动接入）；文中「纯规则模板」「AI 对话共创未实现」等均为旧状态。
+>
+> ⚠️ **产品方向已调整（2026-08-11）**：未来主链为 `Owner Input → Intent / Business Objective → confirmed_facts → missing_facts → 少量 Memory / Knowledge → Creative Decision → Writer → Critic → Directed Rewrite → Shoot-ready Script`；旧脚本系统定位为 **Legacy Script Generation = compatibility + baseline + reusable capabilities**，不删除、不再作为未来主架构。DO NOT build Multi-Agent。方向与状态以 `AGENTS.md` / `docs/architecture.md` 为准。
 
 ---
 

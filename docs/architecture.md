@@ -2,7 +2,59 @@
 
 完整计划见项目交接文档 `HANDOFF.md`。本文件是执行用的浓缩架构。
 
-## 产品流水线
+## 当前决策状态
+
+### 未来主链（food-ip 作为老板使用的产品）
+
+```text
+Owner Input
+→ Intent / Business Objective
+→ confirmed_facts
+→ missing_facts
+→ 少量相关 Memory
+→ 少量 relevant Knowledge
+→ Creative Decision
+→ Writer
+→ Critic
+→ Directed Rewrite
+→ Shoot-ready Script
+```
+
+- 前台必须简单；**DO NOT build Multi-Agent**，优先 Workflow + structured modules。
+- 两个仓库关系：`food-ip-knowledge-pipeline` = 专业 Creative Knowledge 系统；`food-ip` = 老板最终使用的产品。Knowledge 最终服务于本仓库的 Creative Decision。
+- 知识系统状态：Phase 0.5 Creative Value Gate = PARTIAL / STRONG POSITIVE（非 PASS），blocker = **Fact Boundary**；下一阶段方向 = Minimal Creative Decision / Fact Boundary + Minimal Retrieval Validation。
+
+### 事实边界（Fact Boundary）— 最重要原则
+
+区分：
+
+```text
+confirmed_facts   = 老板明确提供，或可信 Memory 中已确认的事实
+creative_decision = AI 的创作判断与建议
+missing_facts     = 创作需要但尚未确认的信息
+```
+
+Knowledge 只教 AI 怎么判断，不充当老板实际发生了什么；未确认信息标"需确认"或"如果事实成立，可以这样拍"。边界由 system / validation 层强制。
+
+### Legacy 定位
+
+旧脚本系统不删除，作为 **Legacy Script Generation = compatibility + baseline + reusable capabilities**。复用映射：
+
+- `ResearchProfile` → 事实 / Memory 来源，不机械注入每条脚本
+- `IPProfile` → 长期定位与表达约束
+- `CreativeConversation` → 未来理解 Intent + 询问 missing facts
+- `CreativeBrief` → 保留，是否扩展暂不决定
+- `TopicCard` → optional interaction，不再必须生成
+- Writer → 未来只根据 Creative Decision 写脚本
+- Director Review → 优先复用为 Critic
+- `revise_script_candidate` → 优先复用为 Directed Rewrite
+- materials / timeline / FFmpeg / export → 全部保留
+
+固定 strategy / 内容桶继续服务 legacy，不再决定未来"今天拍什么"。
+
+## 产品流水线（当前真实流程 = Legacy / baseline）
+
+> 以下为当前已实现的流水线，定位为兼容与基线；未来主链见上方"当前决策状态"。
 
 1. 五步深度调研 → 产出结构化 `ResearchProfile`
 2. IP 定位确认（`IPProfile`）→ AI 共创确认 `CreativeBrief`（均可跳过）

@@ -2,6 +2,10 @@
 
 帮餐饮店老板低门槛产出「口播短视频」：脚本生成 → 拍摄 → 自动拼接 → 缝合处调节 →（二期）AI 润色。
 
+## 产品方向（2026-08-11 决策）
+
+未来主链：`Owner Input → Intent / Business Objective → confirmed_facts → missing_facts → 少量相关 Memory → 少量 relevant Knowledge → Creative Decision → Writer → Critic → Directed Rewrite → Shoot-ready Script`。旧脚本系统保留为 **Legacy Script Generation = compatibility + baseline + reusable capabilities**，不删除、不再作为未来主架构。**DO NOT build Multi-Agent**；优先 Workflow + structured modules。方向与状态以 `AGENTS.md` / `docs/architecture.md` 为准。
+
 ## 技术栈
 
 - 后端：Python 3.10+ + FastAPI + uvicorn；`imageio-ffmpeg` 内置静态 ffmpeg，并在缺少 ffprobe 时回退到 ffmpeg 探测
