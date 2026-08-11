@@ -5,7 +5,7 @@
 | **状态** | DRAFT — 待评审接受 |
 | **版本** | 0.2（轻量化修订） |
 | **日期** | 2026-08-09 |
-| **权威依据** | `CLAUDE.md` §16、§17、§19、§20、§11、§5、§6 |
+| **权威依据** | `../AGENTS.md`、`../CLAUDE.md` §16、§17、§19、§20、§11、§5、§6 |
 | **前置审计** | Readiness Audit（READY WITH SMALL FIXES；blocker B1/B2） |
 | **评审结果** | 已执行（2026-08-10/11）：Phase 0.5 Creative Value Gate = PARTIAL / STRONG POSITIVE（非 PASS），当前 blocker = Fact Boundary。详见 `docs/creative_value_gate/README.md` |
 
@@ -234,4 +234,5 @@ Without Knowledge   vs   WITH relevant Knowledge
 | 0.1 | 2026-08-09 | 初稿：两层验收 + 人工审核 + 选择规则 + Gate |
 | 0.2 | 2026-08-09 | 轻量化：删百分比/次数阈值，Hard Fail 收敛为 4 类，审核简化为两层，终判收敛为 3 结论 |
 
-与 `CLAUDE.md` 冲突时以 `CLAUDE.md` 为准。
+与 `AGENTS.md` 或父级 `../AGENTS.md` 冲突时，以父级 `../AGENTS.md` 为最高规则，
+再遵循本子系统 `AGENTS.md`；`CLAUDE.md` 仅作 Claude Code 操作补充。

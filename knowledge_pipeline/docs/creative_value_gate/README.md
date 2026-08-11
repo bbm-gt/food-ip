@@ -2,7 +2,7 @@
 
 > 归档日期：2026-08-10
 > 评估方式：evaluation-only A/B，一次性调用（未修改生产代码 / 未新增 Director / Creative Decision Schema / API / Retrieval / Knowledge Pipeline）
-> 权威依据：`CLAUDE.md` §17.2、§18、§19
+> 权威依据：`../../AGENTS.md`；具体阶段契约参见 `../../CLAUDE.md` §17.2、§18、§19。
 
 本档案记录 4 个真实 owner 场景下"不使用 5-video Knowledge（A 组） vs 使用高相关 5-video Knowledge（B 组）"的对照评估，用于后续独立审计。
 
@@ -79,7 +79,7 @@ owner task：老板每天早上亲自去市场挑海鲜，他想拍一条视频�
 
 ### 必须如实记录的三点
 
-1. **增益边际依场景差异大**：SCENE 1/2 为决策塑造型，SCENE 3/4 为精修型（A 已基本正确）。这反向印证 `CLAUDE.md` §18——只有高相关检索才值得注入，塞全部知识几乎必然稀释。
+1. **增益边际依场景差异大**：SCENE 1/2 为决策塑造型，SCENE 3/4 为精修型（A 已基本正确）。这反向印证 `../../CLAUDE.md` §18——只有高相关检索才值得注入，塞全部知识几乎必然稀释。
 2. **事实边界合规主要由统一 SYSTEM 规则保证，不是 Knowledge**：SCENE 1 两组都曾把"限量"写成事实；SCENE 2–4 加了共享事实边界规则后，独立复核仍发现未确认事实被直接写入 Creative Decision 字段。边界必须在 system/validation 层强制，不能指望知识本身提供，也不能仅靠 prompt 规则根治。
 3. **样本仍有限（4 个场景）**：结果为 PARTIAL / STRONG POSITIVE，**不授权** Creative Quality Benchmark V1 / 77-video 全量摄入 / Content Engine V2 / Director / 多智能体工程。下一阶段方向为 **Minimal Creative Decision / Fact Boundary + Minimal Retrieval Validation**。
 

@@ -462,7 +462,7 @@ def main():
 
 def _get_duration(video_path):
     try:
-        ffprobe = Path(r"E:\ffmpeg\bin\ffprobe.exe")
+        ffprobe = FFMPEG_BIN / "ffprobe.exe"
         if not ffprobe.exists():
             ffprobe = "ffprobe"
         cmd = [str(ffprobe), "-v", "error",

@@ -1,5 +1,9 @@
 # Food-IP Knowledge System — Engineering Rules
 
+This file is a Claude Code supplement for the `knowledge_pipeline/` subtree.
+The repository-wide rules in `../AGENTS.md` and the subsystem rules in
+`AGENTS.md` take precedence; this file must not become a competing authority.
+
 ## 1. Role
 
 You are the implementation engineer for the Food-IP knowledge system.
@@ -35,11 +39,12 @@ Core product principle:
 
 > Build the product broadly; validate narrowly.
 
-Two repositories:
+Single repository, logically independent subsystem:
 
 ```text
-food-ip-knowledge-pipeline  = professional Creative Knowledge system
-food-ip                     = the product the owner actually uses
+food-ip/knowledge_pipeline/ = professional Creative Knowledge system
+food-ip/backend/            = the product backend
+food-ip/frontend/           = the product frontend
 ```
 
 Knowledge serves Food-IP's Creative Decision. Knowledge pipeline long-term chain:

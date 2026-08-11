@@ -18,12 +18,17 @@ python -m unittest test_food_ip_p0.py
 
 外部付费 AI 调用在自动化测试中一律 mock。
 
-## 双仓库关系
+## 单仓库边界
 
 ```text
-本仓库（food-ip-knowledge-pipeline）= 专业 Creative Knowledge 系统
-food-ip（另一仓库）                = 老板最终使用的产品
+food-ip/knowledge_pipeline/ = 专业 Creative Knowledge 系统
+food-ip/backend/            = 老板最终使用的产品后端
+food-ip/frontend/           = 老板最终使用的产品前端
 ```
+
+本文件只约束 `knowledge_pipeline/` 子系统；全仓库工程规则以父级
+`food-ip/AGENTS.md` 为最高权威。`knowledge_pipeline/CLAUDE.md` 仅提供
+Claude Code 操作补充，不高于任一 `AGENTS.md`。
 
 Knowledge 只教 AI **怎么判断**，不能告诉 AI **当前老板实际上发生了什么**（见"事实边界"）。
 
