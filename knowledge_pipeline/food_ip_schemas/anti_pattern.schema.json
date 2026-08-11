@@ -1,0 +1,146 @@
+{
+  "$defs": {
+    "Origin": {
+      "enum": [
+        "explicit",
+        "inferred",
+        "synthesized"
+      ],
+      "title": "Origin",
+      "type": "string"
+    },
+    "SourceRef": {
+      "additionalProperties": false,
+      "description": "Traceable source reference.",
+      "properties": {
+        "source_id": {
+          "pattern": "^SRC\\d{4}$",
+          "title": "Source Id",
+          "type": "string"
+        },
+        "video_title": {
+          "default": "",
+          "title": "Video Title",
+          "type": "string"
+        },
+        "start_time": {
+          "default": "",
+          "title": "Start Time",
+          "type": "string"
+        },
+        "end_time": {
+          "default": "",
+          "title": "End Time",
+          "type": "string"
+        },
+        "start_sec": {
+          "default": 0.0,
+          "title": "Start Sec",
+          "type": "number"
+        },
+        "end_sec": {
+          "default": 0.0,
+          "title": "End Sec",
+          "type": "number"
+        }
+      },
+      "required": [
+        "source_id"
+      ],
+      "title": "SourceRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Error mode / failure pattern with symptoms and repair direction.",
+  "properties": {
+    "anti_pattern_id": {
+      "description": "Deterministic hash ID (AID_...)",
+      "title": "Anti Pattern Id",
+      "type": "string"
+    },
+    "display_id": {
+      "default": "",
+      "description": "Human-readable A000001",
+      "title": "Display Id",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 120,
+      "title": "Title",
+      "type": "string"
+    },
+    "symptoms": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Symptoms",
+      "type": "array"
+    },
+    "why_bad": {
+      "minLength": 5,
+      "title": "Why Bad",
+      "type": "string"
+    },
+    "repair_direction": {
+      "default": "",
+      "title": "Repair Direction",
+      "type": "string"
+    },
+    "applicable_question_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Applicable Question Ids",
+      "type": "array"
+    },
+    "related_knowledge_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Related Knowledge Ids",
+      "type": "array"
+    },
+    "source": {
+      "$ref": "#/$defs/SourceRef"
+    },
+    "confidence": {
+      "default": 0.5,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "origin": {
+      "$ref": "#/$defs/Origin",
+      "default": "inferred"
+    },
+    "evidence_segment_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Segment Ids",
+      "type": "array"
+    },
+    "created_by_run_id": {
+      "default": "",
+      "title": "Created By Run Id",
+      "type": "string"
+    },
+    "chunk_id": {
+      "default": "",
+      "title": "Chunk Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "anti_pattern_id",
+    "title",
+    "symptoms",
+    "why_bad",
+    "source"
+  ],
+  "title": "AntiPattern",
+  "type": "object"
+}

@@ -1,0 +1,70 @@
+{
+  "$defs": {
+    "SourceStatus": {
+      "enum": [
+        "pending",
+        "processing",
+        "done",
+        "failed"
+      ],
+      "title": "SourceStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Per-source processing state for crash recovery.",
+  "properties": {
+    "source_id": {
+      "pattern": "^SRC\\d{4}$",
+      "title": "Source Id",
+      "type": "string"
+    },
+    "stage": {
+      "default": "",
+      "description": "Pipeline stage owning this state (e.g. 'refine', 'transcribe')",
+      "title": "Stage",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/SourceStatus",
+      "default": "pending"
+    },
+    "run_id": {
+      "default": "",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "pid": {
+      "default": 0,
+      "title": "Pid",
+      "type": "integer"
+    },
+    "started_at": {
+      "default": "",
+      "title": "Started At",
+      "type": "string"
+    },
+    "completed_at": {
+      "default": "",
+      "title": "Completed At",
+      "type": "string"
+    },
+    "error": {
+      "default": "",
+      "title": "Error",
+      "type": "string"
+    },
+    "stats": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Stats",
+      "type": "object"
+    }
+  },
+  "required": [
+    "source_id"
+  ],
+  "title": "SourceState",
+  "type": "object"
+}

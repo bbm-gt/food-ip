@@ -1,0 +1,1700 @@
+{
+  "_meta": {
+    "version": "2.0",
+    "created": "2026-07-14",
+    "updated": "2026-07-14-v2",
+    "description": "TikTok 跨境电商转录 ASR 错误对照表（whisper-large-v3 常见误识别）",
+    "usage": "preprocess.py 在 clean_text 后做精确字符串替换；verify.py 检测残留黑名单词",
+    "principle": "只收录跨境电商领域高频且无歧义的 ASR 错误；上下文敏感的常见词（如厨房/半月/内幕/体现/开头/清晰/规定/增长）不收录，交由 refine.py 的 LLM 推理",
+    "sort_rule": "preprocess.py 会按 wrong 字段长度倒序应用，避免子串误替换",
+    "categories": [
+      "MCN",
+      "Shadowrocket",
+      "TikTok",
+      "whoer",
+      "佣金",
+      "其他",
+      "剪辑",
+      "地区",
+      "字节",
+      "实操",
+      "小黄车",
+      "带货",
+      "广告",
+      "支付",
+      "查重",
+      "橱窗",
+      "流量",
+      "涨粉",
+      "独立站",
+      "直播",
+      "社交",
+      "粉丝",
+      "老师称呼",
+      "设备",
+      "转化率",
+      "选品",
+      "邮箱"
+    ]
+  },
+  "replacements": [
+    {
+      "wrong": "Shopper payments",
+      "right": "Shopify Payments",
+      "category": "支付"
+    },
+    {
+      "wrong": "Shutdown Rocket",
+      "right": "Shadowrocket",
+      "category": "Shadowrocket"
+    },
+    {
+      "wrong": "bar from decide",
+      "right": "Bathroom Design",
+      "category": "其他"
+    },
+    {
+      "wrong": "3w.outlook.com",
+      "right": "www.outlook.com",
+      "category": "邮箱"
+    },
+    {
+      "wrong": "Shopping fight",
+      "right": "Shopify",
+      "category": "独立站"
+    },
+    {
+      "wrong": "ForWordMail",
+      "right": "ForwardMail",
+      "category": "邮箱"
+    },
+    {
+      "wrong": "folder mail",
+      "right": "ForwardMail",
+      "category": "邮箱"
+    },
+    {
+      "wrong": "Title shop",
+      "right": "TikTok Shop",
+      "category": "TikTok"
+    },
+    {
+      "wrong": "wa是oer.net",
+      "right": "whoer.net",
+      "category": "whoer"
+    },
+    {
+      "wrong": "shower hat",
+      "right": "shower head",
+      "category": "其他"
+    },
+    {
+      "wrong": "ShoppingFi",
+      "right": "Shopify",
+      "category": "独立站"
+    },
+    {
+      "wrong": "Astra APP",
+      "right": "Shadowrocket APP",
+      "category": "Shadowrocket"
+    },
+    {
+      "wrong": "增长到你的增长里面",
+      "right": "收藏到你的收藏里面",
+      "category": "其他"
+    },
+    {
+      "wrong": "长到的是些精准粉",
+      "right": "找到的是些精准粉",
+      "category": "涨粉"
+    },
+    {
+      "wrong": "AutoLook",
+      "right": "Outlook",
+      "category": "邮箱"
+    },
+    {
+      "wrong": "Estate店铺",
+      "right": "Etsy店铺",
+      "category": "其他"
+    },
+    {
+      "wrong": "危机事件的学员",
+      "right": "VIP社群的学员",
+      "category": "MCN"
+    },
+    {
+      "wrong": "非用模式的学员",
+      "right": "非VIP模式的学员",
+      "category": "MCN"
+    },
+    {
+      "wrong": "Altalog",
+      "right": "Outlook",
+      "category": "邮箱"
+    },
+    {
+      "wrong": "谷歌icons",
+      "right": "Google账号",
+      "category": "邮箱"
+    },
+    {
+      "wrong": "HomeNet",
+      "right": "whoer.net",
+      "category": "whoer"
+    },
+    {
+      "wrong": "Tito的广告",
+      "right": "TikTok的广告",
+      "category": "广告"
+    },
+    {
+      "wrong": "非用的小伙伴",
+      "right": "非VIP的小伙伴",
+      "category": "MCN"
+    },
+    {
+      "wrong": "M4N的绑定",
+      "right": "MCN的绑定",
+      "category": "MCN"
+    },
+    {
+      "wrong": "M4N的申报",
+      "right": "MCN的申报",
+      "category": "MCN"
+    },
+    {
+      "wrong": "m30申请表",
+      "right": "MCN申请表",
+      "category": "MCN"
+    },
+    {
+      "wrong": "T-talk",
+      "right": "TikTok",
+      "category": "TikTok"
+    },
+    {
+      "wrong": "tittle",
+      "right": "TikTok",
+      "category": "TikTok"
+    },
+    {
+      "wrong": "Astria",
+      "right": "Shadowrocket",
+      "category": "Shadowrocket"
+    },
+    {
+      "wrong": "Astral",
+      "right": "Shadowrocket",
+      "category": "Shadowrocket"
+    },
+    {
+      "wrong": "VFL的店铺",
+      "right": "Wish的店铺",
+      "category": "其他"
+    },
+    {
+      "wrong": "PayEat",
+      "right": "PayPal",
+      "category": "其他"
+    },
+    {
+      "wrong": "IR的压缩包",
+      "right": "RAR的压缩包",
+      "category": "其他"
+    },
+    {
+      "wrong": "EOS的公司",
+      "right": "US的公司",
+      "category": "支付"
+    },
+    {
+      "wrong": "JKtalk",
+      "right": "TikTok",
+      "category": "TikTok"
+    },
+    {
+      "wrong": "MSN结构",
+      "right": "MCN机构",
+      "category": "MCN"
+    },
+    {
+      "wrong": "MSN权限",
+      "right": "MCN权限",
+      "category": "MCN"
+    },
+    {
+      "wrong": "MSN机构",
+      "right": "MCN机构",
+      "category": "MCN"
+    },
+    {
+      "wrong": "MSN后台",
+      "right": "MCN后台",
+      "category": "MCN"
+    },
+    {
+      "wrong": "MSN绑定",
+      "right": "MCN绑定",
+      "category": "MCN"
+    },
+    {
+      "wrong": "M3的绑定",
+      "right": "MCN的绑定",
+      "category": "MCN"
+    },
+    {
+      "wrong": "小黄色带货",
+      "right": "小黄车带货",
+      "category": "小黄车"
+    },
+    {
+      "wrong": "小黄色带火",
+      "right": "小黄车带货",
+      "category": "小黄车"
+    },
+    {
+      "wrong": "小黄之代货",
+      "right": "小黄车带货",
+      "category": "小黄车"
+    },
+    {
+      "wrong": "小房子带货",
+      "right": "小黄车带货",
+      "category": "小黄车"
+    },
+    {
+      "wrong": "小房车带货",
+      "right": "小黄车带货",
+      "category": "小黄车"
+    },
+    {
+      "wrong": "小银河链接",
+      "right": "小黄车链接",
+      "category": "小黄车"
+    },
+    {
+      "wrong": "跨线小黄针",
+      "right": "跨境小黄车",
+      "category": "小黄车"
+    },
+    {
+      "wrong": "小王子带货",
+      "right": "小黄车带货",
+      "category": "小黄车"
+    },
+    {
+      "wrong": "联粉词排档",
+      "right": "零粉申请",
+      "category": "粉丝"
+    },
+    {
+      "wrong": "零分先报表",
+      "right": "零粉申报表",
+      "category": "粉丝"
+    },
+    {
+      "wrong": "下单转发率",
+      "right": "下单转化率",
+      "category": "转化率"
+    },
+    {
+      "wrong": "挂车档的屏",
+      "right": "挂车的品",
+      "category": "选品"
+    },
+    {
+      "wrong": "街条的官方",
+      "right": "字节跳动官方",
+      "category": "字节"
+    },
+    {
+      "wrong": "Insts",
+      "right": "Instagram",
+      "category": "社交"
+    },
+    {
+      "wrong": "Honet",
+      "right": "whoer.net",
+      "category": "whoer"
+    },
+    {
+      "wrong": "艾特小助理",
+      "right": "@小助理",
+      "category": "老师称呼"
+    },
+    {
+      "wrong": "艾特小路里",
+      "right": "@小助理",
+      "category": "老师称呼"
+    },
+    {
+      "wrong": "海关TK圈",
+      "right": "跨境TK圈",
+      "category": "地区"
+    },
+    {
+      "wrong": "合拍与滤目",
+      "right": "合拍与绿幕",
+      "category": "剪辑"
+    },
+    {
+      "wrong": "脱到剪辑框",
+      "right": "拖到剪辑框",
+      "category": "剪辑"
+    },
+    {
+      "wrong": "双层茶一杯",
+      "right": "双层茶杯",
+      "category": "剪辑"
+    },
+    {
+      "wrong": "持有70%",
+      "right": "吃透70%",
+      "category": "其他"
+    },
+    {
+      "wrong": "本土颜值照",
+      "right": "本土营业执照",
+      "category": "其他"
+    },
+    {
+      "wrong": "审议不通过",
+      "right": "审核不通过",
+      "category": "其他"
+    },
+    {
+      "wrong": "通电的镜头",
+      "right": "多余的镜头",
+      "category": "其他"
+    },
+    {
+      "wrong": "白面单系统",
+      "right": "白名单系统",
+      "category": "广告"
+    },
+    {
+      "wrong": "Strip",
+      "right": "Stripe",
+      "category": "支付"
+    },
+    {
+      "wrong": "Jtalk",
+      "right": "TikTok",
+      "category": "TikTok"
+    },
+    {
+      "wrong": "攻预算歧视",
+      "right": "工欲善其事",
+      "category": "其他"
+    },
+    {
+      "wrong": "必先立机器",
+      "right": "必先利其器",
+      "category": "其他"
+    },
+    {
+      "wrong": "非用模式",
+      "right": "非VIP模式",
+      "category": "MCN"
+    },
+    {
+      "wrong": "MSN的",
+      "right": "MCN的",
+      "category": "MCN"
+    },
+    {
+      "wrong": "M3权限",
+      "right": "MCN权限",
+      "category": "MCN"
+    },
+    {
+      "wrong": "M3后台",
+      "right": "MCN后台",
+      "category": "MCN"
+    },
+    {
+      "wrong": "M3绑定",
+      "right": "MCN绑定",
+      "category": "MCN"
+    },
+    {
+      "wrong": "M3机构",
+      "right": "MCN机构",
+      "category": "MCN"
+    },
+    {
+      "wrong": "听透电商",
+      "right": "TikTok电商",
+      "category": "TikTok"
+    },
+    {
+      "wrong": "踢到账号",
+      "right": "TikTok账号",
+      "category": "TikTok"
+    },
+    {
+      "wrong": "跨境连长",
+      "right": "跨境电商",
+      "category": "TikTok"
+    },
+    {
+      "wrong": "小黄真相",
+      "right": "小黄车项目",
+      "category": "小黄车"
+    },
+    {
+      "wrong": "小黄色队",
+      "right": "小黄车",
+      "category": "小黄车"
+    },
+    {
+      "wrong": "代步资格",
+      "right": "带货资格",
+      "category": "带货"
+    },
+    {
+      "wrong": "保持视频",
+      "right": "带货视频",
+      "category": "带货"
+    },
+    {
+      "wrong": "贷货账号",
+      "right": "带货账号",
+      "category": "带货"
+    },
+    {
+      "wrong": "贷货项目",
+      "right": "带货项目",
+      "category": "带货"
+    },
+    {
+      "wrong": "代货达人",
+      "right": "带货达人",
+      "category": "带货"
+    },
+    {
+      "wrong": "代货权限",
+      "right": "带货权限",
+      "category": "带货"
+    },
+    {
+      "wrong": "代货视频",
+      "right": "带货视频",
+      "category": "带货"
+    },
+    {
+      "wrong": "签本排档",
+      "right": "千粉申请",
+      "category": "粉丝"
+    },
+    {
+      "wrong": "厨房按钮",
+      "right": "橱窗按钮",
+      "category": "橱窗"
+    },
+    {
+      "wrong": "流量非法",
+      "right": "流量分发",
+      "category": "流量"
+    },
+    {
+      "wrong": "流量用户",
+      "right": "流量入口",
+      "category": "流量"
+    },
+    {
+      "wrong": "零波问题",
+      "right": "零播问题",
+      "category": "流量"
+    },
+    {
+      "wrong": "GMOV",
+      "right": "GMV",
+      "category": "转化率"
+    },
+    {
+      "wrong": "修理工序",
+      "right": "修理工具",
+      "category": "选品"
+    },
+    {
+      "wrong": "气配类型",
+      "right": "汽配类型",
+      "category": "选品"
+    },
+    {
+      "wrong": "自己跳动",
+      "right": "字节跳动",
+      "category": "字节"
+    },
+    {
+      "wrong": "1163",
+      "right": "163",
+      "category": "邮箱"
+    },
+    {
+      "wrong": "Ince",
+      "right": "INS",
+      "category": "社交"
+    },
+    {
+      "wrong": "Inse",
+      "right": "INS",
+      "category": "社交"
+    },
+    {
+      "wrong": "美群ID",
+      "right": "美区Apple ID",
+      "category": "设备"
+    },
+    {
+      "wrong": "独项IP",
+      "right": "独享IP",
+      "category": "设备"
+    },
+    {
+      "wrong": "专项IP",
+      "right": "专线IP",
+      "category": "设备"
+    },
+    {
+      "wrong": "推跑老师",
+      "right": "陪跑老师",
+      "category": "老师称呼"
+    },
+    {
+      "wrong": "回报老师",
+      "right": "陪跑老师",
+      "category": "老师称呼"
+    },
+    {
+      "wrong": "配套老师",
+      "right": "陪跑老师",
+      "category": "老师称呼"
+    },
+    {
+      "wrong": "频道老师",
+      "right": "陪跑老师",
+      "category": "老师称呼"
+    },
+    {
+      "wrong": "陪伴老师",
+      "right": "陪跑老师",
+      "category": "老师称呼"
+    },
+    {
+      "wrong": "卡通原理",
+      "right": "查重原理",
+      "category": "查重"
+    },
+    {
+      "wrong": "AI卡通",
+      "right": "AI查重",
+      "category": "查重"
+    },
+    {
+      "wrong": "杀鸡重做",
+      "right": "重新刷机",
+      "category": "查重"
+    },
+    {
+      "wrong": "十套教学",
+      "right": "实操教学",
+      "category": "实操"
+    },
+    {
+      "wrong": "十套流程",
+      "right": "实操流程",
+      "category": "实操"
+    },
+    {
+      "wrong": "曲步阶段",
+      "right": "起步阶段",
+      "category": "地区"
+    },
+    {
+      "wrong": "饱和家内",
+      "right": "饱和和内卷",
+      "category": "地区"
+    },
+    {
+      "wrong": "略度合拍",
+      "right": "绿幕合拍",
+      "category": "剪辑"
+    },
+    {
+      "wrong": "预目特效",
+      "right": "绿幕特效",
+      "category": "剪辑"
+    },
+    {
+      "wrong": "镜头开封",
+      "right": "镜头拆分",
+      "category": "剪辑"
+    },
+    {
+      "wrong": "商语音乐",
+      "right": "商用音乐",
+      "category": "剪辑"
+    },
+    {
+      "wrong": "激励账号",
+      "right": "积累账号",
+      "category": "其他"
+    },
+    {
+      "wrong": "无言之水",
+      "right": "无源之水",
+      "category": "其他"
+    },
+    {
+      "wrong": "一压续绑",
+      "right": "一下续绑",
+      "category": "其他"
+    },
+    {
+      "wrong": "大卡作业",
+      "right": "打卡作业",
+      "category": "其他"
+    },
+    {
+      "wrong": "投诚物流",
+      "right": "头程物流",
+      "category": "其他"
+    },
+    {
+      "wrong": "伪成物流",
+      "right": "尾程物流",
+      "category": "其他"
+    },
+    {
+      "wrong": "头层物流",
+      "right": "头程物流",
+      "category": "其他"
+    },
+    {
+      "wrong": "尾层物流",
+      "right": "尾程物流",
+      "category": "其他"
+    },
+    {
+      "wrong": "定要流程",
+      "right": "定邀流程",
+      "category": "其他"
+    },
+    {
+      "wrong": "定要商品",
+      "right": "定邀商品",
+      "category": "其他"
+    },
+    {
+      "wrong": "信守小白",
+      "right": "新手小白",
+      "category": "其他"
+    },
+    {
+      "wrong": "干号运营",
+      "right": "新号运营",
+      "category": "其他"
+    },
+    {
+      "wrong": "干号环境",
+      "right": "账号环境",
+      "category": "其他"
+    },
+    {
+      "wrong": "更容易活",
+      "right": "更容易火",
+      "category": "其他"
+    },
+    {
+      "wrong": "翻一下机",
+      "right": "刷一下机",
+      "category": "其他"
+    },
+    {
+      "wrong": "运商数据",
+      "right": "运营商数据",
+      "category": "其他"
+    },
+    {
+      "wrong": "甚至里面",
+      "right": "设置里面",
+      "category": "其他"
+    },
+    {
+      "wrong": "用截程度",
+      "right": "拥挤程度",
+      "category": "其他"
+    },
+    {
+      "wrong": "剪辑教训",
+      "right": "剪辑经验",
+      "category": "其他"
+    },
+    {
+      "wrong": "逗逗个乐",
+      "right": "逗个乐",
+      "category": "其他"
+    },
+    {
+      "wrong": "画的时候",
+      "right": "发的时候",
+      "category": "其他"
+    },
+    {
+      "wrong": "签字展示",
+      "right": "千次展示",
+      "category": "广告"
+    },
+    {
+      "wrong": "暴光次数",
+      "right": "曝光次数",
+      "category": "广告"
+    },
+    {
+      "wrong": "投赔费用",
+      "right": "投放费用",
+      "category": "广告"
+    },
+    {
+      "wrong": "时几投放",
+      "right": "时段投放",
+      "category": "广告"
+    },
+    {
+      "wrong": "Tito",
+      "right": "TikTok",
+      "category": "广告"
+    },
+    {
+      "wrong": "TITO",
+      "right": "TikTok",
+      "category": "广告"
+    },
+    {
+      "wrong": "夸数文章",
+      "right": "话术文档",
+      "category": "直播"
+    },
+    {
+      "wrong": "花经电商",
+      "right": "跨境电商",
+      "category": "独立站"
+    },
+    {
+      "wrong": "金选联盟",
+      "right": "精选联盟",
+      "category": "支付"
+    },
+    {
+      "wrong": "报款模式",
+      "right": "爆款模式",
+      "category": "带货"
+    },
+    {
+      "wrong": "报款产品",
+      "right": "爆款产品",
+      "category": "带货"
+    },
+    {
+      "wrong": "失措成本",
+      "right": "试错成本",
+      "category": "实操"
+    },
+    {
+      "wrong": "教育老师",
+      "right": "教练老师",
+      "category": "老师称呼"
+    },
+    {
+      "wrong": "跟丁辅导",
+      "right": "跟盯辅导",
+      "category": "老师称呼"
+    },
+    {
+      "wrong": "MSN",
+      "right": "MCN",
+      "category": "MCN"
+    },
+    {
+      "wrong": "M4N",
+      "right": "MCN",
+      "category": "MCN"
+    },
+    {
+      "wrong": "M3N",
+      "right": "MCN",
+      "category": "MCN"
+    },
+    {
+      "wrong": "m30",
+      "right": "MCN",
+      "category": "MCN"
+    },
+    {
+      "wrong": "小黄之",
+      "right": "小黄车",
+      "category": "小黄车"
+    },
+    {
+      "wrong": "小黄针",
+      "right": "小黄车",
+      "category": "小黄车"
+    },
+    {
+      "wrong": "小银河",
+      "right": "小黄车",
+      "category": "小黄车"
+    },
+    {
+      "wrong": "小方针",
+      "right": "小黄车",
+      "category": "小黄车"
+    },
+    {
+      "wrong": "小房车",
+      "right": "小黄车",
+      "category": "小黄车"
+    },
+    {
+      "wrong": "小红车",
+      "right": "小黄车",
+      "category": "小黄车"
+    },
+    {
+      "wrong": "小黄圈",
+      "right": "小黄车",
+      "category": "小黄车"
+    },
+    {
+      "wrong": "零粉次",
+      "right": "零粉丝",
+      "category": "粉丝"
+    },
+    {
+      "wrong": "您粉丝",
+      "right": "零粉丝",
+      "category": "粉丝"
+    },
+    {
+      "wrong": "联粉词",
+      "right": "零粉丝",
+      "category": "粉丝"
+    },
+    {
+      "wrong": "高英金",
+      "right": "高佣金",
+      "category": "佣金"
+    },
+    {
+      "wrong": "流量试",
+      "right": "流量池",
+      "category": "流量"
+    },
+    {
+      "wrong": "玩玻璃",
+      "right": "完播率",
+      "category": "流量"
+    },
+    {
+      "wrong": "玩播率",
+      "right": "完播率",
+      "category": "流量"
+    },
+    {
+      "wrong": "博物链",
+      "right": "播放量",
+      "category": "流量"
+    },
+    {
+      "wrong": "壮化率",
+      "right": "转化率",
+      "category": "转化率"
+    },
+    {
+      "wrong": "JMV",
+      "right": "GMV",
+      "category": "转化率"
+    },
+    {
+      "wrong": "锤子类",
+      "right": "垂直类",
+      "category": "选品"
+    },
+    {
+      "wrong": "饭粉类",
+      "right": "泛粉类",
+      "category": "选品"
+    },
+    {
+      "wrong": "短置屏",
+      "right": "短视频",
+      "category": "选品"
+    },
+    {
+      "wrong": "屏很骚",
+      "right": "品很好",
+      "category": "选品"
+    },
+    {
+      "wrong": "无货员",
+      "right": "无货源",
+      "category": "选品"
+    },
+    {
+      "wrong": "粉饰量",
+      "right": "粉丝量",
+      "category": "涨粉"
+    },
+    {
+      "wrong": "长宠物",
+      "right": "养宠物",
+      "category": "涨粉"
+    },
+    {
+      "wrong": "KCO",
+      "right": "QQ邮箱",
+      "category": "邮箱"
+    },
+    {
+      "wrong": "摸击权",
+      "right": "抹机",
+      "category": "设备"
+    },
+    {
+      "wrong": "加86",
+      "right": "+86",
+      "category": "设备"
+    },
+    {
+      "wrong": "5ID",
+      "right": "Apple ID",
+      "category": "设备"
+    },
+    {
+      "wrong": "通知法",
+      "right": "同质化",
+      "category": "查重"
+    },
+    {
+      "wrong": "做抽真",
+      "right": "做抽帧",
+      "category": "查重"
+    },
+    {
+      "wrong": "做扣分",
+      "right": "做去重",
+      "category": "查重"
+    },
+    {
+      "wrong": "时操中",
+      "right": "实操中",
+      "category": "实操"
+    },
+    {
+      "wrong": "红利基",
+      "right": "红利期",
+      "category": "实操"
+    },
+    {
+      "wrong": "清晰呀",
+      "right": "去重呀",
+      "category": "实操"
+    },
+    {
+      "wrong": "潘乙区",
+      "right": "番禺区",
+      "category": "地区"
+    },
+    {
+      "wrong": "跨界链",
+      "right": "跨境电商",
+      "category": "地区"
+    },
+    {
+      "wrong": "脱下来",
+      "right": "拖下来",
+      "category": "剪辑"
+    },
+    {
+      "wrong": "抛过去",
+      "right": "拖过去",
+      "category": "剪辑"
+    },
+    {
+      "wrong": "真火商",
+      "right": "输入法",
+      "category": "剪辑"
+    },
+    {
+      "wrong": "跳一针",
+      "right": "跳一帧",
+      "category": "剪辑"
+    },
+    {
+      "wrong": "大肚碑",
+      "right": "大肚杯",
+      "category": "剪辑"
+    },
+    {
+      "wrong": "青克素",
+      "right": "轻库存",
+      "category": "其他"
+    },
+    {
+      "wrong": "信息查",
+      "right": "信息差",
+      "category": "其他"
+    },
+    {
+      "wrong": "十万家",
+      "right": "十万+",
+      "category": "其他"
+    },
+    {
+      "wrong": "颜值照",
+      "right": "营业执照",
+      "category": "其他"
+    },
+    {
+      "wrong": "本土电",
+      "right": "本土店",
+      "category": "其他"
+    },
+    {
+      "wrong": "跨境电",
+      "right": "跨境店",
+      "category": "其他"
+    },
+    {
+      "wrong": "企业汇",
+      "right": "对公回款",
+      "category": "其他"
+    },
+    {
+      "wrong": "军营者",
+      "right": "经营者",
+      "category": "其他"
+    },
+    {
+      "wrong": "灯搞完",
+      "right": "等搞完",
+      "category": "其他"
+    },
+    {
+      "wrong": "珍藏上",
+      "right": "收藏上",
+      "category": "其他"
+    },
+    {
+      "wrong": "白面单",
+      "right": "白名单",
+      "category": "广告"
+    },
+    {
+      "wrong": "题字版",
+      "right": "提词板",
+      "category": "直播"
+    },
+    {
+      "wrong": "居付率",
+      "right": "拒付率",
+      "category": "支付"
+    },
+    {
+      "wrong": "低获值",
+      "right": "低货值",
+      "category": "选品"
+    },
+    {
+      "wrong": "基础片",
+      "right": "基础篇",
+      "category": "实操"
+    },
+    {
+      "wrong": "天套口",
+      "right": "TikTok",
+      "category": "TikTok"
+    },
+    {
+      "wrong": "西手区",
+      "right": "新手区",
+      "category": "实操"
+    },
+    {
+      "wrong": "拿方式",
+      "right": "那方式",
+      "category": "其他"
+    },
+    {
+      "wrong": "拿正常",
+      "right": "那正常",
+      "category": "其他"
+    },
+    {
+      "wrong": "M3",
+      "right": "MCN",
+      "category": "MCN"
+    },
+    {
+      "wrong": "听透",
+      "right": "TikTok",
+      "category": "TikTok"
+    },
+    {
+      "wrong": "踢到",
+      "right": "TikTok",
+      "category": "TikTok"
+    },
+    {
+      "wrong": "贷货",
+      "right": "带货",
+      "category": "带货"
+    },
+    {
+      "wrong": "代货",
+      "right": "带货",
+      "category": "带货"
+    },
+    {
+      "wrong": "戴火",
+      "right": "带货",
+      "category": "带货"
+    },
+    {
+      "wrong": "天粉",
+      "right": "千粉",
+      "category": "粉丝"
+    },
+    {
+      "wrong": "签粉",
+      "right": "千粉",
+      "category": "粉丝"
+    },
+    {
+      "wrong": "英金",
+      "right": "佣金",
+      "category": "佣金"
+    },
+    {
+      "wrong": "优劲",
+      "right": "佣金",
+      "category": "佣金"
+    },
+    {
+      "wrong": "用件",
+      "right": "佣金",
+      "category": "佣金"
+    },
+    {
+      "wrong": "应金",
+      "right": "佣金",
+      "category": "佣金"
+    },
+    {
+      "wrong": "赘运",
+      "right": "追佣",
+      "category": "佣金"
+    },
+    {
+      "wrong": "除窗",
+      "right": "橱窗",
+      "category": "橱窗"
+    },
+    {
+      "wrong": "狗袋",
+      "right": "购物袋",
+      "category": "橱窗"
+    },
+    {
+      "wrong": "退流",
+      "right": "推流",
+      "category": "流量"
+    },
+    {
+      "wrong": "零波",
+      "right": "零播",
+      "category": "流量"
+    },
+    {
+      "wrong": "秒退",
+      "right": "秒推",
+      "category": "流量"
+    },
+    {
+      "wrong": "长粉",
+      "right": "涨粉",
+      "category": "涨粉"
+    },
+    {
+      "wrong": "街条",
+      "right": "字节",
+      "category": "字节"
+    },
+    {
+      "wrong": "模机",
+      "right": "抹机",
+      "category": "设备"
+    },
+    {
+      "wrong": "重制",
+      "right": "重置",
+      "category": "设备"
+    },
+    {
+      "wrong": "DS",
+      "right": "DNS",
+      "category": "设备"
+    },
+    {
+      "wrong": "5J",
+      "right": "5G",
+      "category": "设备"
+    },
+    {
+      "wrong": "4J",
+      "right": "4G",
+      "category": "设备"
+    },
+    {
+      "wrong": "RY",
+      "right": "ROI",
+      "category": "设备"
+    },
+    {
+      "wrong": "听解",
+      "right": "婷姐",
+      "category": "老师称呼"
+    },
+    {
+      "wrong": "抽真",
+      "right": "抽帧",
+      "category": "查重"
+    },
+    {
+      "wrong": "抽分",
+      "right": "抽帧",
+      "category": "查重"
+    },
+    {
+      "wrong": "抽针",
+      "right": "抽帧",
+      "category": "查重"
+    },
+    {
+      "wrong": "卡中",
+      "right": "查重",
+      "category": "查重"
+    },
+    {
+      "wrong": "驱虫",
+      "right": "去重",
+      "category": "查重"
+    },
+    {
+      "wrong": "剧重",
+      "right": "去重",
+      "category": "查重"
+    },
+    {
+      "wrong": "脱动",
+      "right": "拖动",
+      "category": "剪辑"
+    },
+    {
+      "wrong": "裁剑",
+      "right": "裁剪",
+      "category": "剪辑"
+    },
+    {
+      "wrong": "踩分",
+      "right": "裁剪",
+      "category": "剪辑"
+    },
+    {
+      "wrong": "开效",
+      "right": "特效",
+      "category": "剪辑"
+    },
+    {
+      "wrong": "原音",
+      "right": "原声",
+      "category": "剪辑"
+    },
+    {
+      "wrong": "续保",
+      "right": "续绑",
+      "category": "其他"
+    },
+    {
+      "wrong": "做品",
+      "right": "作品",
+      "category": "其他"
+    },
+    {
+      "wrong": "爱特",
+      "right": "@",
+      "category": "其他"
+    },
+    {
+      "wrong": "警号",
+      "right": "井号",
+      "category": "其他"
+    },
+    {
+      "wrong": "封电",
+      "right": "封店",
+      "category": "其他"
+    },
+    {
+      "wrong": "入座",
+      "right": "入驻",
+      "category": "其他"
+    },
+    {
+      "wrong": "卡合",
+      "right": "卡壳",
+      "category": "其他"
+    },
+    {
+      "wrong": "好期",
+      "right": "后期",
+      "category": "其他"
+    },
+    {
+      "wrong": "脚踝",
+      "right": "脚本",
+      "category": "其他"
+    },
+    {
+      "wrong": "围空",
+      "right": "为空",
+      "category": "其他"
+    },
+    {
+      "wrong": "溢假",
+      "right": "议价",
+      "category": "其他"
+    },
+    {
+      "wrong": "暴光",
+      "right": "曝光",
+      "category": "广告"
+    },
+    {
+      "wrong": "投赔",
+      "right": "投放",
+      "category": "广告"
+    },
+    {
+      "wrong": "走放",
+      "right": "投放",
+      "category": "广告"
+    },
+    {
+      "wrong": "受重",
+      "right": "受众",
+      "category": "广告"
+    },
+    {
+      "wrong": "积费",
+      "right": "计费",
+      "category": "广告"
+    },
+    {
+      "wrong": "时几",
+      "right": "时段",
+      "category": "广告"
+    },
+    {
+      "wrong": "话速",
+      "right": "话术",
+      "category": "直播"
+    },
+    {
+      "wrong": "列丝",
+      "right": "劣势",
+      "category": "支付"
+    },
+    {
+      "wrong": "T字",
+      "right": "梯子",
+      "category": "支付"
+    },
+    {
+      "wrong": "测速",
+      "right": "测试",
+      "category": "实操"
+    },
+    {
+      "wrong": "早货",
+      "right": "找货",
+      "category": "实操"
+    },
+    {
+      "wrong": "上转",
+      "right": "上传",
+      "category": "实操"
+    },
+    {
+      "wrong": "运美",
+      "right": "运营",
+      "category": "实操"
+    },
+    {
+      "wrong": "归关",
+      "right": "归纳",
+      "category": "实操"
+    },
+    {
+      "wrong": "简展",
+      "right": "介绍",
+      "category": "实操"
+    },
+    {
+      "wrong": "卖丑",
+      "right": "卖货",
+      "category": "带货"
+    },
+    {
+      "wrong": "没解",
+      "right": "理解",
+      "category": "其他"
+    },
+    {
+      "wrong": "踢桃",
+      "right": "TikTok",
+      "category": "TikTok"
+    },
+    {
+      "wrong": "起亮",
+      "right": "起量",
+      "category": "流量"
+    },
+    {
+      "wrong": "限留",
+      "right": "限流",
+      "category": "流量"
+    }
+  ],
+  "blacklist": [
+    "MSN权限",
+    "MSN机构",
+    "MSN后台",
+    "MSN绑定",
+    "MSN结构",
+    "MSN",
+    "M4N",
+    "M4N的绑定",
+    "M4N的申报",
+    "M3N",
+    "M3权限",
+    "M3后台",
+    "M3绑定",
+    "M3机构",
+    "M3",
+    "m30",
+    "m30申请表",
+    "5ID",
+    "JMV",
+    "GMOV",
+    "危机事件的学员",
+    "非用模式",
+    "小黄真相",
+    "小黄之",
+    "小黄针",
+    "小银河",
+    "小方针",
+    "小房车",
+    "小红车",
+    "小黄圈",
+    "除窗",
+    "厨房按钮",
+    "签粉",
+    "天粉",
+    "戴火",
+    "代货权限",
+    "代货",
+    "贷货",
+    "狗袋",
+    "用件",
+    "应金",
+    "英金",
+    "优劲",
+    "赘运",
+    "续保",
+    "投诚物流",
+    "伪成物流",
+    "头层物流",
+    "尾层物流",
+    "本土电",
+    "跨境电",
+    "封电",
+    "定要流程",
+    "定要商品",
+    "入座",
+    "PayEat",
+    "本土颜值照",
+    "颜值照",
+    "审议不通过",
+    "街条",
+    "企业汇",
+    "Estate店铺",
+    "VFL的店铺",
+    "bar from decide",
+    "shower hat",
+    "军营者",
+    "十万家",
+    "信息查",
+    "时操中",
+    "红利基",
+    "激励账号",
+    "无言之水",
+    "高英金",
+    "青克素",
+    "听透",
+    "T-talk",
+    "tittle",
+    "踢到",
+    "Astria",
+    "Astral",
+    "退流",
+    "流量试",
+    "玩播率",
+    "玩玻璃",
+    "博物链",
+    "零波",
+    "壮化率",
+    "通知法",
+    "锤子类",
+    "饭粉类",
+    "短置屏",
+    "无货员",
+    "修理工序",
+    "长粉",
+    "粉饰量",
+    "自己跳动",
+    "AutoLook",
+    "Altalog",
+    "ForWordMail",
+    "1163",
+    "KCO",
+    "Insts",
+    "Ince",
+    "Inse",
+    "美群ID",
+    "摸击权",
+    "模机",
+    "重制",
+    "独项IP",
+    "专项IP",
+    "Honet",
+    "HomeNet",
+    "推跑老师",
+    "回报老师",
+    "配套老师",
+    "频道老师",
+    "陪伴老师",
+    "听解",
+    "卡通原理",
+    "AI卡通",
+    "抽真",
+    "抽分",
+    "抽针",
+    "卡中",
+    "驱虫",
+    "剧重",
+    "十套教学",
+    "十套流程",
+    "清晰呀",
+    "潘乙区",
+    "曲步阶段",
+    "饱和家内",
+    "海关TK圈",
+    "跨界链",
+    "合拍与滤目",
+    "略度合拍",
+    "预目特效",
+    "镜头开封",
+    "裁剑",
+    "踩分",
+    "跳一针",
+    "大肚碑",
+    "双层茶一杯",
+    "开效",
+    "大卡作业",
+    "做品",
+    "警号",
+    "干号运营",
+    "干号环境",
+    "脚踝",
+    "更容易活",
+    "翻一下机",
+    "运商数据",
+    "围空",
+    "甚至里面",
+    "用截程度",
+    "剪辑教训",
+    "通电的镜头",
+    "IR的压缩包",
+    "灯搞完",
+    "溢假",
+    "珍藏上",
+    "增长到你的增长里面",
+    "签字展示",
+    "白面单系统",
+    "白面单",
+    "暴光次数",
+    "暴光",
+    "投赔费用",
+    "投赔",
+    "走放",
+    "受重",
+    "积费",
+    "时几投放",
+    "时几",
+    "Tito",
+    "TITO",
+    "夸数文章",
+    "题字版",
+    "话速",
+    "Shopping fight",
+    "ShoppingFi",
+    "花经电商",
+    "Shopper payments",
+    "Strip",
+    "居付率",
+    "列丝",
+    "T字",
+    "EOS的公司",
+    "金选联盟",
+    "低获值",
+    "测速",
+    "早货",
+    "上转",
+    "运美",
+    "归关",
+    "基础片",
+    "简展",
+    "卖丑",
+    "没解",
+    "天套口",
+    "踢桃",
+    "JKtalk",
+    "Jtalk",
+    "西手区",
+    "起亮",
+    "报款模式",
+    "报款产品",
+    "失措成本",
+    "攻预算歧视",
+    "必先立机器",
+    "限留",
+    "教育老师",
+    "跟丁辅导",
+    "拿方式",
+    "拿正常"
+  ]
+}

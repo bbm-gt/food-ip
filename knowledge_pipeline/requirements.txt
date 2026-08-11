@@ -1,0 +1,10 @@
+# Runtime dependencies verified against the migration baseline.
+pydantic==2.12.5
+requests==2.34.2
+faster-whisper==1.2.1
+
+# Test dependency.
+pytest==9.1.1
+
+# Optional keyframe support (install only when --extract-keyframes is needed):
+# opencv-python

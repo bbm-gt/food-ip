@@ -1,0 +1,67 @@
+{
+  "_meta": {
+    "version": "1.1",
+    "created": "2026-08-07",
+    "updated": "2026-08-07",
+    "description": "Food-IP 问题树 — 餐饮老板短视频创作中的核心决策问题。由人工维护。P0-1: 修复引号编码，添加 version 标记。",
+    "principle": "每个问题必须是餐饮老板/创作者在实际工作中会遇到的真实决策问题，而非课程章节标题。"
+  },
+  "questions": [
+    {"question_id": "Q001", "category": "IP定位", "question": "餐饮老板为什么要做个人IP而不是只做门店号？"},
+    {"question_id": "Q002", "category": "IP定位", "question": "什么样的餐饮老板适合出镜？"},
+    {"question_id": "Q003", "category": "IP定位", "question": "老板IP的人设应该怎么确定？"},
+    {"question_id": "Q004", "category": "IP定位", "question": "黄金定位铁三角是什么？怎么用？"},
+
+    {"question_id": "Q010", "category": "今天拍什么", "question": "餐饮老板每天都应该拍什么内容？"},
+    {"question_id": "Q011", "category": "今天拍什么", "question": "什么事情值得拍成视频？"},
+    {"question_id": "Q012", "category": "今天拍什么", "question": "今天没有任何特殊事件，能拍什么？"},
+    {"question_id": "Q013", "category": "今天拍什么", "question": "如何从日常经营中持续找到选题？"},
+
+    {"question_id": "Q020", "category": "用户为什么看", "question": "用户为什么会看一个餐饮老板的视频？"},
+    {"question_id": "Q021", "category": "用户为什么看", "question": "什么是「到店理由」？如何在视频里建立到店理由？"},
+    {"question_id": "Q022", "category": "用户为什么看", "question": "破认知型内容和营销门店型内容有什么区别？各适合什么情况？"},
+    {"question_id": "Q023", "category": "用户为什么看", "question": "用户停留的核心因素是什么？"},
+
+    {"question_id": "Q030", "category": "选题判断", "question": "一个选题适合做成什么内容类型？"},
+    {"question_id": "Q031", "category": "选题判断", "question": "选题的时候应该优先考虑「我想说什么」还是「用户想看什么」？"},
+    {"question_id": "Q032", "category": "选题判断", "question": "哪些选题方向容易爆？哪些适合长期做？"},
+
+    {"question_id": "Q040", "category": "内容形式", "question": "口播、旁白、实拍记录、摆拍还原各自适合什么场景？"},
+    {"question_id": "Q041", "category": "内容形式", "question": "一个选题适合讲故事还是讲观点？"},
+    {"question_id": "Q042", "category": "内容形式", "question": "什么情况下应该用短平快而不是深度内容？"},
+    {"question_id": "Q043", "category": "内容形式", "question": "实拍记录怎么做才不会变成流水账？"},
+
+    {"question_id": "Q050", "category": "开头与停留", "question": "什么是有效开头？"},
+    {"question_id": "Q051", "category": "开头与停留", "question": "画面钩子、情绪钩子、文案钩子、聊天钩子分别怎么用？"},
+    {"question_id": "Q052", "category": "开头与停留", "question": "怎么从真实事件自然产生开头？"},
+    {"question_id": "Q053", "category": "开头与停留", "question": "开头需要多长？前3秒应该放什么？"},
+
+    {"question_id": "Q060", "category": "内容稿", "question": "怎么写一条像老板自己说的话的视频稿？"},
+    {"question_id": "Q061", "category": "内容稿", "question": "什么叫AI腔？怎么避免？"},
+    {"question_id": "Q062", "category": "内容稿", "question": "怎么讲自己的优势而不是自夸？"},
+    {"question_id": "Q063", "category": "内容稿", "question": "信息密度怎么控制？一条视频讲几个点合适？"},
+    {"question_id": "Q064", "category": "内容稿", "question": "哪些长期资料一定要用？哪些资料完全不要用？"},
+
+    {"question_id": "Q070", "category": "信任与营销", "question": "怎么让视频建立信任而不是像广告？"},
+    {"question_id": "Q071", "category": "信任与营销", "question": "什么情况下可以自然地提到门店/菜品/优惠？"},
+    {"question_id": "Q072", "category": "信任与营销", "question": "为什么有的视频看起来像广告？怎么改？"},
+
+    {"question_id": "Q080", "category": "互动与CTA", "question": "什么情况下需要CTA？什么情况下完全不要CTA？"},
+    {"question_id": "Q081", "category": "互动与CTA", "question": "怎么设计让用户愿意评论的「聊天点」？"},
+    {"question_id": "Q082", "category": "互动与CTA", "question": "团购链接应该怎么挂才不破坏内容？"},
+
+    {"question_id": "Q090", "category": "拍摄", "question": "餐饮老板没有拍摄基础，怎么用手机拍出能用的视频？"},
+    {"question_id": "Q091", "category": "拍摄", "question": "口播视频怎么拍最自然？"},
+    {"question_id": "Q092", "category": "拍摄", "question": "实拍记录需要拍哪些画面？"},
+    {"question_id": "Q093", "category": "拍摄", "question": "摆拍还原怎么做才不会假？"},
+
+    {"question_id": "Q100", "category": "审稿", "question": "写完稿子怎么判断好不好？"},
+    {"question_id": "Q101", "category": "审稿", "question": "为什么这个稿子像AI写的？应该局部改哪里？"},
+    {"question_id": "Q102", "category": "审稿", "question": "为什么这个稿子像广告？应该怎么调整？"},
+
+    {"question_id": "Q110", "category": "长期运营", "question": "餐饮老板做短视频的长期节奏应该怎么安排？"},
+    {"question_id": "Q111", "category": "长期运营", "question": "发了几个月没效果怎么办？"},
+    {"question_id": "Q112", "category": "长期运营", "question": "什么时候应该开矩阵号？"},
+    {"question_id": "Q113", "category": "长期运营", "question": "怎么建立自己的素材库？"}
+  ]
+}

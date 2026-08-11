@@ -21,7 +21,7 @@ Owner Input
 ```
 
 - 前台必须简单；**DO NOT build Multi-Agent**，优先 Workflow + structured modules。
-- 两个仓库关系：`food-ip-knowledge-pipeline` = 专业 Creative Knowledge 系统；`food-ip` = 老板最终使用的产品。Knowledge 最终服务于本仓库的 Creative Decision。
+- 单仓库逻辑边界：`knowledge_pipeline/` 是专业 Creative Knowledge 生产子系统；`backend/` 消费稳定 Knowledge 合约；`frontend/` 面向老板。Knowledge 最终服务于本仓库的 Creative Decision，生产实现不直接耦合进 backend。
 - 知识系统状态：Phase 0.5 Creative Value Gate = PARTIAL / STRONG POSITIVE（非 PASS），blocker = **Fact Boundary**；下一阶段方向 = Minimal Creative Decision / Fact Boundary + Minimal Retrieval Validation。
 
 ### 事实边界（Fact Boundary）— 最重要原则

@@ -1,0 +1,154 @@
+{
+  "$defs": {
+    "Conflict": {
+      "additionalProperties": false,
+      "description": "Conflict or exception between knowledge items. Never silently merged.",
+      "properties": {
+        "knowledge_a": {
+          "title": "Knowledge A",
+          "type": "string"
+        },
+        "knowledge_b": {
+          "title": "Knowledge B",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "note": {
+          "default": "",
+          "title": "Note",
+          "type": "string"
+        },
+        "resolution": {
+          "$ref": "#/$defs/ConflictResolution",
+          "default": "unresolved"
+        }
+      },
+      "required": [
+        "knowledge_a",
+        "knowledge_b",
+        "type"
+      ],
+      "title": "Conflict",
+      "type": "object"
+    },
+    "ConflictResolution": {
+      "enum": [
+        "agreement",
+        "conditional_difference",
+        "exception",
+        "unresolved"
+      ],
+      "title": "ConflictResolution",
+      "type": "string"
+    },
+    "Origin": {
+      "enum": [
+        "explicit",
+        "inferred",
+        "synthesized"
+      ],
+      "title": "Origin",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Synthesized answer from multiple knowledge sources.",
+  "properties": {
+    "question_id": {
+      "pattern": "^Q\\d{3}$",
+      "title": "Question Id",
+      "type": "string"
+    },
+    "question": {
+      "default": "",
+      "title": "Question",
+      "type": "string"
+    },
+    "summary": {
+      "default": "",
+      "minLength": 10,
+      "title": "Summary",
+      "type": "string"
+    },
+    "decision_logic": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Decision Logic",
+      "type": "array"
+    },
+    "conditions": {
+      "items": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "type": "object"
+      },
+      "title": "Conditions",
+      "type": "array"
+    },
+    "common_mistakes": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Common Mistakes",
+      "type": "array"
+    },
+    "related_cases": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Related Cases",
+      "type": "array"
+    },
+    "evidence_sources": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Sources",
+      "type": "array"
+    },
+    "conflicts": {
+      "items": {
+        "$ref": "#/$defs/Conflict"
+      },
+      "title": "Conflicts",
+      "type": "array"
+    },
+    "conflict_resolution": {
+      "$ref": "#/$defs/ConflictResolution",
+      "default": "unresolved"
+    },
+    "confidence": {
+      "default": 0.5,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "origin": {
+      "$ref": "#/$defs/Origin",
+      "default": "synthesized"
+    },
+    "source_knowledge_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Source Knowledge Ids",
+      "type": "array"
+    },
+    "created_by_run_id": {
+      "default": "",
+      "title": "Created By Run Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "question_id"
+  ],
+  "title": "QuestionSynthesis",
+  "type": "object"
+}

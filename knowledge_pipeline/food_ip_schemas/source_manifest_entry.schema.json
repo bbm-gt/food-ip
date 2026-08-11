@@ -1,0 +1,123 @@
+{
+  "$defs": {
+    "QualityStatus": {
+      "enum": [
+        "good",
+        "poor",
+        "very_poor",
+        "unknown"
+      ],
+      "title": "QualityStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Per-source transcription manifest entry.\n\nThis model is the runtime contract for manifests/by_source/SRCxxxx.json.\nASR segments are the authoritative downstream segment source.",
+  "properties": {
+    "source_id": {
+      "pattern": "^SRC\\d{4}$",
+      "title": "Source Id",
+      "type": "string"
+    },
+    "content_hash": {
+      "description": "sha256 of video file",
+      "minLength": 8,
+      "title": "Content Hash",
+      "type": "string"
+    },
+    "source_file": {
+      "default": "",
+      "title": "Source File",
+      "type": "string"
+    },
+    "file_size": {
+      "default": 0,
+      "title": "File Size",
+      "type": "integer"
+    },
+    "duration_sec": {
+      "default": 0.0,
+      "title": "Duration Sec",
+      "type": "number"
+    },
+    "duration_str": {
+      "default": "",
+      "title": "Duration Str",
+      "type": "string"
+    },
+    "title": {
+      "default": "",
+      "title": "Title",
+      "type": "string"
+    },
+    "pipeline_version": {
+      "default": "",
+      "title": "Pipeline Version",
+      "type": "string"
+    },
+    "quality_status": {
+      "$ref": "#/$defs/QualityStatus",
+      "default": "unknown"
+    },
+    "transcript": {
+      "default": "",
+      "title": "Transcript",
+      "type": "string"
+    },
+    "raw_transcript": {
+      "default": "",
+      "title": "Raw Transcript",
+      "type": "string"
+    },
+    "keyframes_dir": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Keyframes Dir"
+    },
+    "keyframe_count": {
+      "default": 0,
+      "title": "Keyframe Count",
+      "type": "integer"
+    },
+    "whisper_segments_path": {
+      "default": "",
+      "title": "Whisper Segments Path",
+      "type": "string"
+    },
+    "asr_segments_path": {
+      "default": "",
+      "title": "Asr Segments Path",
+      "type": "string"
+    },
+    "segment_count": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Segment Count",
+      "type": "integer"
+    },
+    "transcribed_at": {
+      "default": "",
+      "title": "Transcribed At",
+      "type": "string"
+    },
+    "processing_time_sec": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Processing Time Sec",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "source_id",
+    "content_hash"
+  ],
+  "title": "SourceManifestEntry",
+  "type": "object"
+}

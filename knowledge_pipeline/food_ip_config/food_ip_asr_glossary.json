@@ -1,0 +1,359 @@
+{
+  "_meta": {
+    "version": "5.0",
+    "created": "2026-08-07",
+    "updated": "2026-08-07",
+    "description": "餐饮IP短视频创作领域 ASR 错误对照表（whisper-large-v3 常见误识别）P0-12: 增加 risk_level + match_mode",
+    "usage": "food_ip_preprocess.py 仅自动应用 risk_level=low + match_mode=exact_phrase/regex 的条目",
+    "principle": "低风险+精确匹配可自动应用；context_required 交给 LLM 推理；高风险仅标记",
+    "sort_rule": "按 wrong 字段长度倒序应用，避免子串误替换"
+  },
+  "replacements": [
+    {
+      "wrong": "破人群认识",
+      "right": "破人群认知",
+      "category": "内容创作",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": "高频 ASR 错误，可安全自动替换"
+    },
+    {
+      "wrong": "黄金融位铁三角",
+      "right": "黄金定位铁三角",
+      "category": "IP定位与人设",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": "长短语，极低误杀风险"
+    },
+    {
+      "wrong": "到店旅游",
+      "right": "到店理由",
+      "category": "内容创作",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "到店里游",
+      "right": "到店理由",
+      "category": "内容创作",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "摆拍黄原",
+      "right": "摆拍还原",
+      "category": "内容形式",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "摆拍还源",
+      "right": "摆拍还原",
+      "category": "内容形式",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "实拍纪录",
+      "right": "实拍记录",
+      "category": "内容形式",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "实拍计录",
+      "right": "实拍记录",
+      "category": "内容形式",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "信息蜜度",
+      "right": "信息密度",
+      "category": "内容创作",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "同城留量",
+      "right": "同城流量",
+      "category": "平台运营",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "同城刘量",
+      "right": "同城流量",
+      "category": "平台运营",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "聊天勾子",
+      "right": "聊天钩子",
+      "category": "钩子技巧",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": "勾子→钩子是确定性ASR错误"
+    },
+    {
+      "wrong": "文案勾子",
+      "right": "文案钩子",
+      "category": "钩子技巧",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "情绪勾子",
+      "right": "情绪钩子",
+      "category": "钩子技巧",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "画面勾子",
+      "right": "画面钩子",
+      "category": "钩子技巧",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "人物设",
+      "right": "人物设定",
+      "category": "IP定位与人设",
+      "risk_level": "medium",
+      "match_mode": "context_required",
+      "notes": "可能是 人物设定 的ASR错误，但 人物设 在某些语境中合法，需上下文判断"
+    },
+    {
+      "wrong": "互动力",
+      "right": "互动率",
+      "category": "用户行为",
+      "risk_level": "medium",
+      "match_mode": "context_required",
+      "notes": "互动力 在非数据场景可能是合法表达"
+    },
+    {
+      "wrong": "破认知性",
+      "right": "破认知型",
+      "category": "内容创作",
+      "risk_level": "medium",
+      "match_mode": "context_required",
+      "notes": "破认知性在心理学语境中可能是合法词，需上下文判断"
+    },
+    {
+      "wrong": "短平块",
+      "right": "短平快",
+      "category": "内容形式",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "完播绿",
+      "right": "完播率",
+      "category": "用户行为",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "完波率",
+      "right": "完播率",
+      "category": "用户行为",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "互动绿",
+      "right": "互动率",
+      "category": "用户行为",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "团勾",
+      "right": "团购",
+      "category": "平台运营",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "探点",
+      "right": "探店",
+      "category": "内容形式",
+      "risk_level": "medium",
+      "match_mode": "context_required",
+      "notes": "探点可能是探店ASR错误，但探点在餐饮语境中也可能合法使用"
+    },
+    {
+      "wrong": "矩阵浩",
+      "right": "矩阵号",
+      "category": "平台运营",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "素材酷",
+      "right": "素材库",
+      "category": "拍摄制作",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "素材哭",
+      "right": "素材库",
+      "category": "拍摄制作",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "聊天店",
+      "right": "聊天点",
+      "category": "钩子技巧",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "IP定卫",
+      "right": "IP定位",
+      "category": "IP定位与人设",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "人射",
+      "right": "人设",
+      "category": "IP定位与人设",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "暴款",
+      "right": "爆款",
+      "category": "内容创作",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "豹款",
+      "right": "爆款",
+      "category": "内容创作",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "短视屏",
+      "right": "短视频",
+      "category": "内容创作",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "刘量",
+      "right": "流量",
+      "category": "平台运营",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "流亮",
+      "right": "流量",
+      "category": "平台运营",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "抖加",
+      "right": "DOU+",
+      "category": "平台运营",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "抖＋",
+      "right": "DOU+",
+      "category": "平台运营",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "前串",
+      "right": "千川",
+      "category": "平台运营",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "签川",
+      "right": "千川",
+      "category": "平台运营",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    },
+    {
+      "wrong": "破认知行",
+      "right": "破认知型",
+      "category": "内容创作",
+      "risk_level": "low",
+      "match_mode": "exact_phrase",
+      "notes": ""
+    }
+  ],
+  "blacklist": [
+    "到店里游",
+    "到店旅游",
+    "破人群认识",
+    "短平块",
+    "完播绿",
+    "完波率",
+    "互动绿",
+    "信息蜜度",
+    "同城留量",
+    "团勾",
+    "矩阵浩",
+    "素材哭",
+    "聊天店",
+    "人射",
+    "黄金融位铁三角",
+    "画面勾子",
+    "情绪勾子",
+    "文案勾子",
+    "聊天勾子",
+    "暴款",
+    "豹款",
+    "短视屏",
+    "刘量",
+    "流亮"
+  ]
+}

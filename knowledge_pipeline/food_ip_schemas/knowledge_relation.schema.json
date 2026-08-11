@@ -1,0 +1,47 @@
+{
+  "$defs": {
+    "RelationType": {
+      "enum": [
+        "same",
+        "similar",
+        "complementary",
+        "conflicting",
+        "exception"
+      ],
+      "title": "RelationType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Relation between two knowledge items.",
+  "properties": {
+    "from_id": {
+      "title": "From Id",
+      "type": "string"
+    },
+    "to_id": {
+      "title": "To Id",
+      "type": "string"
+    },
+    "relation": {
+      "$ref": "#/$defs/RelationType"
+    },
+    "note": {
+      "default": "",
+      "title": "Note",
+      "type": "string"
+    },
+    "can_merge": {
+      "default": false,
+      "title": "Can Merge",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "from_id",
+    "to_id",
+    "relation"
+  ],
+  "title": "KnowledgeRelation",
+  "type": "object"
+}

@@ -1,0 +1,56 @@
+{
+  "additionalProperties": false,
+  "description": "A new question discovered that doesn't exist in question_tree.json.",
+  "properties": {
+    "candidate_id": {
+      "default": "",
+      "title": "Candidate Id",
+      "type": "string"
+    },
+    "question": {
+      "minLength": 5,
+      "title": "Question",
+      "type": "string"
+    },
+    "category": {
+      "default": "",
+      "title": "Category",
+      "type": "string"
+    },
+    "trigger_knowledge_id": {
+      "default": "",
+      "title": "Trigger Knowledge Id",
+      "type": "string"
+    },
+    "trigger_chunk_id": {
+      "default": "",
+      "title": "Trigger Chunk Id",
+      "type": "string"
+    },
+    "reason": {
+      "default": "",
+      "description": "Why existing QIDs didn't match",
+      "title": "Reason",
+      "type": "string"
+    },
+    "suggested_category": {
+      "default": "",
+      "title": "Suggested Category",
+      "type": "string"
+    },
+    "created_by_run_id": {
+      "default": "",
+      "title": "Created By Run Id",
+      "type": "string"
+    },
+    "created_at": {
+      "title": "Created At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "question"
+  ],
+  "title": "NewQuestionCandidate",
+  "type": "object"
+}
