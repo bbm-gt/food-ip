@@ -33,12 +33,20 @@ DOMAIN = "food-ip"
 # 路径配置
 # ============================================================================
 
-# 视频源目录
-DEFAULT_INPUT_DIR = Path(r"E:\BaiduNetdiskDownload\餐饮短视频ip打造")
+def _env_path(name: str, default: str) -> Path:
+    """Resolve an external path from the environment, keeping legacy defaults."""
+    return Path(os.environ.get(name, default))
 
-# 输出根目录
-FOOD_IP_SOURCES_DIR = Path(r"E:\food_ip_sources")
-FOOD_IP_KNOWLEDGE_DIR = Path(r"E:\food_ip_knowledge")
+
+# External data/tool paths are intentionally independent of this repository.
+# Environment variables provide relocation without changing the existing E:\ defaults.
+DEFAULT_INPUT_DIR = _env_path(
+    "FOOD_IP_INPUT_DIR", r"E:\BaiduNetdiskDownload\餐饮短视频ip打造"
+)
+FOOD_IP_SOURCES_DIR = _env_path("FOOD_IP_SOURCES_DIR", r"E:\food_ip_sources")
+FOOD_IP_KNOWLEDGE_DIR = _env_path(
+    "FOOD_IP_KNOWLEDGE_DIR", r"E:\food_ip_knowledge"
+)
 
 # 子目录
 TRANSCRIPTS_DIR = FOOD_IP_SOURCES_DIR / "transcripts"
@@ -65,17 +73,21 @@ QUESTION_TREE_PATH = Path(__file__).parent / "food_ip_config" / "question_tree.j
 SCHEMAS_DIR = Path(__file__).parent / "food_ip_schemas"
 
 # 现有脚本路径（复用）
-TRANSCRIBE_BATCH_PATH = Path(r"E:\transcribe_batch.py")
-AUDIO_PREPROCESSOR_PATH = Path(r"E:\audio_preprocessor.py")
-WHISPER_VENV = Path(r"E:\whisper_venv")
-FFMPEG_BIN = Path(r"E:\ffmpeg\bin")
+TRANSCRIBE_BATCH_PATH = _env_path(
+    "FOOD_IP_TRANSCRIBE_BATCH_PATH", r"E:\transcribe_batch.py"
+)
+AUDIO_PREPROCESSOR_PATH = _env_path(
+    "FOOD_IP_AUDIO_PREPROCESSOR_PATH", r"E:\audio_preprocessor.py"
+)
+WHISPER_VENV = _env_path("FOOD_IP_WHISPER_VENV", r"E:\whisper_venv")
+FFMPEG_BIN = _env_path("FOOD_IP_FFMPEG_BIN", r"E:\ffmpeg\bin")
 
 # ============================================================================
 # 模型配置
 # ============================================================================
 
 WHISPER_MODEL = "large-v3"
-MODEL_DOWNLOAD_ROOT = "E:/WhisperModels"
+MODEL_DOWNLOAD_ROOT = os.environ.get("FOOD_IP_MODEL_DOWNLOAD_ROOT", "E:/WhisperModels")
 
 # LLM 配置
 LLM_MODEL = "deepseek-v4-flash"

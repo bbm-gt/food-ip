@@ -42,8 +42,6 @@ from food_ip_persistence import rebuild_sources_index
 # Config
 # ============================================================================
 
-TRANSCRIBE_SCRIPT = Path(r"E:\transcribe_batch.py")
-
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".flv", ".wmv", ".webm",
                     ".m4v", ".mpg", ".mpeg", ".ts", ".m3u8",
                     ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".wma"}
@@ -154,7 +152,7 @@ def run_transcription(video_path, output_dir, source_id=None, relaxed=False,
     # Task 2 fix: Pass the SPECIFIC video file, NOT video_path.parent
     cmd_parts = [
         str(Path(sys.executable).parent / "python.exe"),
-        str(TRANSCRIBE_SCRIPT),
+        str(TRANSCRIBE_BATCH_PATH),
         "--input", str(video_path),     # ← Task 2: SPECIFIC file, not parent dir
         "--output", str(output_dir),
         "--no-interactive",
@@ -166,8 +164,9 @@ def run_transcription(video_path, output_dir, source_id=None, relaxed=False,
 
     cmd_str = " ".join(f'"{p}"' if " " in str(p) else str(p) for p in cmd_parts)
     print(f"  [cmd] {cmd_str[:120]}...")
-    result = subprocess.run(cmd_str, shell=True, cwd="E:/",
-                           capture_output=True, text=True, timeout=7200)
+    result = subprocess.run(cmd_str, shell=True,
+                            cwd=str(TRANSCRIBE_BATCH_PATH.parent),
+                            capture_output=True, text=True, timeout=7200)
 
     if result.returncode != 0:
         print(f"  [error] exit {result.returncode}")

@@ -11,6 +11,7 @@ food_ip_transcribe.main() 不再调用本模块的 run_transcribe_with_food_ip()
 
 import sys
 from pathlib import Path
+from food_ip_config import TRANSCRIBE_BATCH_PATH
 
 # Food-IP domain prompt for faster-whisper decoder (≤100 chars for Whisper's 224-token limit)
 FOOD_IP_PROMPT = (
@@ -44,10 +45,11 @@ def inject_food_ip_prompt() -> bool:
     """
     global _prompt_injected, _effective_prompt
 
-    # Ensure E:\ is in sys.path so we can import transcribe_batch
-    e_root = str(Path("E:/"))
-    if e_root not in sys.path:
-        sys.path.insert(0, e_root)
+    # Legacy-only compatibility: transcribe_batch.py remains an external tool.
+    # Its parent is configurable; the production direct path does not use this.
+    legacy_root = str(TRANSCRIBE_BATCH_PATH.parent)
+    if legacy_root not in sys.path:
+        sys.path.insert(0, legacy_root)
 
     try:
         import transcribe_batch

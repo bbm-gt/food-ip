@@ -11,7 +11,7 @@ Tasks 1-4 verification tests included:
   - Task 4: Fail-fast on Pydantic model import failure
 
 Usage:
-  cd E:\video_toolkit
+  cd knowledge_pipeline
   python test_food_ip_p0.py          # Run all tests
   python -m pytest test_food_ip_p0.py -v  # Verbose mode with pytest
 """
@@ -28,7 +28,6 @@ from unittest.mock import patch, MagicMock, PropertyMock
 
 # Setup path
 sys.path.insert(0, str(Path(__file__).parent))
-sys.path.insert(0, "E:/")
 
 from food_ip_config import (
     compute_content_hash, validate_question_tree, validate_glossary,
@@ -278,13 +277,21 @@ class TestResumeCrash(unittest.TestCase):
 
     def setUp(self):
         self.source_id = "SRC0999"
+        self._temp_dir = tempfile.TemporaryDirectory()
+        self._atomic_by_source = Path(self._temp_dir.name) / "atomic" / "by_source"
+        self._patcher = patch(
+            "food_ip_persistence.ATOMIC_BY_SOURCE_DIR", self._atomic_by_source
+        )
+        self._patcher.start()
         self.sp = SourcePersistence(self.source_id)
 
     def tearDown(self):
         # Cleanup test data
         import shutil
+        self._patcher.stop()
         if self.sp.source_dir.exists():
             shutil.rmtree(self.sp.source_dir, ignore_errors=True)
+        self._temp_dir.cleanup()
 
     def test_11_start_processing_transitions_state(self):
         """start_processing transitions pending→processing."""
@@ -616,12 +623,20 @@ class TestCrashAtomicity(unittest.TestCase):
 
     def setUp(self):
         self.source_id = "SRC0998"
+        self._temp_dir = tempfile.TemporaryDirectory()
+        self._atomic_by_source = Path(self._temp_dir.name) / "atomic" / "by_source"
+        self._patcher = patch(
+            "food_ip_persistence.ATOMIC_BY_SOURCE_DIR", self._atomic_by_source
+        )
+        self._patcher.start()
         self.sp = SourcePersistence(self.source_id)
 
     def tearDown(self):
         import shutil
+        self._patcher.stop()
         if self.sp.source_dir.exists():
             shutil.rmtree(self.sp.source_dir, ignore_errors=True)
+        self._temp_dir.cleanup()
 
     def test_36_atomic_write_produces_valid_json(self):
         """Atomic write produces valid JSON."""

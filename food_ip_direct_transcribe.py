@@ -20,17 +20,11 @@ Usage:
   # → result["markdown_path"] = Path to output .md
 """
 
-import sys
 import json
 import time
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
-
-# Ensure E:\ is importable for transcribe_batch modules
-E_ROOT = Path("E:/")
-if str(E_ROOT) not in sys.path:
-    sys.path.insert(0, str(E_ROOT))
 
 from food_ip_segments import extract_segments, save_segments, apply_glossary_to_segments
 from food_ip_whisper_adapter import FOOD_IP_PROMPT, _DOMAIN_LABEL
