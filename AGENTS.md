@@ -62,7 +62,7 @@ food_ip_whisper_adapter                           faster-whisper 适配
 knowledge_graph                                  知识图（基础层）
 food_ip_config / food_ip_schemas / export_schemas  配置 / schema 导出
 robust_json_parser                                LLM 输出健壮解析
-test_food_ip_p0.py                               P0 可靠性测试基线（77 项）
+test_food_ip_p0.py                               P0 / Phase 0.5 可靠性测试；具体测试数量以当前实际 pytest 结果为准
 docs/PHASE_0_5_5_VIDEO_PILOT.md                  5-video pilot 验收契约
 docs/creative_value_gate/                        4 场景 A/B 评估档案（Gate = PARTIAL / STRONG POSITIVE）
 ```
