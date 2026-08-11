@@ -7,6 +7,7 @@
 | **日期** | 2026-08-09 |
 | **权威依据** | `CLAUDE.md` §16、§17、§19、§20、§11、§5、§6 |
 | **前置审计** | Readiness Audit（READY WITH SMALL FIXES；blocker B1/B2） |
+| **评审结果** | 已执行（2026-08-10/11）：Phase 0.5 Creative Value Gate = PARTIAL / STRONG POSITIVE（非 PASS），当前 blocker = Fact Boundary。详见 `docs/creative_value_gate/README.md` |
 
 本文件只定义 5 视频 Pilot 的验收规则。不包含任何代码 / Schema / 字段修改，不引入新基础设施。
 

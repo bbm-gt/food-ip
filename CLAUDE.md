@@ -35,7 +35,14 @@ Core product principle:
 
 > Build the product broadly; validate narrowly.
 
-Long-term knowledge-to-creative pipeline:
+Two repositories:
+
+```text
+food-ip-knowledge-pipeline  = professional Creative Knowledge system
+food-ip                     = the product the owner actually uses
+```
+
+Knowledge serves Food-IP's Creative Decision. Knowledge pipeline long-term chain:
 
 ```text
 Video
@@ -46,9 +53,52 @@ Video
 → Atomic Knowledge
 → KnowledgeCard / CaseCard / AntiCard / FormatCard
 → later retrieval / Question Graph as justified by evidence
-→ Director / Creative Decision
-→ Food-IP Content Engine V2
+→ small relevant Knowledge → Creative Decision
 ```
+
+Product (food-ip) future main chain:
+
+```text
+Owner Input
+→ Intent / Business Objective
+→ confirmed_facts
+→ missing_facts
+→ 少量相关 Memory
+→ 少量 relevant Knowledge
+→ Creative Decision
+→ Writer
+→ Critic
+→ Directed Rewrite
+→ Shoot-ready Script
+```
+
+The frontend must stay simple. Do not build a Multi-Agent stack internally:
+
+```text
+DO NOT build Multi-Agent
+prefer Workflow + structured modules
+```
+
+### Fact Boundary（事实边界）— 当前最重要原则
+
+Creative Decision 必须区分三类：
+
+```text
+confirmed_facts   = 老板明确提供，或可信 Memory 中已确认的事实
+creative_decision = AI 的创作判断与建议
+missing_facts     = 创作需要但尚未确认的信息
+```
+
+Knowledge 只能教 AI **怎么判断**，不能告诉 AI **当前老板实际上发生了什么**。
+
+例：老板只说"每天去市场挑海鲜"，AI 不得直接断言他会翻蟹脐、按虾、和摊主熟识等。这些必须标成：
+
+```text
+需确认
+或 "如果事实成立，可以这样拍"
+```
+
+事实边界必须在 system / validation 层强制，不能指望知识本身提供。这是当前主 blocker，先于一切扩量工作解决。
 
 The current priority is **NOT** Content Engine V2 implementation.
 
@@ -58,13 +108,17 @@ Current phase:
 P0 Reliability Hardening = FINAL: GO / CLOSED
 
 Phase 0.5 = 5-Video Knowledge Quality Pilot
+  Knowledge Fidelity       = 基本验证成功
+  Knowledge Creative Value = Strong Positive Signal
+  Creative Value Gate      = PARTIAL / STRONG POSITIVE（非 PASS）
+  current blocker          = Fact Boundary（事实边界）
 ```
 
 P0 must not be reopened or expanded without a concrete regression, failed invariant, or explicit task.
 
 Current principle:
 
-> Reliability has been established. Now prove knowledge quality and creative usefulness before scale.
+> Reliability has been established. Knowledge has proven it can improve Creative Decision, but Creative Decision still crosses the fact boundary. Next: Minimal Creative Decision / Fact Boundary + Minimal Retrieval Validation.
 
 ---
 
@@ -623,24 +677,22 @@ Completing five videos does **not** authorize the 77-video corpus automatically.
 
 After the five-video extraction and human review, run a deliberate creative-value gate.
 
-At minimum, simulate representative owner tasks through the intended future logic:
+At minimum, simulate representative owner tasks through the intended future logic (see §2 main chain):
 
 ```text
 real owner input
 ↓
-Intent
+Intent / Business Objective
 ↓
-Find Value
+confirmed_facts
 ↓
-Director reasoning
+missing_facts
 ↓
-identify missing facts
+small relevant Memory
 ↓
-use relevant 5-video Knowledge
+small relevant 5-video Knowledge
 ↓
 Creative Decision
-↓
-Information Flow
 ↓
 Writer
 ↓
@@ -648,7 +700,7 @@ Critic
 ↓
 Directed Rewrite
 ↓
-Shoot-ready Output
+Shoot-ready Script
 ```
 
 The critical comparison is:
@@ -671,13 +723,24 @@ DO NOT rush into Director engineering
 → first adjust extraction / Knowledge schema / Creative Craft representation
 ```
 
-If the answer is yes and Knowledge Fidelity is also acceptable:
+Actual result of the 4-scenario A/B（`docs/creative_value_gate/README.md`）:
 
 ```text
-Phase 0.5 Gate = PASS
-→ proceed to Creative Quality Benchmark V1
-→ then continue Content Engine V2 engineering in the approved order
+Phase 0.5 Creative Value Gate = PARTIAL / STRONG POSITIVE（非 PASS）
+  Knowledge 已证明能改善 Creative Decision
+  但 Scene 1–4 独立复核发现 Creative Decision 仍存在事实越界
+  → Creative Quality Benchmark V1 尚未授权
 ```
+
+Next stage direction:
+
+```text
+Minimal Creative Decision / Fact Boundary
++
+Minimal Retrieval Validation
+```
+
+先解决 Fact Boundary，再做完整的 WITH / WITHOUT-Knowledge 对照并确认不再越界，才允许进入 Creative Quality Benchmark V1 与 Content Engine V2 工程。
 
 The 5-video pilot is a learning gate, not a throughput milestone.
 
@@ -720,15 +783,19 @@ Do not interpret pilot authorization as permission for unrelated architecture ex
 
 ---
 
-## 21. Next Stage After a Passing Pilot
+## 21. Next Stage
 
-If and only if the 5-Video Gate passes, the next formal stage is:
+The 5-Video Gate did **not** fully pass（result = PARTIAL / STRONG POSITIVE；blocker = Fact Boundary）。Creative Quality Benchmark V1 尚未授权。
+
+Next stage direction:
 
 ```text
-Creative Quality Benchmark V1
+Minimal Creative Decision / Fact Boundary
++
+Minimal Retrieval Validation
 ```
 
-Initial benchmark scope:
+Creative Quality Benchmark V1 remains the goal once the fact boundary is controlled and a full WITH / WITHOUT-Knowledge gate passes. Its scope stays:
 
 ```text
 10–20 real barbecue creative tasks
@@ -740,7 +807,7 @@ Keep the old system output as a baseline where available.
 
 Future changes to Director / Writer / Critic should be judged against benchmark quality, not only by whether automated tests pass.
 
-Do not skip directly from five successful videos to large-scale knowledge ingestion without first proving creative value.
+Do not skip directly from five successful videos to large-scale knowledge ingestion without first proving creative value and controlling the fact boundary.
 
 ---
 

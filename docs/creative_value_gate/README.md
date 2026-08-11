@@ -75,10 +75,16 @@ owner task：老板每天早上亲自去市场挑海鲜，他想拍一条视频�
 | 增益来自决策质量而非回答长度 | 满足（SCENE 2 B 更短、SCENE 3 等长、SCENE 4 结构性更长） |
 | 增益可追溯到实际注入的 Knowledge | 满足（每处增益对应具体 QSID / knowledge_id） |
 
-**Phase 0.5 Creative Value Gate = PASS**（SCENE 1 PARTIAL + SCENE 2/3/4 PASS）
+**Phase 0.5 Creative Value Gate = PARTIAL / STRONG POSITIVE**（非 PASS；SCENE 1 PARTIAL + SCENE 2/3/4 PASS，但独立复核发现 Creative Decision 仍存在事实越界）
 
 ### 必须如实记录的三点
 
 1. **增益边际依场景差异大**：SCENE 1/2 为决策塑造型，SCENE 3/4 为精修型（A 已基本正确）。这反向印证 `CLAUDE.md` §18——只有高相关检索才值得注入，塞全部知识几乎必然稀释。
 2. **事实边界合规主要由统一 SYSTEM 规则保证，不是 Knowledge**：SCENE 1 两组都曾把"限量"写成事实；SCENE 2–4 加共享事实边界规则后 A/B 均干净。后续 Director 的事实边界必须在 system/validation 层强制，不能指望知识本身提供。
-3. **样本仍有限（4 个场景）**：PASS 授权进入 Creative Quality Benchmark V1 规划，**不授权** 77-video 全量摄入 / Content Engine V2 / Director / 多智能体工程。
+3. **样本仍有限（4 个场景）**：结果为 PARTIAL / STRONG POSITIVE，**不授权** Creative Quality Benchmark V1 / 77-video 全量摄入 / Content Engine V2 / Director / 多智能体工程。下一阶段方向为 **Minimal Creative Decision / Fact Boundary + Minimal Retrieval Validation**。
+
+### 复核修正（2026-08-11）
+
+- Scene 1–4 独立复核确认：Knowledge 已证明能改善 Creative Decision（Strong Positive Signal），**但 Creative Decision 仍存在事实越界**——AI 会把未确认的经营事实（如翻蟹脐、按虾、和摊主熟识等具体动作）直接写成创作事实。
+- 因此综合判定从 PASS 修正为 **PARTIAL / STRONG POSITIVE**。当前主 blocker = **Fact Boundary（事实边界）**。
+- 事实边界修正要点：严格区分 `confirmed_facts`（老板明确提供/可信 Memory 已确认）、`creative_decision`（AI 创作判断）、`missing_facts`（需确认或条件化建议）。Knowledge 只教"怎么判断"，不充当"老板实际发生了什么"。边界必须由 system / validation 层强制，不能指望知识本身提供。
