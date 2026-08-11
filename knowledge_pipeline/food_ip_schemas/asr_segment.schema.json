@@ -1,0 +1,59 @@
+{
+  "additionalProperties": false,
+  "description": "Segment with corrected text (glossary Layer 1 applied).\nraw_text is preserved from WhisperSegment. corrected_text is the fixed version.\nGlossary audit fields are part of the persisted runtime contract.",
+  "properties": {
+    "segment_id": {
+      "description": "e.g. SRC0001-SEG0012",
+      "title": "Segment Id",
+      "type": "string"
+    },
+    "source_id": {
+      "pattern": "^SRC\\d{4}$",
+      "title": "Source Id",
+      "type": "string"
+    },
+    "start_sec": {
+      "minimum": 0.0,
+      "title": "Start Sec",
+      "type": "number"
+    },
+    "end_sec": {
+      "minimum": 0.0,
+      "title": "End Sec",
+      "type": "number"
+    },
+    "raw_text": {
+      "description": "Whisper original text, never modified",
+      "title": "Raw Text",
+      "type": "string"
+    },
+    "corrected_text": {
+      "default": "",
+      "title": "Corrected Text",
+      "type": "string"
+    },
+    "asr_fix_count": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Asr Fix Count",
+      "type": "integer"
+    },
+    "asr_fixes_applied": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Asr Fixes Applied",
+      "type": "array"
+    }
+  },
+  "required": [
+    "segment_id",
+    "source_id",
+    "start_sec",
+    "end_sec",
+    "raw_text"
+  ],
+  "title": "ASRSegment",
+  "type": "object"
+}

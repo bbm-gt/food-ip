@@ -1,0 +1,254 @@
+{
+  "$defs": {
+    "CTAType": {
+      "enum": [
+        "none",
+        "comment",
+        "follow",
+        "visit",
+        "group_buy",
+        "other"
+      ],
+      "title": "CTAType",
+      "type": "string"
+    },
+    "KnowledgeScope": {
+      "enum": [
+        "methodology",
+        "source_case_fact"
+      ],
+      "title": "KnowledgeScope",
+      "type": "string"
+    },
+    "Origin": {
+      "enum": [
+        "explicit",
+        "inferred",
+        "synthesized"
+      ],
+      "title": "Origin",
+      "type": "string"
+    },
+    "SourceRef": {
+      "additionalProperties": false,
+      "description": "Traceable source reference.",
+      "properties": {
+        "source_id": {
+          "pattern": "^SRC\\d{4}$",
+          "title": "Source Id",
+          "type": "string"
+        },
+        "video_title": {
+          "default": "",
+          "title": "Video Title",
+          "type": "string"
+        },
+        "start_time": {
+          "default": "",
+          "title": "Start Time",
+          "type": "string"
+        },
+        "end_time": {
+          "default": "",
+          "title": "End Time",
+          "type": "string"
+        },
+        "start_sec": {
+          "default": 0.0,
+          "title": "Start Sec",
+          "type": "number"
+        },
+        "end_sec": {
+          "default": 0.0,
+          "title": "End Sec",
+          "type": "number"
+        }
+      },
+      "required": [
+        "source_id"
+      ],
+      "title": "SourceRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Real restaurant case study card — preserves full context, not compressed.",
+  "properties": {
+    "case_id": {
+      "description": "Deterministic hash ID (CID_...)",
+      "title": "Case Id",
+      "type": "string"
+    },
+    "display_id": {
+      "default": "",
+      "description": "Human-readable C000001",
+      "title": "Display Id",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 120,
+      "title": "Title",
+      "type": "string"
+    },
+    "restaurant_context": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Restaurant Context"
+    },
+    "owner_context": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Owner Context"
+    },
+    "original_problem": {
+      "default": "",
+      "title": "Original Problem",
+      "type": "string"
+    },
+    "raw_content_opportunity": {
+      "default": "",
+      "title": "Raw Content Opportunity",
+      "type": "string"
+    },
+    "planner_insight": {
+      "default": "",
+      "title": "Planner Insight",
+      "type": "string"
+    },
+    "why_worth_watching": {
+      "default": "",
+      "title": "Why Worth Watching",
+      "type": "string"
+    },
+    "content_format": {
+      "default": "",
+      "title": "Content Format",
+      "type": "string"
+    },
+    "opening_mechanism": {
+      "default": "",
+      "title": "Opening Mechanism",
+      "type": "string"
+    },
+    "progression": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Progression",
+      "type": "array"
+    },
+    "ip_expression": {
+      "default": "",
+      "title": "Ip Expression",
+      "type": "string"
+    },
+    "facts_used": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Facts Used",
+      "type": "array"
+    },
+    "facts_not_used": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Facts Not Used",
+      "type": "array"
+    },
+    "cta_type": {
+      "$ref": "#/$defs/CTAType",
+      "default": "none"
+    },
+    "why_effective": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Why Effective",
+      "type": "array"
+    },
+    "transferable_principles": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Transferable Principles",
+      "type": "array"
+    },
+    "non_transferable_details": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Non Transferable Details",
+      "type": "array"
+    },
+    "related_question_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Related Question Ids",
+      "type": "array"
+    },
+    "source": {
+      "$ref": "#/$defs/SourceRef"
+    },
+    "confidence": {
+      "default": 0.5,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "knowledge_scope": {
+      "$ref": "#/$defs/KnowledgeScope",
+      "default": "source_case_fact"
+    },
+    "transferable": {
+      "default": false,
+      "description": "Case facts are NOT transferable by default",
+      "title": "Transferable",
+      "type": "boolean"
+    },
+    "origin": {
+      "$ref": "#/$defs/Origin",
+      "default": "explicit"
+    },
+    "evidence_segment_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Segment Ids",
+      "type": "array"
+    },
+    "created_by_run_id": {
+      "default": "",
+      "title": "Created By Run Id",
+      "type": "string"
+    },
+    "chunk_id": {
+      "default": "",
+      "title": "Chunk Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "case_id",
+    "title",
+    "source"
+  ],
+  "title": "CaseCard",
+  "type": "object"
+}

@@ -1,0 +1,28 @@
+Food-IP P0 Round 1 Final Seal (verified + integration)
+Date: 2026-08-08
+
+Command:
+  python -m pytest -q
+
+Result:
+  77 passed in 0.30s
+
+Additional command:
+  python -m unittest test_food_ip_p0.py
+
+Result:
+  Ran 77 tests - OK
+
+Coverage added in this revision:
+  - P0-1 config fail-fast (invalid JSON / duplicate QID / missing required field)
+    — 3 new automated tests (previously only the valid-config path was tested)
+  - Zero-cost Transcribe→Refine integration test: fake video + mocked
+    faster-whisper → real food_ip_transcribe.main() (--limit 1) writes
+    authoritative ASRSegments + per-source manifest → real food_ip_refine.main()
+    (--source) consumes them (no *_corrected.txt dependency) with mocked LLM →
+    SemanticChunk-backed KnowledgeCard. Proves both CLI pipelines run
+    consecutively with real data handoff.
+  - refine no longer depends on *_corrected.txt; corrected text is derived from
+    whisper_segments/{sid}_asr_whisper_segments.json (title from per-source manifest).
+
+Important: This seals Round 1 only. It is not authorization to run the 5-video pilot.

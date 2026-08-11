@@ -1,0 +1,33 @@
+{
+  "additionalProperties": false,
+  "description": "Link between a knowledge item and a question.",
+  "properties": {
+    "question_id": {
+      "pattern": "^Q\\d{3}$",
+      "title": "Question Id",
+      "type": "string"
+    },
+    "knowledge_id": {
+      "title": "Knowledge Id",
+      "type": "string"
+    },
+    "relation": {
+      "default": "answers",
+      "title": "Relation",
+      "type": "string"
+    },
+    "strength": {
+      "default": 0.5,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Strength",
+      "type": "number"
+    }
+  },
+  "required": [
+    "question_id",
+    "knowledge_id"
+  ],
+  "title": "QuestionLink",
+  "type": "object"
+}

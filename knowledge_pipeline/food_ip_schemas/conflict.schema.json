@@ -1,0 +1,46 @@
+{
+  "$defs": {
+    "ConflictResolution": {
+      "enum": [
+        "agreement",
+        "conditional_difference",
+        "exception",
+        "unresolved"
+      ],
+      "title": "ConflictResolution",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Conflict or exception between knowledge items. Never silently merged.",
+  "properties": {
+    "knowledge_a": {
+      "title": "Knowledge A",
+      "type": "string"
+    },
+    "knowledge_b": {
+      "title": "Knowledge B",
+      "type": "string"
+    },
+    "type": {
+      "title": "Type",
+      "type": "string"
+    },
+    "note": {
+      "default": "",
+      "title": "Note",
+      "type": "string"
+    },
+    "resolution": {
+      "$ref": "#/$defs/ConflictResolution",
+      "default": "unresolved"
+    }
+  },
+  "required": [
+    "knowledge_a",
+    "knowledge_b",
+    "type"
+  ],
+  "title": "Conflict",
+  "type": "object"
+}

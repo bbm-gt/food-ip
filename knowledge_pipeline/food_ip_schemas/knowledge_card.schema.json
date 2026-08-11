@@ -1,0 +1,246 @@
+{
+  "$defs": {
+    "ContentStage": {
+      "enum": [
+        "planning",
+        "writing",
+        "shooting",
+        "review",
+        "operation"
+      ],
+      "title": "ContentStage",
+      "type": "string"
+    },
+    "KnowledgeScope": {
+      "enum": [
+        "methodology",
+        "source_case_fact"
+      ],
+      "title": "KnowledgeScope",
+      "type": "string"
+    },
+    "KnowledgeType": {
+      "enum": [
+        "principle",
+        "technique",
+        "case",
+        "anti_pattern",
+        "creative_format",
+        "operation"
+      ],
+      "title": "KnowledgeType",
+      "type": "string"
+    },
+    "Origin": {
+      "enum": [
+        "explicit",
+        "inferred",
+        "synthesized"
+      ],
+      "title": "Origin",
+      "type": "string"
+    },
+    "SourceRef": {
+      "additionalProperties": false,
+      "description": "Traceable source reference.",
+      "properties": {
+        "source_id": {
+          "pattern": "^SRC\\d{4}$",
+          "title": "Source Id",
+          "type": "string"
+        },
+        "video_title": {
+          "default": "",
+          "title": "Video Title",
+          "type": "string"
+        },
+        "start_time": {
+          "default": "",
+          "title": "Start Time",
+          "type": "string"
+        },
+        "end_time": {
+          "default": "",
+          "title": "End Time",
+          "type": "string"
+        },
+        "start_sec": {
+          "default": 0.0,
+          "title": "Start Sec",
+          "type": "number"
+        },
+        "end_sec": {
+          "default": 0.0,
+          "title": "End Sec",
+          "type": "number"
+        }
+      },
+      "required": [
+        "source_id"
+      ],
+      "title": "SourceRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Atomic expert knowledge card. extra=\"forbid\" to catch LLM hallucination.",
+  "properties": {
+    "knowledge_id": {
+      "description": "Deterministic hash ID (KID_...)",
+      "title": "Knowledge Id",
+      "type": "string"
+    },
+    "display_id": {
+      "default": "",
+      "description": "Human-readable K000001",
+      "title": "Display Id",
+      "type": "string"
+    },
+    "knowledge_type": {
+      "$ref": "#/$defs/KnowledgeType",
+      "default": "technique"
+    },
+    "title": {
+      "maxLength": 120,
+      "title": "Title",
+      "type": "string"
+    },
+    "question_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Question Ids",
+      "type": "array"
+    },
+    "core_idea": {
+      "minLength": 5,
+      "title": "Core Idea",
+      "type": "string"
+    },
+    "why_it_works": {
+      "default": "",
+      "title": "Why It Works",
+      "type": "string"
+    },
+    "applicable_when": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Applicable When",
+      "type": "array"
+    },
+    "not_applicable_when": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Not Applicable When",
+      "type": "array"
+    },
+    "method": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Method",
+      "type": "array"
+    },
+    "examples": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Examples",
+      "type": "array"
+    },
+    "anti_patterns": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Anti Patterns",
+      "type": "array"
+    },
+    "stages": {
+      "items": {
+        "$ref": "#/$defs/ContentStage"
+      },
+      "title": "Stages",
+      "type": "array"
+    },
+    "content_format": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Content Format",
+      "type": "array"
+    },
+    "source": {
+      "$ref": "#/$defs/SourceRef"
+    },
+    "confidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "visual_evidence": {
+      "items": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "type": "object"
+      },
+      "title": "Visual Evidence",
+      "type": "array"
+    },
+    "origin": {
+      "$ref": "#/$defs/Origin",
+      "default": "inferred"
+    },
+    "evidence_segment_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence Segment Ids",
+      "type": "array"
+    },
+    "inference_basis": {
+      "default": "",
+      "title": "Inference Basis",
+      "type": "string"
+    },
+    "source_knowledge_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Source Knowledge Ids",
+      "type": "array"
+    },
+    "knowledge_scope": {
+      "$ref": "#/$defs/KnowledgeScope",
+      "default": "methodology"
+    },
+    "created_by_run_id": {
+      "default": "",
+      "title": "Created By Run Id",
+      "type": "string"
+    },
+    "chunk_id": {
+      "default": "",
+      "title": "Chunk Id",
+      "type": "string"
+    },
+    "retrieval_context": {
+      "default": "",
+      "description": "Reserved, can be empty",
+      "title": "Retrieval Context",
+      "type": "string"
+    }
+  },
+  "required": [
+    "knowledge_id",
+    "title",
+    "core_idea",
+    "source",
+    "confidence"
+  ],
+  "title": "KnowledgeCard",
+  "type": "object"
+}
