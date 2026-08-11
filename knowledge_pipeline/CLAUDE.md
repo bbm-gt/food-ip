@@ -47,7 +47,14 @@ food-ip/backend/            = the product backend
 food-ip/frontend/           = the product frontend
 ```
 
-Knowledge serves Food-IP's Creative Decision. Knowledge pipeline long-term chain:
+The current mainline is continued development of the complete Food-IP
+Professional Creative Knowledge System. The existing course-video pipeline is
+one implemented and validated knowledge-ingestion path, not the complete set
+of future knowledge sources. Source stratification, admission, evidence
+quality, and freshness governance remain open decisions and must not be
+invented here.
+
+The currently validated Knowledge pipeline is:
 
 ```text
 Video
@@ -57,9 +64,13 @@ Video
 → SemanticChunk
 → Atomic Knowledge
 → KnowledgeCard / CaseCard / AntiCard / FormatCard
-→ later retrieval / Question Graph as justified by evidence
-→ small relevant Knowledge → Creative Decision
+→ per-source persistence
+→ global snapshot
 ```
+
+Knowledge teaches AI how to judge; it does not establish what happened at the
+current restaurant. Future product consumption through Creative Decision,
+Memory, or Retrieval is deferred.
 
 Product (food-ip) future main chain:
 
@@ -84,7 +95,7 @@ DO NOT build Multi-Agent
 prefer Workflow + structured modules
 ```
 
-### Fact Boundary（事实边界）— 当前最重要原则
+### Fact Boundary（事实边界）— 未来产品长期原则（当前 Deferred）
 
 Creative Decision 必须区分三类：
 
@@ -103,27 +114,35 @@ Knowledge 只能教 AI **怎么判断**，不能告诉 AI **当前老板实际�
 或 "如果事实成立，可以这样拍"
 ```
 
-事实边界必须在 system / validation 层强制，不能指望知识本身提供。这是当前主 blocker，先于一切扩量工作解决。
+事实边界必须在 system / validation 层强制，不能指望知识本身提供。长期原则
+仍然有效：AI 不得脑补老板真实经历；老板信息不足且某个事实确实是当前创作
+判断所必需时，只向老板做最少量关键追问；不重要的信息不追问，也不能编造。
+Fact Contract / Fact Boundary implementation and compatibility changes are
+currently Deferred until the Knowledge System is sufficiently mature and the
+user confirms the work.
 
 The current priority is **NOT** Content Engine V2 implementation.
 
-Current phase:
+Historical validation status:
 
 ```text
 P0 Reliability Hardening = FINAL: GO / CLOSED
 
-Phase 0.5 = 5-Video Knowledge Quality Pilot
+5-video pilot / Phase 0.5 = historical acceptance work
   Knowledge Fidelity       = 基本验证成功
   Knowledge Creative Value = Strong Positive Signal
   Creative Value Gate      = PARTIAL / STRONG POSITIVE（非 PASS）
-  current blocker          = Fact Boundary（事实边界）
+  These results are not an active stage or current blocker.
 ```
 
 P0 must not be reopened or expanded without a concrete regression, failed invariant, or explicit task.
 
-Current principle:
+Current direction:
 
-> Reliability has been established. Knowledge has proven it can improve Creative Decision, but Creative Decision still crosses the fact boundary. Next: Minimal Creative Decision / Fact Boundary + Minimal Retrieval Validation.
+> Continue building the complete Professional Creative Knowledge System. The
+> next discussion is knowledge-source stratification, admission standards,
+> evidence quality, and freshness governance; these major decisions require
+> user confirmation before implementation.
 
 ---
 
@@ -154,6 +173,9 @@ per-source persistence
 ↓
 global snapshot rebuild
 ```
+
+This is one validated ingestion path, not a statement that course videos are
+the only future Knowledge source.
 
 Do not create alternative parallel pipelines unless explicitly requested.
 
@@ -535,7 +557,7 @@ Repository cleanliness rules:
 
 ---
 
-## 16. Current Phase Authority
+## 16. Current Direction Authority
 
 P0 Reliability Hardening is complete and closed:
 
@@ -550,14 +572,14 @@ Do not spend the current phase re-auditing already-accepted P0 behavior unless:
 2. a Phase 0.5 run violates an existing invariant; or
 3. the user explicitly requests a P0 investigation.
 
-The active stage is:
+The current mainline is:
 
 ```text
-Phase 0.5
-5-Video Knowledge Quality Pilot
+Complete Food-IP Professional Creative Knowledge System
 ```
 
-The pilot is now authorized.
+The 5-video pilot and Phase 0.5 gate remain historical validation records. They
+are not an active stage or current blocker.
 
 Its purpose is **not** to prove that the pipeline can run. P0 already established pipeline reliability.
 
@@ -567,7 +589,11 @@ Its purpose is to answer:
 
 ---
 
-## 17. Phase 0.5 — 5-Video Pilot Operating Contract
+## 17. Historical Phase 0.5 — 5-Video Pilot Operating Contract
+
+The following pilot contract and results are retained as historical acceptance
+facts. They do not define the current active stage or authorize a new product
+architecture.
 
 Use exactly five real restaurant-IP course videos for the first formal pilot.
 
@@ -676,7 +702,7 @@ Do not redesign retrieval infrastructure during Phase 0.5. Use this principle to
 
 ---
 
-## 19. 5-Video Exit Gate
+## 19. Historical 5-Video Exit Gate
 
 Completing five videos does **not** authorize the 77-video corpus automatically.
 
@@ -737,7 +763,7 @@ Phase 0.5 Creative Value Gate = PARTIAL / STRONG POSITIVE（非 PASS）
   → Creative Quality Benchmark V1 尚未授权
 ```
 
-Next stage direction:
+Historical next-stage direction at that time:
 
 ```text
 Minimal Creative Decision / Fact Boundary
@@ -745,7 +771,8 @@ Minimal Creative Decision / Fact Boundary
 Minimal Retrieval Validation
 ```
 
-先解决 Fact Boundary，再做完整的 WITH / WITHOUT-Knowledge 对照并确认不再越界，才允许进入 Creative Quality Benchmark V1 与 Content Engine V2 工程。
+以上是当时的阶段建议，不是当前立即实施任务。Fact Contract / Fact Boundary、
+Creative Decision、Memory、Retrieval 与 Content Engine V2 当前仍 Deferred。
 
 The 5-video pilot is a learning gate, not a throughput milestone.
 
@@ -753,7 +780,8 @@ The 5-video pilot is a learning gate, not a throughput milestone.
 
 ## 20. Currently Forbidden
 
-Until the Phase 0.5 Gate passes or the user explicitly authorizes otherwise, do NOT begin:
+Do NOT begin the following without explicit user authorization and a confirmed
+architecture decision:
 
 - 77-video full ingestion
 - large-scale multi-category ingestion
@@ -772,10 +800,11 @@ Until the Phase 0.5 Gate passes or the user explicitly authorizes otherwise, do 
 - full Content Engine V2 implementation
 - Director Agent conversion
 - complex automatic video editing
-- UI work unrelated to the active pilot
+- UI work unrelated to an explicitly authorized task
 - OCR or multimodal extraction unless specifically required by a pilot source and explicitly authorized
 
-The following is now **allowed**:
+The following historical pilot activities remain documented as completed or
+validated work, not as a new active scope:
 
 ```text
 formal 5-video ingestion
@@ -784,23 +813,34 @@ pilot-specific evaluation
 small necessary fixes to extraction/schema/evaluation exposed by the pilot
 ```
 
-Do not interpret pilot authorization as permission for unrelated architecture expansion.
+Do not interpret the historical pilot record as permission for unrelated
+architecture expansion.
 
 ---
 
-## 21. Next Stage
+## 21. Current Mainline and Next Discussion
 
-The 5-Video Gate did **not** fully pass（result = PARTIAL / STRONG POSITIVE；blocker = Fact Boundary）。Creative Quality Benchmark V1 尚未授权。
+The current mainline is continued development of the complete Professional
+Creative Knowledge System. The 5-video pilot result remains historical:
+PARTIAL / STRONG POSITIVE, not an active blocker.
 
-Next stage direction:
+Next discussion, not yet authorized implementation:
 
 ```text
-Minimal Creative Decision / Fact Boundary
-+
-Minimal Retrieval Validation
+knowledge-source stratification
+admission standards
+evidence quality
+freshness governance
 ```
 
-Creative Quality Benchmark V1 remains the goal once the fact boundary is controlled and a full WITH / WITHOUT-Knowledge gate passes. Its scope stays:
+Do not turn these open decisions into a source hierarchy, scoring weights,
+Schema, retrieval design, or infrastructure plan before user confirmation.
+
+Creative Quality Benchmark V1, Fact Contract / Fact Boundary, Creative
+Decision, Memory, and Retrieval remain future capabilities and are not current
+implementation tasks.
+
+Historical benchmark notes, where retained below, do not authorize implementation.
 
 ```text
 10–20 real barbecue creative tasks
@@ -812,7 +852,8 @@ Keep the old system output as a baseline where available.
 
 Future changes to Director / Writer / Critic should be judged against benchmark quality, not only by whether automated tests pass.
 
-Do not skip directly from five successful videos to large-scale knowledge ingestion without first proving creative value and controlling the fact boundary.
+Do not infer a complete source strategy from the five-video pilot or expand into
+unconfirmed architecture without explicit user confirmation.
 
 ---
 
@@ -854,15 +895,15 @@ Critic should remain controlled unless evidence shows otherwise.
 
 ## 23. Final Engineering Principle
 
-P0 answered:
+Historical P0 answered:
 
 > Is the knowledge foundation reliable?
 
-Phase 0.5 must answer:
+The historical Phase 0.5 work asked:
 
 > Is the knowledge actually correct and useful?
 
-The objective is not merely:
+The durable objective is not merely:
 
 ```text
 make the pipeline run
@@ -901,4 +942,7 @@ before:
 
 The current project's most important rule is:
 
-> Do not scale knowledge production until five real videos prove that the AI learned correctly and that the resulting knowledge can materially improve Creative Decision.
+> Preserve the validated reliability and evidence boundaries while continuing
+> to build the complete Knowledge System. Do not invent source admission,
+> freshness, retrieval, or product-architecture decisions before user
+> confirmation.
