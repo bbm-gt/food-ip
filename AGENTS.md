@@ -1,18 +1,18 @@
-# food-ip 维护指南
+# Food-IP — AGENTS.md
 
-本仓库是已有的 Food IP Studio 项目；维护时以代码、测试和本文档为准，不从零搭建或重构既有流程。
+## Mission
 
-## 产品方向（当前决策状态）
+Food-IP helps restaurant owners with little or no short-video experience decide what is worth filming today and quickly turn real business events, ideas, or goals into shoot-ready content that sounds like the owner.
 
-未来主链（food-ip 作为老板使用的产品）：
+The target product flow is:
 
 ```text
 Owner Input
 → Intent / Business Objective
 → confirmed_facts
 → missing_facts
-→ 少量相关 Memory
-→ 少量 relevant Knowledge
+→ relevant Memory
+→ relevant Knowledge
 → Creative Decision
 → Writer
 → Critic
@@ -20,122 +20,311 @@ Owner Input
 → Shoot-ready Script
 ```
 
-核心目标：老板只需说今天发生了什么、有什么想法或生意目标，AI 判断什么值得拍，只问必要信息，最后生成像老板本人、能直接拍的内容。前台必须简单，内部不要堆 Multi-Agent：
+Keep the user-facing product simple. Prefer a clear structured workflow over unnecessary architectural complexity.
+
+---
+
+## Repository Layout
 
 ```text
-DO NOT build Multi-Agent
-优先 Workflow + structured modules
+backend/
+    Food-IP product backend and runtime capabilities.
+
+frontend/
+    Web client.
+
+knowledge_pipeline/
+    Offline Creative Knowledge production system.
+    It turns source material into structured, validated, traceable knowledge.
+
+docs/
+    Architecture, API, product decisions, deployment, and project documentation.
+
+runtime/
+    Local runtime/project data. Do not treat generated runtime data as source code.
 ```
 
-两个仓库的关系：
+The knowledge pipeline and the Food-IP runtime belong to the same product but remain logically separated.
 
 ```text
-food-ip-knowledge-pipeline = 专业 Creative Knowledge 系统
-food-ip                    = 老板最终使用的产品
+knowledge_pipeline
+    produces knowledge
+
+backend/app/knowledge
+    retrieves and consumes knowledge
+
+Creative Decision
+    decides how knowledge should affect the current creative task
 ```
 
-Knowledge 最终服务于 Food-IP 的 Creative Decision。知识系统当前状态：Phase 0.5 Creative Value Gate = PARTIAL / STRONG POSITIVE（非 PASS），当前 blocker = **Fact Boundary**，下一阶段方向 = **Minimal Creative Decision / Fact Boundary + Minimal Retrieval Validation**。
+Do not couple the production application directly to internal ingestion implementation details when a stable knowledge contract is sufficient.
 
-### 事实边界（Fact Boundary）— 最重要原则
+---
 
-区分三类：
+## Core Product Rules
+
+### 1. Fact Boundary
+
+Always distinguish:
 
 ```text
-confirmed_facts   = 老板明确提供，或可信 Memory 中已确认的事实
-creative_decision = AI 的创作判断与建议
-missing_facts     = 创作需要但尚未确认的信息
+confirmed_facts
+creative_decision
+missing_facts
 ```
 
-Knowledge 只教 AI **怎么判断**，不能告诉 AI **当前老板实际上发生了什么**。例：老板只说"每天去市场挑海鲜"，AI 不得直接断言他会翻蟹脐、按虾、和摊主熟识等——必须标"需确认"或"如果事实成立，可以这样拍"。事实边界由 system / validation 层强制，不能指望知识本身提供。
+`confirmed_facts` are facts explicitly provided by the owner or already confirmed in a trusted memory source.
 
-### 旧系统新定位：Legacy Script Generation
+`creative_decision` contains AI judgments, recommendations, framing choices, and creative suggestions.
 
-旧脚本系统不删除，但不再作为未来主架构：
+`missing_facts` contains information required for a useful creative decision but not yet confirmed.
+
+Knowledge teaches the system **how to judge**. It does not establish **what happened at the current restaurant**.
+
+Never promote knowledge, examples, likely behavior, or creative suggestions into confirmed restaurant facts.
+
+If a useful detail is not confirmed:
+
+* ask for it when necessary;
+* mark it as requiring confirmation; or
+* express the creative suggestion conditionally.
+
+Do not invent concrete operational details to make a script more vivid.
+
+Fact Boundary must eventually be protected structurally through schemas and validation rather than prompt wording alone.
+
+---
+
+### 2. Creative Architecture
+
+The future architecture is the structured workflow defined above.
+
+Do not introduce Multi-Agent architecture unless there is clear evidence that the simpler workflow cannot satisfy a verified requirement.
+
+Do not add architectural layers for sophistication alone.
+
+Prefer:
 
 ```text
-Legacy Script Generation
-= compatibility + baseline + reusable capabilities
+simple module
+→ explicit contract
+→ validation
+→ test
 ```
 
-优先复用：
+over additional agents, orchestration layers, or infrastructure.
 
-- `ResearchProfile`：事实 / Memory 来源，不得机械注入每条脚本
-- `IPProfile`：长期定位和表达约束
-- `CreativeConversation`：未来用于理解 Intent 和询问 missing facts
-- `CreativeBrief`：保留，是否扩展暂不决定
-- `TopicCard`：改为 optional interaction，不再必须生成
-- Writer：保留，但未来只根据 Creative Decision 写脚本
-- Director Review：优先复用为 Critic
-- `revise_script_candidate`：优先复用为 Directed Rewrite
-- materials / timeline / FFmpeg / export：全部保留
+---
 
-固定 strategy / 内容桶继续服务 legacy，但不再决定未来"今天拍什么"。
+### 3. Legacy Script Generation
+
+The existing script generation system is:
 
 ```text
-不要推倒重写
-也不要继续无限给旧系统打补丁
-
-Legacy path = 兼容与 baseline
-New path = 最小新创作 workflow
-优先复用已有模块
+compatibility
++ baseline
++ reusable capabilities
 ```
 
-## 开始工作
+It is not the future creative-decision architecture.
 
-修改前依次阅读根目录 `AGENTS.md`、`README.md`、`HANDOFF.md`、`docs/architecture.md`、`docs/api.md`，再阅读本任务涉及的前后端代码及测试。先执行 `git status --short`，保护工作区已有修改，不覆盖无关内容。
+Do not delete it.
 
-后端测试与前端构建（从仓库根目录）:
+Do not continue adding unrelated patches to it in an attempt to turn it into the new architecture.
+
+Prefer reuse where appropriate:
+
+* `ResearchProfile` → owner facts / memory source
+* `IPProfile` → long-term positioning and expression constraints
+* `CreativeConversation` → intent discovery and missing-fact interaction
+* `CreativeBrief` → existing reusable contract; schema changes require approval
+* `TopicCard` → optional interaction
+* existing Writer → future script writing from Creative Decision
+* Director Review → candidate for Critic
+* `revise_script_candidate` → candidate for Directed Rewrite
+* materials / timeline / FFmpeg / export → preserve
+
+Fixed strategies and content buckets may remain for legacy compatibility but must not determine what the owner should film in the new path.
+
+---
+
+## Knowledge System Rules
+
+`knowledge_pipeline/` is a professional Creative Knowledge production subsystem.
+
+Its reliability baseline is already established.
+
+Do not reopen completed reliability work without a concrete regression, failed test, violated invariant, or explicit task.
+
+Preserve:
+
+* timestamp authority
+* stable deterministic identities
+* evidence and provenance
+* strict schema validation
+* crash/resume behavior
+* idempotency
+* per-source persistence
+* atomic global snapshot behavior
+* fail-fast validation
+
+Do not start large-scale knowledge expansion before the minimal runtime chain has been validated.
+
+Unless explicitly approved, do not introduce:
+
+* GraphRAG
+* Neo4j
+* RAPTOR
+* complex vector infrastructure
+* Multi-Agent systems
+* large-scale ingestion
+* unrelated knowledge-platform infrastructure
+
+Knowledge-pipeline-specific implementation and test rules belong in `knowledge_pipeline/AGENTS.md`.
+
+---
+
+## Decision Authority
+
+Do not silently make product or architecture decisions that materially change:
+
+* architecture
+* schemas or data contracts
+* Fact Boundary semantics
+* storage strategy
+* retrieval strategy
+* model/provider strategy
+* major dependencies
+* roadmap or phase boundaries
+* operating cost
+* validation or acceptance standards
+* compatibility guarantees
+
+For such decisions:
+
+1. inspect the current implementation;
+2. explain the options and tradeoffs;
+3. recommend an option;
+4. stop and obtain user approval before implementation.
+
+Routine implementation details inside an already approved boundary do not require separate approval.
+
+---
+
+## Engineering Rules
+
+Prefer modifying and reusing existing modules over creating parallel systems.
+
+Keep the repository tidy.
+
+Avoid:
+
+* duplicate abstractions
+* unnecessary helper modules
+* temporary scripts committed to the repository
+* redundant reports
+* unrelated refactors
+* directory churn
+* speculative infrastructure
+* renaming files without a concrete need
+
+Do not overwrite unrelated local changes.
+
+Before modifying code, inspect:
+
+```bash
+git status --short
+```
+
+Read the code and tests relevant to the task before changing behavior.
+
+Do not delete files, commit, push, modify secrets, or change `.env` files unless explicitly requested.
+
+External paid AI calls must be mocked in automated tests unless the task explicitly requires a controlled integration test.
+
+---
+
+## Compatibility
+
+Preserve existing Food-IP capabilities unless the task explicitly changes their contract.
+
+In particular, do not casually break:
+
+* existing REST API behavior
+* existing persisted projects
+* ResearchProfile / legacy BossInfo compatibility
+* script and script-bundle compatibility
+* materials and upload workflows
+* timeline behavior
+* FFmpeg export
+* existing legacy script generation
+
+`backend/app/engine/timeline.py` remains the authoritative source for timeline duration unless an approved architecture decision explicitly changes that contract.
+
+---
+
+## Build and Test
+
+From the repository root, run the checks relevant to the files changed.
+
+Food-IP backend:
 
 ```powershell
 backend/.venv/Scripts/python.exe -m pytest backend/app/tests -q --basetemp .pytest-basetemp
+```
+
+Food-IP frontend:
+
+```powershell
 cd frontend
 npm.cmd run build
 ```
 
-在某些 Windows 环境中，默认 pytest 临时目录清理会触发权限错误；使用仓库内 `--basetemp` 可避免该环境问题。PowerShell 若拦截 `npm.ps1`，使用 `npm.cmd`。启动后端：
+Knowledge pipeline:
 
-```powershell
-backend/.venv/Scripts/python.exe -m uvicorn backend.app.main:app --reload --port 8000
+```bash
+cd knowledge_pipeline
+python -m pytest -q
 ```
 
-前端开发：`cd frontend; npm.cmd run dev`。生产模式先构建前端，FastAPI 会托管 `frontend/dist`，API 保持 `/api` 前缀。
+Use the narrowest relevant tests during implementation, then run the appropriate broader validation before declaring the task complete.
 
-## 目录与架构
+Never claim success based only on code inspection when executable validation is available.
 
-```text
-backend/app/
-  api/          REST 路由：项目、脚本、素材、编辑、导出、润色
-  core/store.py 文件夹持久化和兼容读取
-  scriptgen/    调研模型、规则选题、DeepSeek 生成、本地质检、AI 编导审稿与局部修稿
-  engine/       时间轴、媒体探测、接缝预览、FFmpeg 成片导出
-  polish/       AI 视频润色契约及尚未配置的 null provider
-  tests/        pytest 测试
-frontend/src/   Vite + React + TypeScript 客户端
-docs/           架构、REST 合约与部署说明
-runtime/projects/<id>/
-               项目持久化：project.json、script.json、script_bundle.json、shots/、work/、exports/
-```
+---
 
-产品既有流程必须保留：创建项目 → 深度调研 → 脚本选择 → 素材上传 → 时间轴/接缝编辑 → FFmpeg 导出。
+## Definition of Done
 
-## 当前真实状态
+Before reporting completion:
 
-- 项目采用**文件夹持久化**，每个项目的数据位于 `runtime/projects/<id>/`；读写集中在 `backend/app/core/store.py`。
-- 当前 AI 脚本主路径是**规则选题 + DeepSeek 结构化生成 + 程序质检**，入口为 `POST /api/projects/{id}/script-bundles/ai`。规则方案接口仍保留，供离线或兼容场景使用。
-- AI 编导审稿：AI 路径生成并通过程序硬校验后自动附加可选 `review`（9 维 1-10 评分）与 `review_error`；编导只读，不重新选题、不修改事实 / IP / Brief / TopicCard。审稿失败不丢弃候选，仅记录 `review_error` 与 warning。
-- TopicCard 锁题：选中 TopicCard 后三套候选必须锁定同一主题；锁题模式下 `strategy` 只是表现角度。程序化低分判定 `review.judge_revision_needed` 与 AI 局部修稿 `review.revise_script_candidate` 已实现（补丁式只修 issues 指定位置、锁题不可换题、修稿后复用现有硬规则校验）；**自动根据低分触发修稿尚未接入生成流程**。
-- `scriptgen/generators/template.py` 和旧 `POST /script/template` 是旧单脚本兼容入口；`scriptgen/generators/codex.py` 只是会抛出 `NotImplementedError` 的兼容占位，不可当作生产生成链路。
-- AI 视频润色尚未实现：当前仅 `null` provider，接口返回 `not_configured`。不要把该能力描述为已接入或实现真实模型调用。
-- 成片时长的唯一权威来源是 `backend/app/engine/timeline.py` 的 `compute_timeline()`。UI、预览、接缝和导出不得各自计算或覆盖总时长。
+1. run relevant tests;
+2. run required build/type/lint checks for affected components;
+3. inspect `git status --short`;
+4. inspect the final diff;
+5. verify compatibility with the requested behavior;
+6. check for accidental unrelated changes.
 
-## 兼容与禁止事项
+Report:
 
-- 保持已有 REST 接口兼容；升级时新增接口，不删除或改写旧接口语义。
-- 保持旧项目及其 `project.json`、`script.json`、`script_bundle.json` 可打开；`ResearchProfile` 与旧 `BossInfo` 必须双向兼容。
-- 不修改 `engine/timeline.py` 的权威职责，不改为前端或 FFmpeg 输出反推时长。
-- 不删除已有项目创建、调研、脚本、上传、时间轴、接缝或导出能力；不做任务无关的大规模重构。
-- **不构建 Multi-Agent**；内部优先 Workflow + structured modules（见"产品方向"）。
-- **不删除 legacy 脚本系统**：它作为 compatibility + baseline + reusable capabilities 保留；未来主链优先复用其模块，而不是推倒重写或继续无限打补丁。
-- 不擅自删除文件、提交、推送，或修改密钥与 `.env`。业务变更必须补充测试。
+* what changed;
+* which files changed;
+* which validations ran;
+* their results;
+* any compatibility considerations;
+* remaining risks or unresolved decisions.
 
-完成任务前运行相关 pytest 与 `npm.cmd run build`，检查 `git diff`，并说明修改文件、验证结果、兼容处理和剩余风险。
+Do not describe unimplemented capabilities as complete.
+
+---
+
+## Documentation
+
+Keep this file concise and focused on durable repository-wide guidance.
+
+Do not turn `AGENTS.md` into a project diary or task history.
+
+Detailed architecture belongs in `docs/`.
+
+Current task state and handoff information should live in the appropriate project documentation rather than accumulating indefinitely here.
+
+When documentation and implementation disagree, inspect code and tests and report the discrepancy instead of silently assuming either side is correct.
