@@ -21,10 +21,12 @@ Owner Input
 ```
 
 - 前台必须简单；**DO NOT build Multi-Agent**，优先 Workflow + structured modules。
-- 单仓库逻辑边界：`knowledge_pipeline/` 是专业 Creative Knowledge 生产子系统；`backend/` 消费稳定 Knowledge 合约；`frontend/` 面向老板。Knowledge 最终服务于本仓库的 Creative Decision，生产实现不直接耦合进 backend。
-- 知识系统状态：Phase 0.5 Creative Value Gate = PARTIAL / STRONG POSITIVE（非 PASS），blocker = **Fact Boundary**；下一阶段方向 = Minimal Creative Decision / Fact Boundary + Minimal Retrieval Validation。
+- 单仓库逻辑边界：`knowledge_pipeline/` 是专业 Creative Knowledge 生产子系统；`backend/` / `frontend/` 当前保留产品运行时与 legacy 能力，未来如消费 Knowledge 只能通过已确认的稳定合约；`frontend/` 面向老板。Knowledge 最终服务于本仓库未来的 Creative Decision，生产实现不直接耦合进 backend。
+- 当前主线：继续建设完整的 Food-IP Professional Creative Knowledge System。现有课程视频 pipeline 是已经实现并验证的一条知识摄入路径，不是知识来源全集。
+- 知识源分层、准入、证据质量与时效治理尚未确认；本文件不预设具体层级、评分权重、Schema、检索方案或基础设施。
+- Fact Contract / Fact Boundary、Memory、Retrieval、Creative Decision 属于未来产品主链能力，当前均 Deferred，待 Knowledge System 足够成熟且用户确认后再实现。
 
-### 事实边界（Fact Boundary）— 最重要原则
+### 事实边界（Fact Boundary）— 未来产品长期原则（当前 Deferred）
 
 区分：
 
@@ -34,7 +36,7 @@ creative_decision = AI 的创作判断与建议
 missing_facts     = 创作需要但尚未确认的信息
 ```
 
-Knowledge 只教 AI 怎么判断，不充当老板实际发生了什么；未确认信息标"需确认"或"如果事实成立，可以这样拍"。边界由 system / validation 层强制。
+Knowledge 只教 AI 怎么判断，不充当老板实际发生了什么；未确认信息标"需确认"或"如果事实成立，可以这样拍"。老板信息不足且某个事实确实是当前创作判断所必需时，只向老板做最少量关键追问；不重要的信息不追问，也不能编造。边界未来由 system / validation 层强制；当前不实施 Fact Contract 或兼容改造。
 
 ### Legacy 定位
 
@@ -51,6 +53,16 @@ Knowledge 只教 AI 怎么判断，不充当老板实际发生了什么；未确
 - materials / timeline / FFmpeg / export → 全部保留
 
 固定 strategy / 内容桶继续服务 legacy，不再决定未来"今天拍什么"。
+
+## Knowledge System 当前主线
+
+当前继续建设完整的 Professional Creative Knowledge System。现有视频生产链是已实现并验证的一条知识摄入路径：
+
+```text
+source video → transcribe → refine → per-source persistence → global snapshot
+```
+
+未来知识可以来自更多高质量来源，但知识源分层、准入标准、证据质量与时效治理仍待讨论确认；不要把任何未确认的来源清单或治理方案写成既定架构。
 
 ## 产品流水线（当前真实流程 = Legacy / baseline）
 
@@ -84,6 +96,7 @@ food-ip/
 │  │  └─ tests/
 │  └─ scripts/                # make_sample_shots.py e2e_smoke.py sync_official_guidance.py
 ├─ frontend/                  # Vite + React + TS；dev proxy /api → http://127.0.0.1:8000
+├─ knowledge_pipeline/        # Professional Creative Knowledge System
 ├─ docs/
 │  ├─ architecture.md
 │  ├─ api.md

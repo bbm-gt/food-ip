@@ -4,7 +4,7 @@
 
 Food-IP helps restaurant owners with little or no short-video experience decide what is worth filming today and quickly turn real business events, ideas, or goals into shoot-ready content that sounds like the owner.
 
-The target product flow is:
+The target product flow is a future product capability, not the current implementation priority:
 
 ```text
 Owner Input
@@ -21,6 +21,8 @@ Owner Input
 ```
 
 Keep the user-facing product simple. Prefer a clear structured workflow over unnecessary architectural complexity.
+
+The current mainline is continued development of the complete Food-IP Professional Creative Knowledge System. The existing video pipeline is one implemented and validated knowledge-ingestion path, not the complete definition of all future knowledge sources. Knowledge-source tiers, admission rules, evidence standards, and freshness governance remain open decisions and must not be invented here.
 
 ---
 
@@ -50,20 +52,20 @@ The knowledge pipeline and the Food-IP runtime belong to the same product but re
 knowledge_pipeline
     produces knowledge
 
-backend/app/knowledge
-    retrieves and consumes knowledge
+backend / frontend
+    currently provide the product runtime and legacy script/video capabilities
 
 Creative Decision
-    decides how knowledge should affect the current creative task
+    is a future product layer that will decide how knowledge affects the current creative task
 ```
 
-Do not couple the production application directly to internal ingestion implementation details when a stable knowledge contract is sufficient.
+Do not couple the production application directly to internal ingestion implementation details when a stable knowledge contract is sufficient. Retrieval infrastructure and the future Creative Decision path are deferred.
 
 ---
 
 ## Core Product Rules
 
-### 1. Fact Boundary
+### 1. Fact Boundary (future product capability; Deferred)
 
 Always distinguish:
 
@@ -91,7 +93,9 @@ If a useful detail is not confirmed:
 
 Do not invent concrete operational details to make a script more vivid.
 
-Fact Boundary must eventually be protected structurally through schemas and validation rather than prompt wording alone.
+The long-term principle remains: AI must not invent the owner's real experiences. Ask the owner only the minimum necessary question when a missing fact is genuinely required for the current creative judgment; do not ask for irrelevant details and do not fabricate them.
+
+Fact Contract / Fact Boundary implementation and compatibility changes are Deferred until the Knowledge System is sufficiently mature. When that work is authorized, it must eventually be protected structurally through schemas and validation rather than prompt wording alone.
 
 ---
 
@@ -150,7 +154,11 @@ Fixed strategies and content buckets may remain for legacy compatibility but mus
 
 ## Knowledge System Rules
 
-`knowledge_pipeline/` is a professional Creative Knowledge production subsystem.
+`knowledge_pipeline/` is the current mainline: the professional Food-IP Creative Knowledge System.
+
+Its supported source is not limited to the existing course-video pipeline. Other source categories, admission rules, evidence standards, and freshness policies are not yet decided; do not encode them as a contract or implementation plan.
+
+The existing video pipeline and its pilot/reliability results are historical validation of one ingestion path. They are not a claim that the Knowledge System has only that source or that all future sources have already been accepted.
 
 Its reliability baseline is already established.
 
@@ -168,8 +176,6 @@ Preserve:
 * atomic global snapshot behavior
 * fail-fast validation
 
-Do not start large-scale knowledge expansion before the minimal runtime chain has been validated.
-
 Unless explicitly approved, do not introduce:
 
 * GraphRAG
@@ -177,8 +183,9 @@ Unless explicitly approved, do not introduce:
 * RAPTOR
 * complex vector infrastructure
 * Multi-Agent systems
-* large-scale ingestion
 * unrelated knowledge-platform infrastructure
+
+Do not turn an unconfirmed source list, admission policy, scoring scheme, freshness policy, retrieval design, or evaluation standard into an implementation decision. The next discussion is knowledge-source stratification, admission, evidence quality, and freshness governance; implementation waits for explicit confirmation.
 
 Knowledge-pipeline-specific implementation and test rules belong in `knowledge_pipeline/AGENTS.md`.
 
@@ -199,6 +206,8 @@ Do not silently make product or architecture decisions that materially change:
 * operating cost
 * validation or acceptance standards
 * compatibility guarantees
+
+Also treat updates to the authoritative engineering files and the active project Skill as part of the decision workflow when a confirmed project direction changes. Keep `.codex/agents/*.toml` role assignments unchanged unless explicitly requested.
 
 For such decisions:
 

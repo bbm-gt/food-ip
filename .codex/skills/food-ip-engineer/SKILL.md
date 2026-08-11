@@ -1,13 +1,35 @@
 ---
 name: food-ip-engineer
-description: 用于维护 Food IP Studio 项目的前后端、AI 脚本生成、素材处理、时间轴编辑和 FFmpeg 导出流程。适用于分析、修改、调试或扩展该项目时，尤其适用于需要遵守既有 API、文件持久化、AI 质量约束和视频时间轴规则的任务。
+description: 用于维护 Food IP Studio 项目的 Professional Creative Knowledge System、前后端、AI 脚本生成、素材处理、时间轴编辑和 FFmpeg 导出流程。适用于分析、修改、调试或扩展该项目时，尤其适用于需要遵守既有 API、文件持久化、知识证据边界、AI 质量约束和视频时间轴规则的任务。
 ---
 
 # 项目定位
 
 Food IP Studio 是面向餐饮老板的 AI 短视频 IP 生产系统。
 
-核心创作流程（实体级，当前真实流程）：
+当前项目主线是继续建设完整的 Food-IP Professional Creative Knowledge
+System。现有课程视频 pipeline 是已经实现并验证的一条知识摄入路径，不是
+Knowledge System 的全部知识来源；知识源分层、准入标准、证据质量与时效治理
+尚未确认，不在本 Skill 中自行设计。
+
+Fact Contract / Fact Boundary、Creative Decision、Memory、Retrieval 是未来产品
+主链能力，当前 Deferred，待 Knowledge System 足够成熟且用户确认后再实现。
+长期边界仍然有效：AI 不得脑补老板真实经历；只有当缺失事实确实是当前创作判断
+所必需时，才向老板做最少量关键追问；不重要的信息不追问，也不能编造。
+
+## Monorepo 结构
+
+- `backend/`：产品后端与现有运行时能力。
+- `frontend/`：产品前端。
+- `knowledge_pipeline/`：Professional Creative Knowledge System；与产品运行时逻辑分离。
+- `docs/`：架构、接口、部署与项目决策文档。
+- `runtime/`：本地运行数据，不当作源代码。
+
+Knowledge 只负责教 AI 怎么判断，不能证明当前餐厅实际上发生了什么。不要把
+知识 pipeline 的内部摄入实现直接耦合到产品运行时；稳定合约和 Retrieval 等
+未来能力必须等决策确认后再实现。
+
+现有产品运行时的创作流程（Legacy / compatibility）：
 
 ResearchProfile（深度调研）
 → IPProfile（IP定位）
@@ -19,6 +41,9 @@ ResearchProfile（深度调研）
 → script.json（当前脚本）
 
 之后进入：素材上传 → 时间轴编辑 → FFmpeg 导出。
+
+该流程保留既有兼容能力，不代表当前主线已经切换为 Creative Decision 或
+Fact Contract 实现。
 
 # 技术架构
 
@@ -35,6 +60,19 @@ Frontend:
 - React
 - TypeScript
 - Vite
+
+## Knowledge System 当前规则
+
+- 保留现有视频 pipeline 的 timestamp、identity、evidence/provenance、schema、崩溃恢复、幂等、逐来源持久化与全局快照约束。
+- 不把约 77 个视频写成 Knowledge System 的全部知识来源，也不把未确认的来源层级、准入、评分、证据、时效或检索设计写成既定方案。
+- 当前不要实现 Creative Decision、Fact Contract、Memory、Retrieval 基础设施、GraphRAG、Neo4j、RAPTOR、复杂 Vector DB 或 Multi-Agent 产品架构。
+- 下一项讨论是知识源分层、准入标准、证据质量与时效治理；这些是重大架构/验证标准决策，必须等待用户确认后才能实现。
+
+## 重大决策与 Custom Agents 协作
+
+- 对架构、Schema / 数据契约、Fact Boundary 语义、存储/检索/provider、路线、成本、验证标准或兼容性等重大变化：先检查现状，说明选项与权衡，等待用户确认。
+- 已确认方向变化时，及时同步真正受影响的权威工程文件与当前 Skill，避免文档 churn；Skill 只保留当前有效规则和工作流，不写项目日记。
+- `.codex/agents/*.toml` 的现有角色分工本次不调整。需要 reviewer 时执行只读审查，重点检查路线一致性、过时 blocker、未确认设计和无关改动。
 
 # 选题与脚本生成规则（TopicCard / ScriptBundle）
 

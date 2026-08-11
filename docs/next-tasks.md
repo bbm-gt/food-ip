@@ -1,6 +1,6 @@
 # 待办任务（Next Tasks）
 
-> 记录日期：2026-08-07。汇总 T111（Creative 流程接入前端）及后续脚本质量阶段的剩余任务，供下次接手按优先级处理。
+> 记录日期：2026-08-07。保留 T111（Creative 流程接入前端）及后续脚本质量阶段的历史完成记录与 Legacy 维护待办；当前项目主线见下方“当前方向”，旧脚本待办不代表当前路线。
 >
 > 已完成并提交（按顺序）：
 > - `daf2412` 修复用户可见错误信息乱码
@@ -12,20 +12,22 @@
 > - `b532a6a` AI 局部修稿（`revise_script_candidate`：补丁式只修 issues 指定位置、锁题不可换题、修稿后过现有硬校验）
 > - `900aea8` 恢复主 Schema（`AIBundleOutput.candidates` 保持 min_length=2）；抽出 `_validate_candidates` 供单候选修稿复用硬校验
 
-## 方向调整（2026-08-11）
+## 当前方向（2026-08-11）
 
-**当前主线：**
+**当前主线：继续建设完整的 Food-IP Professional Creative Knowledge System。**
 
 ```text
-Minimal Creative Decision / Fact Boundary
-+
-Minimal Retrieval Validation
+Knowledge System
 ```
 
-- 产品主链（未来）：`Owner Input → Intent / Business Objective → confirmed_facts → missing_facts → 少量相关 Memory → 少量 relevant Knowledge → Creative Decision → Writer → Critic → Directed Rewrite → Shoot-ready Script`（详见 `AGENTS.md` / `docs/architecture.md`）。
-- 旧脚本系统不再作为未来主架构，定位为 **Legacy Script Generation = compatibility + baseline + reusable capabilities**；未来主链优先复用其模块，不推倒重写、也不无限打补丁。**DO NOT build Multi-Agent**；优先 Workflow + structured modules。
-- 知识系统状态：Phase 0.5 Creative Value Gate = PARTIAL / STRONG POSITIVE（非 PASS），blocker = **Fact Boundary**。
-- 下列 P1/P2 待办与下方"Legacy 路径待办"仍作为 legacy 路径维护有效；**未经用户明确授权，不继续推进 legacy 脚本生成待办**；新产品方向的下一步以"当前主线"为准。
+- 现有课程视频 pipeline 是一条已经实现并验证的知识摄入路径，不是 Knowledge System 的全部知识来源。
+- 知识源分层、准入标准、证据质量与时效治理尚未确认；不要自行规定来源层级、评分权重、Schema、检索方案或其他基础设施。
+- Fact Contract / Fact Boundary、Creative Decision、Memory、Retrieval 是未来产品主链能力，当前 Deferred，待 Knowledge System 足够成熟且用户确认后再实现。
+- 当前不要实现 GraphRAG、Neo4j、RAPTOR、复杂 Vector DB 或 Multi-Agent 产品架构。
+
+**下一项讨论（仅讨论，未授权实现）：**知识源分层、准入标准、证据质量与时效治理。这些属于重大架构/验证标准决策；先检查现状、说明选项与权衡，等待用户确认。
+
+以下“本阶段已完成”内容是历史验收事实，不代表当前主线。下列 P1/P2 待办与“Legacy 路径待办”仅作为 legacy 路径维护记录；未经用户明确授权，不继续推进。
 
 ## 本阶段已完成（2026-08-07 提交 `b88d8d3`）
 
@@ -50,6 +52,10 @@ Minimal Retrieval Validation
 - 与用户确认：修稿结果作为新候选保留还是替换原候选。
 
 ---
+
+## 历史 Legacy 路径待办（包括下列 P0/P1/P2；非当前主线）
+
+以下条目是旧脚本/运行时路径的历史维护记录，不是当前 Knowledge System 的立即任务；如需继续处理，必须获得用户明确授权。
 
 ## P0 ｜ 代码一致性
 

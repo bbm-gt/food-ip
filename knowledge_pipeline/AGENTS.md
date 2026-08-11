@@ -1,6 +1,6 @@
 # Food-IP Knowledge Pipeline — 维护指南
 
-本仓库是**专业 Creative Knowledge 系统**（课程视频 → 结构化、可追溯、有边界的知识），最终服务 `food-ip` 产品的 Creative Decision。
+本仓库是**专业 Food-IP Creative Knowledge System**。现有课程视频 pipeline 是一条已经实现并验证的知识摄入路径（课程视频 → 结构化、可追溯、有边界的知识），不是全部知识来源。未来知识源分层、准入标准、证据质量与时效治理尚未确认，不在本文件中预设。
 
 > 本文件是本仓库 AI 编程工具的主要工程规则入口。详细架构、验收记录与历史阶段信息以相关 `docs/` 文档为准。`CLAUDE.md` 保留为 Claude Code 专用项目指令，不维护与本文档冲突的工程规则。
 
@@ -8,9 +8,10 @@
 
 修改前依次阅读本文件、与当前任务相关的 `docs/`、相关代码与测试，先执行 `git status --short` 保护工作区已有修改。不从零搭建或重构既有流程。
 
-测试（从仓库根目录）：
+测试（从 `knowledge_pipeline/` 目录运行）：
 
 ```bash
+cd knowledge_pipeline
 python -m pytest -q
 # 或
 python -m unittest test_food_ip_p0.py
@@ -39,12 +40,13 @@ P0 Reliability                 = FINAL GO / CLOSED（勿重新折腾）
 5-video Knowledge Fidelity     = 基本验证成功
 Knowledge Creative Value       = Strong Positive Signal
 Phase 0.5 Creative Value Gate  = PARTIAL / STRONG POSITIVE（非 PASS）
-current blocker                = Fact Boundary（事实边界）
-下一阶段方向                   = Minimal Creative Decision / Fact Boundary
-                                + Minimal Retrieval Validation
+以上为历史验收状态，不是当前 blocker
+当前主线                       = 继续建设完整的 Professional Creative Knowledge System
+下一项讨论                     = 知识源分层 / 准入 / 证据质量 / 时效治理
+Fact Contract / Fact Boundary  = 未来产品能力，当前 Deferred
 ```
 
-## 事实边界（最重要原则）
+## 事实边界（未来产品长期原则；当前 Deferred）
 
 区分三类：
 
@@ -54,7 +56,7 @@ creative_decision = AI 的创作判断与建议
 missing_facts     = 创作需要但尚未确认的信息
 ```
 
-Knowledge 不能充当当前老板事实；未确认信息标"需确认"或"如果事实成立，可以这样拍"。边界由 system / validation 层强制，不能指望知识本身提供。
+Knowledge 不能充当当前老板事实；未确认信息标"需确认"或"如果事实成立，可以这样拍"。老板信息不足且某个事实确实是当前创作判断所必需时，只向老板做最少量关键追问；不重要的信息不追问，也不能编造。边界未来由 system / validation 层强制，不能指望知识本身提供；当前不实现 Fact Contract 或兼容改造。
 
 ## 目录与架构
 
@@ -72,7 +74,7 @@ docs/PHASE_0_5_5_VIDEO_PILOT.md                  5-video pilot 验收契约
 docs/creative_value_gate/                        4 场景 A/B 评估档案（Gate = PARTIAL / STRONG POSITIVE）
 ```
 
-生产链路：视频 → transcribe → refine → per-source 持久化 → 全局快照（chunks / knowledge_cards / case_cards / anti_patterns / creative_formats 五个协调文件，原子重建）。Source 是持久化主单位；全局文件是可重建索引。
+当前已验证的生产链路：视频 → transcribe → refine → per-source 持久化 → 全局快照（chunks / knowledge_cards / case_cards / anti_patterns / creative_formats 五个协调文件，原子重建）。Source 是持久化主单位；全局文件是可重建索引。该链路只代表现有视频摄入路径，不规定未来知识源范围。
 
 ## 决策边界
 
@@ -89,7 +91,8 @@ docs/creative_value_gate/                        4 场景 A/B 评估档案（Gat
 ## 禁止事项
 
 - **不构建 Multi-Agent**；优先 Workflow + structured modules。
-- **不开始**：77-video 全量摄入、GraphRAG、Neo4j、RAPTOR、Embedding/向量库、Content Engine V2、Director Agent。
+- **不实现当前 Deferred 能力**：Fact Contract、Creative Decision、Memory、Retrieval 基础设施、GraphRAG、Neo4j、RAPTOR、复杂 Vector DB、Content Engine V2、Director Agent 或 Multi-Agent 产品架构。
+- 不把约 77 个视频或任何未确认的来源清单写成 Knowledge System 的全部范围，也不把尚未确认的准入、评分、证据或时效规则写成既定方案。
 - **不重新折腾已完成的 P0**（无回归、无违规、无明确任务时不重审）。
 - **不改弱验证**：不伪造 evidence / provenance / identity；原子持久化、崩溃恢复、幂等重跑不变。
 - 不新增临时调试/报告文件，不重复生成状态报告；保持仓库整洁。
