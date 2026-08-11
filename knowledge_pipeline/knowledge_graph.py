@@ -29,6 +29,7 @@ from food_ip_config import (
     ATOMIC_DIR, GRAPH_DIR, SYNTHESIS_DIR, REVIEW_QUEUE_DIR, REPORTS_DIR,
     RELATION_TYPES, LLM_MODEL, LLM_BASE_URL, LLM_TEMPERATURE,
 )
+from food_ip_models import KnowledgeRelation
 
 
 # ============================================================================
@@ -244,12 +245,24 @@ def detect_relations(knowledge_cards, api_key=None):
     relations = []
     for card_a, card_b, strategy, priority in candidates:
         rel = _compare_pair(card_a, card_b, api_key)
-        if rel:
-            rel["from"] = card_a["knowledge_id"]
-            rel["to"] = card_b["knowledge_id"]
-            rel["candidate_strategy"] = strategy
-            rel["candidate_priority"] = priority
-            relations.append(rel)
+        if isinstance(rel, dict) and rel:
+            # Candidate-generation metadata is an internal selection detail;
+            # it is deliberately not part of the persisted Relation contract.
+            # Validate the complete result before returning it so undeclared
+            # fields from the LLM cannot reach persistence.
+            # Endpoint fields are injected from the candidate cards and must
+            # never be supplied by the LLM response.
+            if "from_id" in rel or "to_id" in rel:
+                continue
+            try:
+                validated = KnowledgeRelation.model_validate({
+                    "from_id": card_a["knowledge_id"],
+                    "to_id": card_b["knowledge_id"],
+                    **rel,
+                })
+            except Exception:
+                continue
+            relations.append(validated.model_dump(mode="json"))
 
     return relations
 
@@ -301,14 +314,15 @@ def _compare_pair(card_a, card_b, api_key):
 def detect_conflicts(knowledge_cards, relations):
     """从关系中提取冲突和例外。输出 conflicts.jsonl。"""
     conflicts = []
-    for rel in relations:
-        if rel.get("relation") in ("conflicting", "exception"):
+    for raw_rel in relations:
+        rel = KnowledgeRelation.model_validate(raw_rel)
+        if rel.relation.value in ("conflicting", "exception"):
             conflict = {
-                "knowledge_a": rel["from"],
-                "knowledge_b": rel["to"],
-                "type": rel["relation"],
-                "note": rel.get("note", ""),
-                "resolution": "conditional_difference" if rel["relation"] == "conflicting" else "exception",
+                "knowledge_a": rel.from_id,
+                "knowledge_b": rel.to_id,
+                "type": rel.relation.value,
+                "note": rel.note,
+                "resolution": "conditional_difference" if rel.relation.value == "conflicting" else "exception",
             }
             conflicts.append(conflict)
     return conflicts
@@ -323,9 +337,10 @@ def generate_canonical(relations, knowledge_cards):
     canonicals = []
     merge_groups = {}
 
-    for rel in relations:
-        if rel.get("relation") == "same" and rel.get("can_merge"):
-            a, b = rel["from"], rel["to"]
+    for raw_rel in relations:
+        rel = KnowledgeRelation.model_validate(raw_rel)
+        if rel.relation.value == "same" and rel.can_merge:
+            a, b = rel.from_id, rel.to_id
             group = None
             for g_id, members in merge_groups.items():
                 if a in members or b in members:

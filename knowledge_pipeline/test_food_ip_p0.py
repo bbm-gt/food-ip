@@ -38,7 +38,7 @@ from food_ip_config import (
 from robust_json_parser import parse_json
 from food_ip_models import (
     KnowledgeCard, CaseCard, AntiPattern, CreativeFormat,
-    QuestionSynthesis, SemanticChunk, ASRSegment, WhisperSegment,
+    KnowledgeRelation, QuestionSynthesis, SemanticChunk, ASRSegment, WhisperSegment,
     SourceRef, Conflict, NewQuestionCandidate,
     SourceManifestEntry, GlossaryEntry, QuestionEntry, SourceState,
     make_knowledge_id, make_chunk_id, make_segment_id,
@@ -3597,6 +3597,100 @@ class TestKnowledgeGraphCandidates(unittest.TestCase):
         cards = [{"knowledge_id": "KID_a", "question_ids": ["Q001"],
                   "stages": [], "content_format": [], "knowledge_type": "principle"}]
         self.assertEqual(generate_candidates(cards), [])
+
+
+class TestKnowledgeRelationContract(unittest.TestCase):
+    """KnowledgeRelation is the single persisted relation contract."""
+
+    def test_model_and_exported_schema_are_consistent(self):
+        schema_path = Path(__file__).parent / "food_ip_schemas" / "knowledge_relation.schema.json"
+        with open(schema_path, "r", encoding="utf-8") as f:
+            schema = json.load(f)
+
+        self.assertEqual(
+            set(schema["properties"]),
+            {"from_id", "to_id", "relation", "note", "can_merge"},
+        )
+        self.assertEqual(set(schema["required"]), {"from_id", "to_id", "relation"})
+        self.assertFalse(schema["additionalProperties"])
+        valid = KnowledgeRelation(
+            from_id="KID_a", to_id="KID_b", relation="complementary",
+        )
+        self.assertEqual(set(valid.model_dump()), set(schema["properties"]))
+        with self.assertRaises(Exception):
+            KnowledgeRelation.model_validate({
+                "from_id": "KID_a", "to_id": "KID_b",
+                "relation": "complementary", "from": "KID_a",
+            })
+
+    def test_relation_generation_returns_only_formal_fields(self):
+        from knowledge_graph import detect_relations
+
+        cards = [
+            {"knowledge_id": "KID_a", "question_ids": ["Q001"],
+             "stages": [], "content_format": [], "knowledge_type": "principle"},
+            {"knowledge_id": "KID_b", "question_ids": ["Q001"],
+             "stages": [], "content_format": [], "knowledge_type": "technique"},
+        ]
+        with patch("knowledge_graph._compare_pair", return_value={
+            "relation": "complementary", "note": "test", "can_merge": False,
+        }):
+            relations = detect_relations(cards, api_key="test-key")
+
+        self.assertGreaterEqual(len(relations), 1)
+        self.assertEqual(
+            set(relations[0]), {"from_id", "to_id", "relation", "note", "can_merge"}
+        )
+        self.assertNotIn("from", relations[0])
+        self.assertNotIn("to", relations[0])
+        self.assertNotIn("candidate_strategy", relations[0])
+        self.assertNotIn("candidate_priority", relations[0])
+        KnowledgeRelation.model_validate(relations[0])
+
+        with patch("knowledge_graph._compare_pair", return_value={
+            "relation": "complementary", "note": "test", "can_merge": False,
+            "from_id": "KID_wrong",
+        }):
+            self.assertEqual(detect_relations(cards, api_key="test-key"), [])
+
+    def test_relation_persistence_fails_before_replacing_target(self):
+        from food_ip_refine import FoodIPRefiner
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "knowledge_relations.jsonl"
+            path.write_text("sentinel\n", encoding="utf-8")
+            refiner = object.__new__(FoodIPRefiner)
+            invalid = [{
+                "from_id": "KID_a", "to_id": "KID_b",
+                "relation": "complementary", "unexpected": True,
+            }]
+            with self.assertRaises(Exception):
+                refiner._write_jsonl(path, invalid, model=KnowledgeRelation)
+            self.assertEqual(path.read_text(encoding="utf-8"), "sentinel\n")
+            self.assertFalse(Path(str(path) + ".tmp").exists())
+
+    def test_persisted_relations_validate_and_have_existing_endpoints(self):
+        from food_ip_config import GRAPH_DIR, ATOMIC_DIR
+
+        relation_path = GRAPH_DIR / "knowledge_relations.jsonl"
+        cards_path = ATOMIC_DIR / "knowledge_cards.jsonl"
+        if not relation_path.is_file() or not cards_path.is_file():
+            self.skipTest("external knowledge snapshot is not available")
+
+        with open(cards_path, "r", encoding="utf-8") as f:
+            card_ids = {
+                json.loads(line)["knowledge_id"]
+                for line in f if line.strip()
+            }
+        with open(relation_path, "r", encoding="utf-8") as f:
+            relations = [KnowledgeRelation.model_validate(json.loads(line))
+                         for line in f if line.strip()]
+
+        self.assertEqual(len(relations), 51)
+        self.assertTrue(all(r.from_id in card_ids and r.to_id in card_ids for r in relations))
+        self.assertTrue(all(r.from_id != r.to_id for r in relations))
+        pairs = [(r.from_id, r.to_id) for r in relations]
+        self.assertEqual(len(pairs), len(set(pairs)))
 
 
 class TestQuestionSynthesisPromptSchemaConsistency(unittest.TestCase):

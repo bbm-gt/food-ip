@@ -1,67 +1,46 @@
 {
   "_meta": {
-    "version": "1.1",
+    "version": "2",
     "created": "2026-08-07",
-    "updated": "2026-08-07",
-    "description": "Food-IP 问题树 — 餐饮老板短视频创作中的核心决策问题。由人工维护。P0-1: 修复引号编码，添加 version 标记。",
-    "principle": "每个问题必须是餐饮老板/创作者在实际工作中会遇到的真实决策问题，而非课程章节标题。"
+    "updated": "2026-08-12",
+    "description": "Food-IP Knowledge Question Tree v2 — 面向 Professional Creative Knowledge System 的通用专业创作知识问题，围绕 Creative Decision Map v1 的七个判断节点组织。",
+    "principle": "每个问题用于教 AI 如何进行可复用的专业创作判断，不询问当前餐厅事实，不替代 Owner Facts / Context，也不实现 Creative Decision 运行时逻辑。"
   },
   "questions": [
-    {"question_id": "Q001", "category": "IP定位", "question": "餐饮老板为什么要做个人IP而不是只做门店号？"},
-    {"question_id": "Q002", "category": "IP定位", "question": "什么样的餐饮老板适合出镜？"},
-    {"question_id": "Q003", "category": "IP定位", "question": "老板IP的人设应该怎么确定？"},
-    {"question_id": "Q004", "category": "IP定位", "question": "黄金定位铁三角是什么？怎么用？"},
+    {"question_id": "Q201", "category": "Worth Filming", "question": "什么类型的真实经营素材值得转化为短视频选题？如何区分“有创作价值的经营素材”和“只是发生过的日常活动”？"},
+    {"question_id": "Q202", "category": "Worth Filming", "question": "如何判断一个素材是否同时具备经营相关性、受众价值和可表达性，而不是只对经营者本人有意义？"},
+    {"question_id": "Q203", "category": "Worth Filming", "question": "在没有新品、活动或明显事件时，如何从服务、问题解决、经营判断和持续实践中发现可持续的选题来源？"},
+    {"question_id": "Q204", "category": "Worth Filming", "question": "如何判断一个选题更适合一次性发布、发展为系列，还是沉淀为长期 IP 资产？“容易爆”和“值得长期做”应如何区分？"},
 
-    {"question_id": "Q010", "category": "今天拍什么", "question": "餐饮老板每天都应该拍什么内容？"},
-    {"question_id": "Q011", "category": "今天拍什么", "question": "什么事情值得拍成视频？"},
-    {"question_id": "Q012", "category": "今天拍什么", "question": "今天没有任何特殊事件，能拍什么？"},
-    {"question_id": "Q013", "category": "今天拍什么", "question": "如何从日常经营中持续找到选题？"},
+    {"question_id": "Q205", "category": "Business Objective", "question": "餐饮短视频常见的业务目标有哪些？即时到店、直接转化、复购、信任、品牌认知和招商等目标应如何区分？"},
+    {"question_id": "Q206", "category": "Business Objective", "question": "业务目标和时间范围如何改变选题、表达重点、证据类型、CTA 以及成功判断标准？"},
+    {"question_id": "Q207", "category": "Business Objective", "question": "当即时转化目标与长期 IP 定位发生冲突时，应如何判断取舍？什么情况下可以使用价格、优惠、套餐或门店信息？"},
+    {"question_id": "Q208", "category": "Business Objective", "question": "什么样的业务目标足够具体，能够真正指导创作决策？“想曝光”“想做内容”“想让大家知道”为什么通常不够？"},
 
-    {"question_id": "Q020", "category": "用户为什么看", "question": "用户为什么会看一个餐饮老板的视频？"},
-    {"question_id": "Q021", "category": "用户为什么看", "question": "什么是「到店理由」？如何在视频里建立到店理由？"},
-    {"question_id": "Q022", "category": "用户为什么看", "question": "破认知型内容和营销门店型内容有什么区别？各适合什么情况？"},
-    {"question_id": "Q023", "category": "用户为什么看", "question": "用户停留的核心因素是什么？"},
+    {"question_id": "Q209", "category": "Audience Value", "question": "如何根据业务目标和内容情境判断目标受众的观看动机、消费场景和主要顾虑？为什么不能默认所有用户都只需要“到店理由”？"},
+    {"question_id": "Q210", "category": "Audience Value", "question": "餐饮短视频可以提供哪些受众价值，例如判断依据、实用信息、情绪共鸣、信任感、认知变化或参与感？如何判断哪一种价值最适合当前内容？"},
+    {"question_id": "Q211", "category": "Audience Value", "question": "如何判断受众价值是否具体、可信并能在一条视频内兑现，而不是把老板想表达的内容或销售主张误当成用户价值？"},
 
-    {"question_id": "Q030", "category": "选题判断", "question": "一个选题适合做成什么内容类型？"},
-    {"question_id": "Q031", "category": "选题判断", "question": "选题的时候应该优先考虑「我想说什么」还是「用户想看什么」？"},
-    {"question_id": "Q032", "category": "选题判断", "question": "哪些选题方向容易爆？哪些适合长期做？"},
+    {"question_id": "Q212", "category": "Angle", "question": "如何把经营素材、业务目标和受众价值收敛成一个明确的核心主张或观察角度？"},
+    {"question_id": "Q213", "category": "Angle", "question": "在故事、观点、观察、解释、经营记录和营销门店型表达之间，应根据什么条件进行选择？"},
+    {"question_id": "Q214", "category": "Angle", "question": "如何判断一个角度是否具有差异化，同时避免过度泛化、套用课程案例或制造未经支持的具体事实？"},
+    {"question_id": "Q215", "category": "Angle", "question": "如何把门店或老板的优势转化为判断、故事和证据，而不是直接自夸、堆卖点或形成广告感？"},
 
-    {"question_id": "Q040", "category": "内容形式", "question": "口播、旁白、实拍记录、摆拍还原各自适合什么场景？"},
-    {"question_id": "Q041", "category": "内容形式", "question": "一个选题适合讲故事还是讲观点？"},
-    {"question_id": "Q042", "category": "内容形式", "question": "什么情况下应该用短平快而不是深度内容？"},
-    {"question_id": "Q043", "category": "内容形式", "question": "实拍记录怎么做才不会变成流水账？"},
+    {"question_id": "Q216", "category": "Hook + Tension", "question": "有效 Hook 通常由哪些要素构成？画面、问题、反差、冲突、情绪、原话和文案钩子分别适用于什么条件？"},
+    {"question_id": "Q217", "category": "Hook + Tension", "question": "如何从已有素材自然生成 Hook，同时避免为了制造吸引力而虚构事件、结果、稀缺性或顾客反应？"},
+    {"question_id": "Q218", "category": "Hook + Tension", "question": "什么是短视频中的 Tension？如何区分真正的未解决问题、对比、风险或期待，与单纯的“开头刺激”？"},
+    {"question_id": "Q219", "category": "Hook + Tension", "question": "Hook、Tension 和结尾之间应如何形成推进与解决？哪些常见结构会导致观众看完开头后失去继续观看的理由？"},
 
-    {"question_id": "Q050", "category": "开头与停留", "question": "什么是有效开头？"},
-    {"question_id": "Q051", "category": "开头与停留", "question": "画面钩子、情绪钩子、文案钩子、聊天钩子分别怎么用？"},
-    {"question_id": "Q052", "category": "开头与停留", "question": "怎么从真实事件自然产生开头？"},
-    {"question_id": "Q053", "category": "开头与停留", "question": "开头需要多长？前3秒应该放什么？"},
+    {"question_id": "Q220", "category": "Proof + Information Flow", "question": "餐饮短视频中哪些内容可以构成有效证据，例如可观察动作、过程、对比、原话、结果、第三方反馈或环境信息？各自适用于什么条件？"},
+    {"question_id": "Q221", "category": "Proof + Information Flow", "question": "如何判断证据的强度、相关性、接近性和充分性？为什么“听起来合理”不能代替证据？"},
+    {"question_id": "Q222", "category": "Proof + Information Flow", "question": "如何区分直接证据、解释性推断、示例和创意建议？在没有足够证据时，专业创作知识应建议什么样的表达方式？"},
+    {"question_id": "Q223", "category": "Proof + Information Flow", "question": "如何判断哪些信息必须被展示，哪些可以口头说明，哪些内容不应被写成确定性结论？"},
+    {"question_id": "Q224", "category": "Proof + Information Flow", "question": "如何设计“Hook—背景—证据—解释/价值—结尾”的信息流，使每一段都增加信息或减少观众的不确定性？"},
+    {"question_id": "Q225", "category": "Proof + Information Flow", "question": "如何控制信息密度、内容深度和取舍？如何判断一条实拍记录是在形成叙事推进，还是退化成流水账？"},
 
-    {"question_id": "Q060", "category": "内容稿", "question": "怎么写一条像老板自己说的话的视频稿？"},
-    {"question_id": "Q061", "category": "内容稿", "question": "什么叫AI腔？怎么避免？"},
-    {"question_id": "Q062", "category": "内容稿", "question": "怎么讲自己的优势而不是自夸？"},
-    {"question_id": "Q063", "category": "内容稿", "question": "信息密度怎么控制？一条视频讲几个点合适？"},
-    {"question_id": "Q064", "category": "内容稿", "question": "哪些长期资料一定要用？哪些资料完全不要用？"},
-
-    {"question_id": "Q070", "category": "信任与营销", "question": "怎么让视频建立信任而不是像广告？"},
-    {"question_id": "Q071", "category": "信任与营销", "question": "什么情况下可以自然地提到门店/菜品/优惠？"},
-    {"question_id": "Q072", "category": "信任与营销", "question": "为什么有的视频看起来像广告？怎么改？"},
-
-    {"question_id": "Q080", "category": "互动与CTA", "question": "什么情况下需要CTA？什么情况下完全不要CTA？"},
-    {"question_id": "Q081", "category": "互动与CTA", "question": "怎么设计让用户愿意评论的「聊天点」？"},
-    {"question_id": "Q082", "category": "互动与CTA", "question": "团购链接应该怎么挂才不破坏内容？"},
-
-    {"question_id": "Q090", "category": "拍摄", "question": "餐饮老板没有拍摄基础，怎么用手机拍出能用的视频？"},
-    {"question_id": "Q091", "category": "拍摄", "question": "口播视频怎么拍最自然？"},
-    {"question_id": "Q092", "category": "拍摄", "question": "实拍记录需要拍哪些画面？"},
-    {"question_id": "Q093", "category": "拍摄", "question": "摆拍还原怎么做才不会假？"},
-
-    {"question_id": "Q100", "category": "审稿", "question": "写完稿子怎么判断好不好？"},
-    {"question_id": "Q101", "category": "审稿", "question": "为什么这个稿子像AI写的？应该局部改哪里？"},
-    {"question_id": "Q102", "category": "审稿", "question": "为什么这个稿子像广告？应该怎么调整？"},
-
-    {"question_id": "Q110", "category": "长期运营", "question": "餐饮老板做短视频的长期节奏应该怎么安排？"},
-    {"question_id": "Q111", "category": "长期运营", "question": "发了几个月没效果怎么办？"},
-    {"question_id": "Q112", "category": "长期运营", "question": "什么时候应该开矩阵号？"},
-    {"question_id": "Q113", "category": "长期运营", "question": "怎么建立自己的素材库？"}
+    {"question_id": "Q226", "category": "Voice + Final Review", "question": "如何判断一种叙述视角、出镜角色和表达方式是否适合内容目标、证据类型和拍摄条件？"},
+    {"question_id": "Q227", "category": "Voice + Final Review", "question": "如何根据老板真实的表达习惯、身份、认知和语言特征组织文案，使内容像本人自然会说的话？哪些语言特征会造成 AI 腔、课程腔、书面腔或广告腔，应如何局部改写？"},
+    {"question_id": "Q228", "category": "Voice + Final Review", "question": "如何通过具体判断、经营细节和证据建立信任，而不是直接自夸？门店、菜品、价格、优惠和 CTA 应如何自然嵌入？"},
+    {"question_id": "Q229", "category": "Voice + Final Review", "question": "如何对一条创作方案进行最终审查，确认 Business Objective、Audience Value、Angle、Hook/Tension、Proof、Information Flow 和 Voice 之间彼此一致，并且没有明显的证据滥用、广告感或不可拍问题？"}
   ]
 }

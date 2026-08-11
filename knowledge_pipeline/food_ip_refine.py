@@ -44,6 +44,7 @@ from food_ip_config import (
     LLM_MAX_TOKENS, LLM_MAX_TOKENS_LARGE,
     PIPELINE_VERSION, DOMAIN,
 )
+from food_ip_models import KnowledgeRelation
 
 
 # ============================================================================
@@ -917,7 +918,11 @@ class FoodIPRefiner:
         counts = rebuild_global_indices()
 
         self._write_jsonl(GRAPH_DIR / "question_links.jsonl", self.question_links)
-        self._write_jsonl(GRAPH_DIR / "knowledge_relations.jsonl", self.relations)
+        self._write_jsonl(
+            GRAPH_DIR / "knowledge_relations.jsonl",
+            self.relations,
+            model=KnowledgeRelation,
+        )
         self._write_jsonl(GRAPH_DIR / "conflicts.jsonl", self.conflicts)
         self._write_jsonl(GRAPH_DIR / "new_question_candidates.jsonl",
                          [c for c in self.new_question_candidates])
@@ -938,7 +943,12 @@ class FoodIPRefiner:
         for d in self.deferred:
             print(f"    - {d}")
 
-    def _write_jsonl(self, path, data):
+    def _write_jsonl(self, path, data, model=None):
+        # Validate the complete batch before creating or replacing the target.
+        # In particular, Relation uses extra="forbid" so undeclared fields
+        # cannot silently reach persistent storage.
+        if model is not None:
+            data = [model.model_validate(item).model_dump(mode="json") for item in data]
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         # Atomic: write .tmp then replace
