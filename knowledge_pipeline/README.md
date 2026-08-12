@@ -31,10 +31,15 @@ $env:FOOD_IP_SOURCES_DIR = 'C:\temp\food-ip-test-sources'
 $env:FOOD_IP_KNOWLEDGE_DIR = 'C:\temp\food-ip-test-knowledge'
 ```
 
-## External paths
+## Knowledge data and external paths
 
-Runtime data and tools remain outside Git. Existing `E:\...` defaults are kept
-for compatibility and can be overridden with environment variables:
+The deployable Knowledge snapshot is committed under the repository root at
+`knowledge_data/`. This is the default `FOOD_IP_KNOWLEDGE_DIR`; set that
+environment variable only to use a different knowledge snapshot.
+
+Other runtime data and tools remain external:
+
+They can be overridden with environment variables:
 
 - `FOOD_IP_INPUT_DIR`
 - `FOOD_IP_SOURCES_DIR`
@@ -47,7 +52,7 @@ for compatibility and can be overridden with environment variables:
 - `FOOD_IP_LEGACY_TRANSCRIPTS_DIR` (legacy scripts; default `E:\video_transcripts`)
 
 The legacy CLI `--output` option is not a complete relocation mechanism; use
-the environment variables above when all source and knowledge roots must move.
+the environment variables above when source roots must move.
 
 Do not add videos, Whisper models, FFmpeg, virtual environments, generated
 runtime data, `.env` files, or external legacy tools to this subtree.

@@ -1,0 +1,14 @@
+{
+  "source_id": "SRC0002",
+  "stage": "refine",
+  "status": "done",
+  "run_id": "run_20260810_110920_72cd",
+  "pid": 9244,
+  "started_at": "2026-08-10T11:10:25.157877",
+  "completed_at": "2026-08-10T11:11:09.010326",
+  "error": "Phase 0.5 rerun after thinking-disabled fix",
+  "stats": {
+    "chunks": 5,
+    "knowledge": 1
+  }
+}

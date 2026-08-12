@@ -50,6 +50,7 @@ from food_ip_models import (
 )
 from food_ip_segments import get_segment_time_range, fmt_time_range
 from food_ip_persistence import SourcePersistence, StateOwnershipError
+from food_ip_retrieval import LEGACY_TO_V2_QUESTION_IDS, retrieve_knowledge
 
 
 # ============================================================================
@@ -3848,6 +3849,122 @@ class TestQuestionSynthesisPromptSchemaConsistency(unittest.TestCase):
 
 
 # ============================================================================
+# Knowledge Retrieval MVP
+# ============================================================================
+
+class TestKnowledgeRetrieval(unittest.TestCase):
+    """The MVP retrieval layer reads validated cards without side effects."""
+
+    @staticmethod
+    def _card(knowledge_id: str, question_ids: list[str], confidence: float = 0.9) -> dict:
+        return {
+            "knowledge_id": knowledge_id,
+            "display_id": "K000001",
+            "knowledge_type": "principle",
+            "title": "可验证的测试知识卡",
+            "question_ids": question_ids,
+            "core_idea": "这是用于验证只读检索的最小知识卡内容。",
+            "source": {
+                "source_id": "SRC0001", "video_title": "测试来源",
+                "start_time": "00:00", "end_time": "00:01",
+                "start_sec": 0.0, "end_sec": 1.0,
+            },
+            "confidence": confidence,
+            "origin": "explicit",
+            "evidence_segment_ids": ["SRC0001-SEG0001"],
+        }
+
+    def _write_cards(self, directory: Path, cards: list[dict]) -> None:
+        atomic = directory / "atomic"
+        atomic.mkdir()
+        (atomic / "knowledge_cards.jsonl").write_text(
+            "".join(json.dumps(card, ensure_ascii=False) + "\n" for card in cards),
+            encoding="utf-8",
+        )
+
+    def test_retrieves_legacy_cards_deterministically_and_separates_methodology(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._write_cards(root, [
+                self._card("KID_z", ["Q011"], 0.8),
+                self._card("KID_a", ["Q011"], 0.9),
+                self._card("KID_b", ["Q011"], 0.9),
+                self._card("KID_c", ["Q011"], 0.7),
+            ])
+            result = retrieve_knowledge("Q201", knowledge_dir=root)
+
+        self.assertEqual(result["question_id"], "Q201")
+        self.assertEqual(
+            [card["knowledge_id"] for card in result["knowledge_cards"]],
+            ["KID_a", "KID_b", "KID_z"],
+        )
+        self.assertEqual(result["internal_methodology"], [])
+
+    def test_q221_keeps_internal_methodology_separate_from_cards(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._write_cards(root, [self._card("KID_a", ["Q221"])])
+            result = retrieve_knowledge("Q221", knowledge_dir=root)
+
+        self.assertEqual([card["knowledge_id"] for card in result["knowledge_cards"]], ["KID_a"])
+        self.assertEqual(len(result["internal_methodology"]), 7)
+
+    def test_invalid_card_or_request_fails_fast(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self._write_cards(root, [{"knowledge_id": "KID_bad"}])
+            with self.assertRaisesRegex(ValueError, "Invalid KnowledgeCard"):
+                retrieve_knowledge("Q202", knowledge_dir=root)
+
+        with self.assertRaisesRegex(ValueError, "max_cards"):
+            retrieve_knowledge("Q202", max_cards=2, knowledge_dir=Path(tempfile.gettempdir()))
+        with self.assertRaisesRegex(ValueError, "Unknown Question Tree"):
+            retrieve_knowledge("Q011", knowledge_dir=Path(tempfile.gettempdir()))
+
+    def test_legacy_mapping_only_targets_current_v2_ids(self):
+        current_ids = {question["question_id"] for question in load_question_tree()}
+        self.assertEqual(len(LEGACY_TO_V2_QUESTION_IDS), 20)
+        self.assertTrue(all(
+            set(targets) <= current_ids
+            for targets in LEGACY_TO_V2_QUESTION_IDS.values()
+        ))
+
+    def test_legacy_mapping_keeps_q208_and_q211_semantically_narrow(self):
+        self.assertEqual(LEGACY_TO_V2_QUESTION_IDS["Q011"], ("Q201",))
+        self.assertNotIn("Q208", LEGACY_TO_V2_QUESTION_IDS["Q004"])
+        self.assertNotIn("Q211", LEGACY_TO_V2_QUESTION_IDS["Q020"])
+        self.assertEqual(LEGACY_TO_V2_QUESTION_IDS["Q001"], ())
+
+        q208 = retrieve_knowledge("Q208", max_cards=5)
+        q211 = retrieve_knowledge("Q211", max_cards=5)
+
+        self.assertEqual(
+            [card["title"] for card in q208["knowledge_cards"]],
+            [],
+        )
+        self.assertNotIn(
+            "餐饮短视频必有效果",
+            [card["title"] for card in q211["knowledge_cards"]],
+        )
+        self.assertEqual(q211["knowledge_cards"], [])
+
+    def test_repository_default_knowledge_snapshot_is_complete(self):
+        from food_ip_config import FOOD_IP_KNOWLEDGE_DIR, REPOSITORY_ROOT
+
+        self.assertEqual(FOOD_IP_KNOWLEDGE_DIR, REPOSITORY_ROOT / "knowledge_data")
+        knowledge_cards_path = FOOD_IP_KNOWLEDGE_DIR / "atomic" / "knowledge_cards.jsonl"
+        case_cards_path = FOOD_IP_KNOWLEDGE_DIR / "atomic" / "case_cards.jsonl"
+        with knowledge_cards_path.open(encoding="utf-8") as handle:
+            cards = [KnowledgeCard.model_validate(json.loads(line))
+                     for line in handle if line.strip()]
+        with case_cards_path.open(encoding="utf-8") as handle:
+            cases = [CaseCard.model_validate(json.loads(line))
+                     for line in handle if line.strip()]
+
+        self.assertEqual(len(cards), 57)
+        self.assertEqual(len(cases), 15)
+
+
 # Runner
 # ============================================================================
 
