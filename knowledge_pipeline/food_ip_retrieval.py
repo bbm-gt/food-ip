@@ -19,27 +19,31 @@ from food_ip_models import KnowledgeCard, QuestionEntry
 
 # The 57-card snapshot was produced against Question Tree v1.1. This is an
 # explicit compatibility lookup for those persisted IDs, not a card migration.
+#
+# The targets below are deliberately conservative. A legacy question is kept
+# only where its stored meaning directly answers the v2 question; an empty
+# tuple is preferable to presenting a merely adjacent card as an answer.
 LEGACY_TO_V2_QUESTION_IDS: dict[str, tuple[str, ...]] = {
-    "Q001": ("Q205", "Q208"),
-    "Q002": ("Q226",),
-    "Q003": ("Q212", "Q226"),
-    "Q004": ("Q205", "Q208", "Q209"),
+    "Q001": (),
+    "Q002": (),
+    "Q003": ("Q215",),
+    "Q004": ("Q205", "Q209"),
     "Q010": ("Q201",),
-    "Q011": ("Q202",),
+    "Q011": ("Q201",),
     "Q013": ("Q203",),
-    "Q020": ("Q209", "Q210", "Q211"),
-    "Q021": ("Q205", "Q206", "Q209"),
-    "Q022": ("Q205", "Q206", "Q209", "Q213"),
-    "Q030": ("Q213", "Q219", "Q224"),
-    "Q031": ("Q205", "Q209", "Q210"),
+    "Q020": ("Q209", "Q210"),
+    "Q021": ("Q205",),
+    "Q022": ("Q213", "Q224"),
+    "Q030": ("Q224",),
+    "Q031": ("Q209", "Q210", "Q212"),
     "Q032": ("Q204",),
-    "Q041": ("Q213", "Q226"),
+    "Q041": ("Q215",),
     "Q050": ("Q216",),
     "Q051": ("Q216",),
-    "Q052": ("Q217",),
+    "Q052": ("Q216",),
     "Q053": ("Q216",),
-    "Q070": ("Q221", "Q222", "Q228"),
-    "Q071": ("Q207", "Q223", "Q228"),
+    "Q070": ("Q228",),
+    "Q071": ("Q207", "Q228"),
 }
 
 
@@ -94,7 +98,7 @@ def retrieve_knowledge(
     max_cards: int = 3,
     knowledge_dir: Path | str | None = None,
 ) -> dict[str, Any]:
-    """Return three to five v2-question-relevant KnowledgeCards at most.
+    """Return at most ``max_cards`` v2-question-relevant KnowledgeCards.
 
     Cards are selected by their direct v2 ID or the explicit legacy mapping.
     The stable ranking is confidence descending, then deterministic knowledge ID.

@@ -3891,9 +3891,9 @@ class TestKnowledgeRetrieval(unittest.TestCase):
                 self._card("KID_b", ["Q011"], 0.9),
                 self._card("KID_c", ["Q011"], 0.7),
             ])
-            result = retrieve_knowledge("Q202", knowledge_dir=root)
+            result = retrieve_knowledge("Q201", knowledge_dir=root)
 
-        self.assertEqual(result["question_id"], "Q202")
+        self.assertEqual(result["question_id"], "Q201")
         self.assertEqual(
             [card["knowledge_id"] for card in result["knowledge_cards"]],
             ["KID_a", "KID_b", "KID_z"],
@@ -3903,7 +3903,7 @@ class TestKnowledgeRetrieval(unittest.TestCase):
     def test_q221_keeps_internal_methodology_separate_from_cards(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            self._write_cards(root, [self._card("KID_a", ["Q070"])])
+            self._write_cards(root, [self._card("KID_a", ["Q221"])])
             result = retrieve_knowledge("Q221", knowledge_dir=root)
 
         self.assertEqual([card["knowledge_id"] for card in result["knowledge_cards"]], ["KID_a"])
@@ -3928,6 +3928,25 @@ class TestKnowledgeRetrieval(unittest.TestCase):
             set(targets) <= current_ids
             for targets in LEGACY_TO_V2_QUESTION_IDS.values()
         ))
+
+    def test_legacy_mapping_keeps_q208_and_q211_semantically_narrow(self):
+        self.assertEqual(LEGACY_TO_V2_QUESTION_IDS["Q011"], ("Q201",))
+        self.assertNotIn("Q208", LEGACY_TO_V2_QUESTION_IDS["Q004"])
+        self.assertNotIn("Q211", LEGACY_TO_V2_QUESTION_IDS["Q020"])
+        self.assertEqual(LEGACY_TO_V2_QUESTION_IDS["Q001"], ())
+
+        q208 = retrieve_knowledge("Q208", max_cards=5)
+        q211 = retrieve_knowledge("Q211", max_cards=5)
+
+        self.assertEqual(
+            [card["title"] for card in q208["knowledge_cards"]],
+            [],
+        )
+        self.assertNotIn(
+            "餐饮短视频必有效果",
+            [card["title"] for card in q211["knowledge_cards"]],
+        )
+        self.assertEqual(q211["knowledge_cards"], [])
 
     def test_repository_default_knowledge_snapshot_is_complete(self):
         from food_ip_config import FOOD_IP_KNOWLEDGE_DIR, REPOSITORY_ROOT
