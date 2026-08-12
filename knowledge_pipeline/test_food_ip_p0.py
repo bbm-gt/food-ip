@@ -34,6 +34,8 @@ from food_ip_config import (
     validate_all_config, generate_run_id, generate_deterministic_id,
     is_process_alive, PIPELINE_VERSION, DOMAIN, ensure_dirs,
     apply_asr_fixes, load_glossary, load_glossary_all, load_question_tree,
+    load_internal_methodology, validate_internal_methodology,
+    INTERNAL_METHODOLOGY_PATH,
 )
 from robust_json_parser import parse_json
 from food_ip_models import (
@@ -164,6 +166,105 @@ class TestConfigFailFastInvalid(unittest.TestCase):
                     validate_all_config()
         finally:
             os.unlink(path)
+
+
+class TestInternalMethodology(unittest.TestCase):
+    """Batch 1 internal methodology stays opt-in and outside Knowledge storage."""
+
+    def test_asset_has_confirmed_shape_classification_and_mapping(self):
+        self.assertEqual(validate_internal_methodology(), [])
+
+        with open(INTERNAL_METHODOLOGY_PATH, "r", encoding="utf-8") as f:
+            all_principles = json.load(f)["principles"]
+
+        self.assertEqual(len(all_principles), 12)
+        self.assertEqual(
+            [principle["kind"] for principle in all_principles],
+            ["boundary"] * 7 + ["decision_principle"] * 5,
+        )
+        self.assertTrue(all(set(p) == {"kind", "question_ids", "text"}
+                            for p in all_principles))
+        self.assertTrue(all(p["question_ids"] for p in all_principles))
+        self.assertTrue(all(set(p["question_ids"]) <= {"Q221", "Q222", "Q223"}
+                            for p in all_principles))
+
+        expected_questions = [
+            {"Q221", "Q223"}, {"Q222", "Q223"}, {"Q221", "Q223"},
+            {"Q221", "Q222", "Q223"}, {"Q222", "Q223"},
+            {"Q222", "Q223"}, {"Q222", "Q223"},
+            {"Q221", "Q222", "Q223"}, {"Q221", "Q222", "Q223"},
+            {"Q222"}, {"Q221", "Q223"}, {"Q221", "Q223"},
+        ]
+        self.assertEqual(
+            [set(principle["question_ids"]) for principle in all_principles],
+            expected_questions,
+        )
+        self.assertEqual(
+            [principle["text"] for principle in all_principles],
+            [
+                "结论不能超出事实覆盖范围。",
+                "表达可以放大，事实不能升级。",
+                "强比较、强因果、强承诺需要更强依据。",
+                "老板说的话也不自动等于客观事实。",
+                "Fact / Inference / Example / Creative Suggestion 必须保持身份。",
+                "Knowledge 和案例负责改变判断，不默认变成老板的话。",
+                "不自动替老板补动机、性格、价值观。",
+                "证据不足时优先缩小事实范围，不优先削弱语言。",
+                "因果不足时优先并置真实事实，不硬造因果。",
+                "不确定性可以转化成真实 Tension，而不是论文式弱化。",
+                "可观察 Claim 优先由真实画面证明。",
+                "使用最小充分证明，证明够了就停止，把空间还给人物、节奏和情绪。",
+            ],
+        )
+
+    def test_validator_rejects_unconfirmed_kind(self):
+        with open(INTERNAL_METHODOLOGY_PATH, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        payload["principles"][0]["kind"] = "score"
+
+        with tempfile.NamedTemporaryFile(
+                "w", suffix=".json", delete=False, encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+            invalid_path = Path(f.name)
+        try:
+            with patch("food_ip_config.INTERNAL_METHODOLOGY_PATH", invalid_path):
+                errors = validate_internal_methodology()
+                with self.assertRaises(ValueError):
+                    load_internal_methodology("Q221")
+            self.assertTrue(any("invalid kind" in error for error in errors))
+        finally:
+            invalid_path.unlink(missing_ok=True)
+
+    def test_only_target_questions_can_read_principles(self):
+        expected_counts = {"Q221": 7, "Q222": 8, "Q223": 11}
+        for question_id, expected_count in expected_counts.items():
+            principles = load_internal_methodology(question_id)
+            self.assertEqual(len(principles), expected_count)
+            self.assertTrue(all(question_id in p["question_ids"] for p in principles))
+
+        for question_id in ("Q201", "Q220", "Q224", "Q229", "invalid"):
+            self.assertEqual(load_internal_methodology(question_id), [])
+
+    def test_load_has_no_knowledge_or_runtime_side_effects(self):
+        with patch("builtins.open", wraps=open) as open_file, \
+                patch("food_ip_persistence.rebuild_global_indices") as rebuild, \
+                patch("knowledge_graph.link_questions") as link_questions:
+            principles = load_internal_methodology("Q221")
+
+        self.assertTrue(principles)
+        rebuild.assert_not_called()
+        link_questions.assert_not_called()
+        for call in open_file.call_args_list:
+            mode = call.kwargs.get("mode", call.args[1] if len(call.args) > 1 else "r")
+            self.assertEqual(mode, "r")
+        self.assertTrue(all(set(p) == {"kind", "question_ids", "text"}
+                            for p in principles))
+
+    def test_validate_all_config_does_not_read_internal_methodology(self):
+        missing_path = Path(tempfile.gettempdir()) / "missing-internal-methodology.json"
+        with patch("food_ip_config.INTERNAL_METHODOLOGY_PATH", missing_path):
+            self.assertEqual(load_internal_methodology("Q201"), [])
+            validate_all_config()
 
 
 # ============================================================================

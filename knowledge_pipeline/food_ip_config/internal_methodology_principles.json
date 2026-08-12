@@ -1,0 +1,69 @@
+{
+  "_meta": {
+    "asset_kind": "food_ip_internal_methodology",
+    "version": "batch-1",
+    "status": "manually_confirmed"
+  },
+  "principles": [
+    {
+      "kind": "boundary",
+      "question_ids": ["Q221", "Q223"],
+      "text": "结论不能超出事实覆盖范围。"
+    },
+    {
+      "kind": "boundary",
+      "question_ids": ["Q222", "Q223"],
+      "text": "表达可以放大，事实不能升级。"
+    },
+    {
+      "kind": "boundary",
+      "question_ids": ["Q221", "Q223"],
+      "text": "强比较、强因果、强承诺需要更强依据。"
+    },
+    {
+      "kind": "boundary",
+      "question_ids": ["Q221", "Q222", "Q223"],
+      "text": "老板说的话也不自动等于客观事实。"
+    },
+    {
+      "kind": "boundary",
+      "question_ids": ["Q222", "Q223"],
+      "text": "Fact / Inference / Example / Creative Suggestion 必须保持身份。"
+    },
+    {
+      "kind": "boundary",
+      "question_ids": ["Q222", "Q223"],
+      "text": "Knowledge 和案例负责改变判断，不默认变成老板的话。"
+    },
+    {
+      "kind": "boundary",
+      "question_ids": ["Q222", "Q223"],
+      "text": "不自动替老板补动机、性格、价值观。"
+    },
+    {
+      "kind": "decision_principle",
+      "question_ids": ["Q221", "Q222", "Q223"],
+      "text": "证据不足时优先缩小事实范围，不优先削弱语言。"
+    },
+    {
+      "kind": "decision_principle",
+      "question_ids": ["Q221", "Q222", "Q223"],
+      "text": "因果不足时优先并置真实事实，不硬造因果。"
+    },
+    {
+      "kind": "decision_principle",
+      "question_ids": ["Q222"],
+      "text": "不确定性可以转化成真实 Tension，而不是论文式弱化。"
+    },
+    {
+      "kind": "decision_principle",
+      "question_ids": ["Q221", "Q223"],
+      "text": "可观察 Claim 优先由真实画面证明。"
+    },
+    {
+      "kind": "decision_principle",
+      "question_ids": ["Q221", "Q223"],
+      "text": "使用最小充分证明，证明够了就停止，把空间还给人物、节奏和情绪。"
+    }
+  ]
+}

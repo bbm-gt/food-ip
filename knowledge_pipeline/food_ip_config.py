@@ -73,6 +73,9 @@ REPORTS_DIR = FOOD_IP_KNOWLEDGE_DIR / "reports"
 # 配置文件路径
 GLOSSARY_PATH = Path(__file__).parent / "food_ip_config" / "food_ip_asr_glossary.json"
 QUESTION_TREE_PATH = Path(__file__).parent / "food_ip_config" / "question_tree.json"
+INTERNAL_METHODOLOGY_PATH = (
+    Path(__file__).parent / "food_ip_config" / "internal_methodology_principles.json"
+)
 SCHEMAS_DIR = Path(__file__).parent / "food_ip_schemas"
 
 # 现有脚本路径（复用）
@@ -221,6 +224,24 @@ def load_question_tree():
     with open(QUESTION_TREE_PATH, "r", encoding="utf-8") as f:
         data = json.load(f)
     return data.get("questions", [])
+
+
+def load_internal_methodology(question_id: str) -> list[dict]:
+    """Load manually confirmed principles for Q221/Q222/Q223 only."""
+    if question_id not in {"Q221", "Q222", "Q223"}:
+        return []
+
+    errors = validate_internal_methodology()
+    if errors:
+        raise ValueError("Invalid internal methodology asset: " + "; ".join(errors))
+
+    with open(INTERNAL_METHODOLOGY_PATH, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return [
+        principle
+        for principle in data["principles"]
+        if question_id in principle["question_ids"]
+    ]
 
 
 def load_glossary() -> List[Tuple[str, str, dict]]:
@@ -391,6 +412,76 @@ def validate_question_tree() -> list[str]:
         if normalized in seen_questions:
             errors.append(f"question_tree.json: {qid} has semantically similar question to another entry")
         seen_questions.add(normalized)
+
+    return errors
+
+
+def validate_internal_methodology() -> list[str]:
+    """Validate the opt-in Batch 1 internal methodology asset."""
+    try:
+        with open(INTERNAL_METHODOLOGY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        return [f"internal_methodology_principles.json is not valid JSON: {e}"]
+    except FileNotFoundError:
+        return [
+            "internal_methodology_principles.json not found at "
+            f"{INTERNAL_METHODOLOGY_PATH}"
+        ]
+
+    errors = []
+    if not isinstance(data, dict):
+        return ["internal_methodology_principles.json: root must be an object"]
+
+    meta = data.get("_meta")
+    if not isinstance(meta, dict):
+        errors.append("internal methodology: '_meta' must be an object")
+    else:
+        if meta.get("asset_kind") != "food_ip_internal_methodology":
+            errors.append("internal methodology: invalid _meta.asset_kind")
+        if not isinstance(meta.get("version"), str) or not meta.get("version", "").strip():
+            errors.append("internal methodology: _meta.version must be non-empty")
+        if meta.get("status") != "manually_confirmed":
+            errors.append("internal methodology: invalid _meta.status")
+
+    principles = data.get("principles")
+    if not isinstance(principles, list):
+        return errors + ["internal methodology: 'principles' must be a list"]
+    if len(principles) != 12:
+        errors.append(
+            f"internal methodology: expected 12 principles, got {len(principles)}"
+        )
+
+    expected_kinds = ["boundary"] * 7 + ["decision_principle"] * 5
+    allowed_keys = {"kind", "question_ids", "text"}
+    allowed_questions = {"Q221", "Q222", "Q223"}
+
+    for index, principle in enumerate(principles):
+        label = f"internal methodology principle[{index}]"
+        if not isinstance(principle, dict):
+            errors.append(f"{label}: must be an object")
+            continue
+        if set(principle) != allowed_keys:
+            errors.append(f"{label}: fields must be kind, question_ids, text only")
+
+        kind = principle.get("kind")
+        if kind not in {"boundary", "decision_principle"}:
+            errors.append(f"{label}: invalid kind {kind!r}")
+        elif index < len(expected_kinds) and kind != expected_kinds[index]:
+            errors.append(f"{label}: expected kind {expected_kinds[index]!r}")
+
+        question_ids = principle.get("question_ids")
+        if not isinstance(question_ids, list) or not question_ids:
+            errors.append(f"{label}: question_ids must be a non-empty list")
+        elif (
+            any(not isinstance(qid, str) for qid in question_ids)
+            or set(question_ids) - allowed_questions
+            or len(question_ids) != len(set(question_ids))
+        ):
+            errors.append(f"{label}: question_ids must be unique Q221/Q222/Q223 values")
+        text = principle.get("text")
+        if not isinstance(text, str) or not text.strip():
+            errors.append(f"{label}: text must be non-empty")
 
     return errors
 
