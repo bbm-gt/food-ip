@@ -33,19 +33,21 @@ DOMAIN = "food-ip"
 # 路径配置
 # ============================================================================
 
-def _env_path(name: str, default: str) -> Path:
-    """Resolve an external path from the environment, keeping legacy defaults."""
-    return Path(os.environ.get(name, default))
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 
 
-# External data/tool paths are intentionally independent of this repository.
-# Environment variables provide relocation without changing the existing E:\ defaults.
+def _env_path(name: str, default: str | Path) -> Path:
+    """Resolve a path from the environment, with a repository-local default."""
+    return Path(os.environ.get(name, str(default)))
+
+
+# Environment variables provide relocation of external tools and data.
 DEFAULT_INPUT_DIR = _env_path(
     "FOOD_IP_INPUT_DIR", r"E:\BaiduNetdiskDownload\餐饮短视频ip打造"
 )
 FOOD_IP_SOURCES_DIR = _env_path("FOOD_IP_SOURCES_DIR", r"E:\food_ip_sources")
 FOOD_IP_KNOWLEDGE_DIR = _env_path(
-    "FOOD_IP_KNOWLEDGE_DIR", r"E:\food_ip_knowledge"
+    "FOOD_IP_KNOWLEDGE_DIR", REPOSITORY_ROOT / "knowledge_data"
 )
 LEGACY_TRANSCRIPTS_DIR = _env_path(
     "FOOD_IP_LEGACY_TRANSCRIPTS_DIR", r"E:\video_transcripts"
