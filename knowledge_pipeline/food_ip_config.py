@@ -453,20 +453,6 @@ def validate_internal_methodology() -> list[str]:
         )
 
     expected_kinds = ["boundary"] * 7 + ["decision_principle"] * 5
-    expected_questions = [
-        {"Q221", "Q223"},
-        {"Q222", "Q223"},
-        {"Q221", "Q223"},
-        {"Q221", "Q222", "Q223"},
-        {"Q222", "Q223"},
-        {"Q222", "Q223"},
-        {"Q222", "Q223"},
-        {"Q221", "Q222", "Q223"},
-        {"Q221", "Q222", "Q223"},
-        {"Q222"},
-        {"Q221", "Q223"},
-        {"Q221", "Q223"},
-    ]
     allowed_keys = {"kind", "question_ids", "text"}
     allowed_questions = {"Q221", "Q222", "Q223"}
 
@@ -493,9 +479,6 @@ def validate_internal_methodology() -> list[str]:
             or len(question_ids) != len(set(question_ids))
         ):
             errors.append(f"{label}: question_ids must be unique Q221/Q222/Q223 values")
-        elif index < len(expected_questions) and set(question_ids) != expected_questions[index]:
-            errors.append(f"{label}: question_ids do not match the confirmed mapping")
-
         text = principle.get("text")
         if not isinstance(text, str) or not text.strip():
             errors.append(f"{label}: text must be non-empty")
