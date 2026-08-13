@@ -115,7 +115,7 @@ The current formal development stage is **Phase 1 — Director Core minimum skel
 
 ## Knowledge Pipeline Rules
 
-`knowledge_pipeline/` remains an independent knowledge-production subsystem; it is not the product's only current mainline. Its existing video pipeline is one implemented and validated ingestion path, not the definition of all future knowledge sources.
+`knowledge_pipeline/` remains an independent knowledge-production subsystem; it is not the product's current mainline. The repository's formal mainline is **Director Core Phase 1 — minimum skeleton**. Its existing video pipeline is one implemented and validated ingestion path, not the definition of all future knowledge sources.
 
 Do not reopen completed reliability work without a concrete regression, failed test, violated invariant, or explicit task. Preserve:
 
