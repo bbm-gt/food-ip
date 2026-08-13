@@ -88,6 +88,29 @@ Preserve them unless an approved change explicitly alters their contract. Prefer
 
 Fixed strategies, content buckets, TopicCard selection, multi-candidate bundles, and fixed review scores may remain for legacy compatibility, but they must not determine the new workflow's creative judgment or routing.
 
+### Current Implementation Strategy
+
+The old creative core is frozen as Legacy: `CreativeConversation`, `CreativeBrief`, `TopicCard`, `ScriptBundle`, the old Writer, and fixed-score Review. Do not implement the new product mainline by continuing to modify these objects.
+
+The approved target is an independent Director Core:
+
+```text
+DirectorSession
+→ Director Orchestrator
+→ EXPLORE
+→ DEEPEN
+→ CREATE
+→ REVIEW
+→ READY
+→ ReadyContent
+```
+
+The new and legacy creative cores do not share a core state machine. When reuse is needed, connect through an explicit Adapter or stable boundary; do not let legacy `ScriptModel` or `ScriptBundle` contracts constrain the new core.
+
+Continue to reuse and protect general project/file persistence capabilities, message-idempotency patterns, Materials / Upload, Timeline, FFmpeg, Export, and applicable programmatic safety checks.
+
+The current formal development stage is **Phase 1 — Director Core minimum skeleton**. Phase 1 does not include a frontend rewrite, Knowledge Retrieval, complex Memory, Multi-Agent, complete CREATE or REVIEW prompts, or editing-pipeline refactoring. This is an approved implementation direction, not a claim that Director Core already exists.
+
 ---
 
 ## Knowledge Pipeline Rules

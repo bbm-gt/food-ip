@@ -44,10 +44,11 @@ Phase 0.5 Creative Value Gate  = PARTIAL / STRONG POSITIVE（非 PASS）
 以上为历史验收状态，不是当前 blocker
 子系统当前工作方向             = 继续建设 Professional Creative Knowledge System
 下一项讨论                     = 知识源分层 / 准入 / 证据质量 / 时效治理
-Fact Contract / Fact Boundary  = 未来产品能力，当前 Deferred
+Owner Facts / Knowledge 边界原则 = 当前立即生效
+正式 Fact Contract 与程序实现    = 当前 Deferred
 ```
 
-## 事实边界（未来产品长期原则；当前 Deferred）
+## 事实边界原则（当前生效；正式运行时契约 Deferred）
 
 区分三类：
 
@@ -57,7 +58,9 @@ creative_decision = AI 的创作判断与建议
 missing_facts     = 创作需要但尚未确认的信息
 ```
 
-Knowledge 不能充当当前老板事实；未确认信息标"需确认"或"如果事实成立，可以这样拍"。老板信息不足且某个事实确实是当前创作判断所必需时，只向老板做最少量关键追问；不重要的信息不追问，也不能编造。边界未来由 system / validation 层强制，不能指望知识本身提供；当前不实现 Fact Contract 或兼容改造。
+Owner Facts 与 Knowledge 必须分离。Knowledge 不能充当或创造当前老板事实，AI 推测也不能升级为 Owner Facts；未确认信息标"需确认"或"如果事实成立，可以这样拍"。老板信息不足且某个事实确实会实质影响当前创作判断时，只做最少量关键追问；不重要的信息不追问，也不能编造。
+
+以上边界原则当前立即生效。仍属 Deferred 的是正式 Fact Contract Schema、程序级 Fact Validation、Persistence Contract、兼容迁移与运行时具体实现；这些能力未来应由 system / validation 层强制，当前不自行实现。
 
 ## 目录与架构
 
@@ -92,7 +95,8 @@ docs/creative_value_gate/                        4 场景 A/B 评估档案（Gat
 ## 禁止事项
 
 - **不构建 Multi-Agent**；优先 Workflow + structured modules。
-- **不实现当前 Deferred 能力**：Fact Contract、Creative Decision、Memory、Retrieval 基础设施、GraphRAG、Neo4j、RAPTOR、复杂 Vector DB、Content Engine V2、Director Agent 或 Multi-Agent 产品架构。
+- **不实现当前 Deferred 的正式事实契约与运行时机制**：Fact Contract Schema、程序级 Fact Validation、Persistence Contract、兼容迁移或具体运行时实现；当前 Owner Facts / Knowledge 边界原则仍必须遵守。
+- 未经明确批准，不新增 Creative Decision Schema、Memory、Retrieval 基础设施、GraphRAG、Neo4j、RAPTOR、复杂 Vector DB、Content Engine V2、Director Agent 或 Multi-Agent 产品架构。
 - 不把约 77 个视频或任何未确认的来源清单写成 Knowledge System 的全部范围，也不把尚未确认的准入、评分、证据或时效规则写成既定方案。
 - **不重新折腾已完成的 P0**（无回归、无违规、无明确任务时不重审）。
 - **不改弱验证**：不伪造 evidence / provenance / identity；原子持久化、崩溃恢复、幂等重跑不变。

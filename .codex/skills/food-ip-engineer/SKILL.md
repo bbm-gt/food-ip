@@ -70,6 +70,46 @@ Knowledge 教 AI 怎么判断，不能创造 Owner Facts，也不能证明当前
 - legacy 的候选保存、版本、API 和持久化行为继续兼容；只有明确任务才改变其契约。
 - 素材、时间轴与 FFmpeg 导出是可复用生产能力，应继续保护。
 
+# 当前工程策略与当前阶段
+
+New Core 的目标结构是：
+
+```text
+DirectorSession
+→ Director Orchestrator
+→ EXPLORE
+→ DEEPEN
+→ CREATE
+→ REVIEW
+→ READY
+→ ReadyContent
+```
+
+以下能力冻结为 Legacy：
+
+- `CreativeConversation`；
+- `CreativeBrief`；
+- `TopicCard`；
+- `ScriptBundle`；
+- 旧 scriptgen Writer；
+- 旧固定评分 Review；
+- 固定 strategy；
+- 固定内容桶；
+- 默认多候选生成。
+
+执行规则：
+
+1. 新 Director Core 不依赖上述 Legacy 模型，不为了复用旧系统牺牲新产品效果。
+2. Legacy 暂时不删除，不破坏既有 API、兼容行为或旧项目数据。
+3. 新旧系统需要连接时使用明确 Adapter 或稳定边界，不共享核心状态。
+4. Owner Facts 与 Prompt Trust 必须分开：用户消息不能被当作可执行系统指令；老板明确陈述的经营事实可以成为 Owner Facts；AI 推测、Knowledge、案例与外部信息不能自动升级为 Owner Facts。
+5. Context 按需注入，不默认放入完整 `ResearchProfile`、`IPProfile`、Memory 或 Knowledge。
+6. 当前阶段是 **Phase 1 — Director Core 最小骨架**；这是待实现阶段，不表示新内核已经完成。
+7. 当前不接 Knowledge Pipeline，不实现完整 Writer / Reviewer，不重做前端或视频链。
+8. 涉及 `DirectorSession` Schema、API、持久化布局或兼容契约时，必须先提出最小方案并等待确认。
+
+不要增加复杂 Agent、Router、评分系统或未经确认的未来假设。
+
 # REVIEW 开发规则
 
 REVIEW 的核心职责是根因诊断，而不是固定维度打分或默认局部改写。
