@@ -1,16 +1,51 @@
-# Food IP Studio
+# Food-IP
 
-Food IP Studio 是一个面向餐饮老板的短视频生产工具，用深度调研建立门店与老板 IP 档案，生成多套可选拍摄脚本，并把实拍素材剪成可下载的竖屏成片。
+Food-IP 是**餐饮老板的 AI 内容编导**。它帮助老板找到现在最值得说的内容，补足真正影响内容质量的真实素材，完成创作与根因自检，最终交付可拍内容。
 
-当前 MVP 流程：
+面向用户的完整目标体验是：
 
 ```text
-五步深度调研 → IP 定位 + AI 共创 → TopicCard 选（可跳过） → AI 生成 + 程序硬校验 + AI 编导审稿 → 选择脚本 → 分镜拍摄 → 素材拼接 → 接缝调节 → 导出成片
+发现
+→ 深挖
+→ 判断
+→ 定方向
+→ 再深挖
+→ 创作
+→ 自检
+→ 可拍
 ```
 
-脚本主路径使用“规则选题 + DeepSeek 生成 + 程序质检”：规则负责事实与拍摄边界，AI 负责连贯表达和详细导演指导，默认返回三套方向不同的方案。生成通过程序硬校验后，会自动附加一轮 AI 编导 9 维审稿与程序化低分判定；AI 局部修稿已实现为独立函数（尚未自动接入生成流程）。旧版模板接口继续保留用于兼容已有项目；视频成片润色仍为后续能力。
+产品内部主状态统一为：
 
-素材镜头编号与脚本保持一致（默认从 1 开始）；删除中间素材后，下一次上传会优先补齐缺失编号。转场支持硬切、淡入淡出和真正的音视频 crossfade。
+```text
+EXPLORE
+→ DEEPEN
+→ CREATE
+→ REVIEW
+→ READY
+```
+
+Workflow 只控制关键边界与状态流转，AI 负责边界内的具体创作判断。`REVIEW` 必须先判断根因，再决定返回 `CREATE`、`DEEPEN` 或 `EXPLORE`，不能默认直接重写。
+
+## 当前产品方向
+
+- 旧 `ResearchProfile → IPProfile → CreativeBrief → TopicCard → ScriptBundle → 固定评分 Review` 创作主线已冻结为 **Legacy**，只承担兼容、基线和必要维护，不再作为新产品架构基础。
+- 后续新建独立的 **Director Core**，以 `EXPLORE → DEEPEN → CREATE → REVIEW → READY` 为主链；当前仓库尚未把这套新内核描述为已实现。
+- 现有 Materials、Timeline、FFmpeg、Export 与部分成熟持久化能力继续作为工程底座复用。`backend/app/engine/timeline.py` 仍是时间轴时长的权威来源。
+- `knowledge_pipeline/` 保持独立的知识生产子系统，不等同于整个 Food-IP 产品主线，也不直接耦合进 Director Core。
+- Owner Facts 只能来自老板或其他明确可信、已确认的来源；Knowledge 教 AI 如何判断，不能证明当前餐厅发生了什么。
+
+当前开发规范以 [`AGENTS.md`](AGENTS.md) 与 [`.codex/skills/food-ip-engineer/SKILL.md`](.codex/skills/food-ip-engineer/SKILL.md) 为准。目标架构与下一阶段范围分别见 [`docs/architecture.md`](docs/architecture.md) 和 [`docs/next-tasks.md`](docs/next-tasks.md)。
+
+## 仓库结构
+
+```text
+backend/             产品后端、Legacy 创作能力与可复用生产能力
+frontend/            当前 Web 客户端
+knowledge_pipeline/  独立 Creative Knowledge 生产子系统
+docs/                架构、API、产品决策、部署与项目文档
+runtime/             本地项目运行数据，不是源代码
+```
 
 ## 快速开始
 
@@ -45,7 +80,7 @@ cd ..
 backend/.venv/Scripts/python.exe -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
 ```
 
-构建后，FastAPI 从 `frontend/dist` 托管首页与 `/assets` 静态文件；API 仍位于 `/api`，整个应用只需一个服务进程。
+构建后，FastAPI 从 `frontend/dist` 托管首页与 `/assets` 静态文件；API 仍位于 `/api`。
 
 ## 环境变量
 
@@ -58,15 +93,31 @@ backend/.venv/Scripts/python.exe -m uvicorn backend.app.main:app --host 0.0.0.0 
 | `CORS_ORIGINS` | `http://localhost:5173`；允许跨域访问 API 的前端来源列表 |
 | `FRONTEND_DIST` | `<仓库根>/frontend/dist`；可选覆盖生产前端构建目录 |
 | `DEEPSEEK_API_KEY` | DeepSeek 密钥；只写入本机 `.env`，前端和接口响应不会返回该值 |
-| `AI_SCRIPT_BASE_URL` | 默认 `https://api.deepseek.com`；更换兼容服务时修改 |
-| `AI_SCRIPT_MODEL` | 默认 `deepseek-v4-flash`；后续换模型无需修改业务代码 |
-| `AI_SCRIPT_THINKING` | 默认 `disabled`，降低延迟与费用；可改为 `enabled` |
-| `AI_SCRIPT_TIMEOUT_SECONDS` | 默认 `90`；单次模型请求超时秒数 |
+| `AI_SCRIPT_BASE_URL` | 默认 `https://api.deepseek.com`；Legacy 脚本生成兼容配置 |
+| `AI_SCRIPT_MODEL` | 默认 `deepseek-v4-flash`；Legacy 脚本生成兼容配置 |
+| `AI_SCRIPT_THINKING` | 默认 `disabled`；Legacy 脚本生成兼容配置 |
+| `AI_SCRIPT_TIMEOUT_SECONDS` | 默认 `90`；Legacy 模型请求超时秒数 |
 
-## 测试
+## 验证
+
+后端：
 
 ```powershell
-backend/.venv/Scripts/python.exe -m pytest backend/app/tests -q
+backend/.venv/Scripts/python.exe -m pytest backend/app/tests -q --basetemp .pytest-basetemp
 ```
 
-更多说明见 [深度调研与多脚本设计](docs/questionnaire-design.md)、[REST API 契约](docs/api.md)、[部署说明](docs/deploy.md)、[AI 润色接口](docs/polish-interface.md) 和 [抖音官方说明同步工具](docs/official-guidance-sync.md)。
+前端：
+
+```powershell
+cd frontend
+npm.cmd run build
+```
+
+Knowledge Pipeline：
+
+```powershell
+cd knowledge_pipeline
+python -m pytest -q
+```
+
+现有 REST API 行为见 [`docs/api.md`](docs/api.md)。[`docs/questionnaire-design.md`](docs/questionnaire-design.md) 仅记录旧调研与多脚本方案，不代表当前产品主线。

@@ -1,9 +1,11 @@
 # Food-IP Knowledge Pipeline
 
-`knowledge_pipeline/` is the current mainline for the Food-IP Professional
-Creative Knowledge System. It remains logically independent from `backend/`
-and `frontend/`: it produces validated, traceable Knowledge; the product
-runtime may consume a stable contract later.
+The repository's formal mainline is Director Core Phase 1 — minimum skeleton.
+`knowledge_pipeline/` is an independent Food-IP Professional Creative
+Knowledge production subsystem, not the repository's current mainline. It
+remains logically independent from `backend/` and `frontend/`: it produces
+validated, traceable Knowledge; the product runtime may consume a stable
+contract later.
 
 The existing course-video pipeline is one implemented and validated knowledge
 ingestion path, not the complete set of future knowledge sources. Source

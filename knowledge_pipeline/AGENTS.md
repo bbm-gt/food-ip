@@ -1,8 +1,12 @@
 # Food-IP Knowledge Pipeline — 维护指南
 
-本仓库是**专业 Food-IP Creative Knowledge System**。现有课程视频 pipeline 是一条已经实现并验证的知识摄入路径（课程视频 → 结构化、可追溯、有边界的知识），不是全部知识来源。未来知识源分层、准入标准、证据质量与时效治理尚未确认，不在本文件中预设。
+`knowledge_pipeline/` 是 Food-IP 仓库中的**独立 Creative Knowledge 生产子系统**。本文件中的“当前阶段”“当前工作”与“当前主线”均只指该子系统，不代表整个 Food-IP 产品当前主线；产品主线以父级 `AGENTS.md` 与 `docs/architecture.md` 为准。
 
-> 本文件是本仓库 AI 编程工具的主要工程规则入口。详细架构、验收记录与历史阶段信息以相关 `docs/` 文档为准。`CLAUDE.md` 保留为 Claude Code 专用项目指令，不维护与本文档冲突的工程规则。
+仓库当前正式主线是 **Director Core Phase 1 — 最小骨架**。`knowledge_pipeline/` 是独立的 Creative Knowledge 生产子系统，不代表整个仓库的当前主线；只有在明确授权时，才维护或继续优化该子系统。
+
+现有课程视频 pipeline 是一条已经实现并验证的知识摄入路径（课程视频 → 结构化、可追溯、有边界的知识），不是全部知识来源。未来知识源范围与治理方案尚未确认，不在本文件中预设。
+
+> 本文件是 `knowledge_pipeline/` 子系统的工程规则入口。详细架构、验收记录与历史阶段信息以该子系统相关 `docs/` 文档为准；全仓库规范以父级 `AGENTS.md` 为最高权威。
 
 ## 开始工作
 
@@ -28,8 +32,7 @@ food-ip/frontend/           = 老板最终使用的产品前端
 ```
 
 本文件只约束 `knowledge_pipeline/` 子系统；全仓库工程规则以父级
-`food-ip/AGENTS.md` 为最高权威。`knowledge_pipeline/CLAUDE.md` 仅提供
-Claude Code 操作补充，不高于任一 `AGENTS.md`。
+`food-ip/AGENTS.md` 为最高权威。
 
 Knowledge 只教 AI **怎么判断**，不能告诉 AI **当前老板实际上发生了什么**（见"事实边界"）。
 
@@ -41,12 +44,13 @@ P0 Reliability                 = FINAL GO / CLOSED（勿重新折腾）
 Knowledge Creative Value       = Strong Positive Signal
 Phase 0.5 Creative Value Gate  = PARTIAL / STRONG POSITIVE（非 PASS）
 以上为历史验收状态，不是当前 blocker
-当前主线                       = 继续建设完整的 Professional Creative Knowledge System
-下一项讨论                     = 知识源分层 / 准入 / 证据质量 / 时效治理
-Fact Contract / Fact Boundary  = 未来产品能力，当前 Deferred
+仓库当前正式主线               = Director Core Phase 1 — 最小骨架
+knowledge_pipeline 当前定位     = 独立子系统；仅在明确授权时维护或优化
+Owner Facts / Knowledge 边界原则 = 当前立即生效
+正式 Fact Contract 与程序实现    = 当前 Deferred
 ```
 
-## 事实边界（未来产品长期原则；当前 Deferred）
+## 事实边界原则（当前生效；正式运行时契约 Deferred）
 
 区分三类：
 
@@ -56,7 +60,9 @@ creative_decision = AI 的创作判断与建议
 missing_facts     = 创作需要但尚未确认的信息
 ```
 
-Knowledge 不能充当当前老板事实；未确认信息标"需确认"或"如果事实成立，可以这样拍"。老板信息不足且某个事实确实是当前创作判断所必需时，只向老板做最少量关键追问；不重要的信息不追问，也不能编造。边界未来由 system / validation 层强制，不能指望知识本身提供；当前不实现 Fact Contract 或兼容改造。
+Owner Facts 与 Knowledge 必须分离。Knowledge 不能充当或创造当前老板事实，AI 推测也不能升级为 Owner Facts；未确认信息标"需确认"或"如果事实成立，可以这样拍"。老板信息不足且某个事实确实会实质影响当前创作判断时，只做最少量关键追问；不重要的信息不追问，也不能编造。
+
+以上边界原则当前立即生效。仍属 Deferred 的是正式 Fact Contract Schema、程序级 Fact Validation、Persistence Contract、兼容迁移与运行时具体实现；这些能力未来应由 system / validation 层强制，当前不自行实现。
 
 ## 目录与架构
 
@@ -91,7 +97,8 @@ docs/creative_value_gate/                        4 场景 A/B 评估档案（Gat
 ## 禁止事项
 
 - **不构建 Multi-Agent**；优先 Workflow + structured modules。
-- **不实现当前 Deferred 能力**：Fact Contract、Creative Decision、Memory、Retrieval 基础设施、GraphRAG、Neo4j、RAPTOR、复杂 Vector DB、Content Engine V2、Director Agent 或 Multi-Agent 产品架构。
+- **不实现当前 Deferred 的正式事实契约与运行时机制**：Fact Contract Schema、程序级 Fact Validation、Persistence Contract、兼容迁移或具体运行时实现；当前 Owner Facts / Knowledge 边界原则仍必须遵守。
+- 未经明确批准，不新增 Creative Decision Schema、Memory、Retrieval 基础设施、GraphRAG、Neo4j、RAPTOR、复杂 Vector DB、Content Engine V2、Director Agent 或 Multi-Agent 产品架构。
 - 不把约 77 个视频或任何未确认的来源清单写成 Knowledge System 的全部范围，也不把尚未确认的准入、评分、证据或时效规则写成既定方案。
 - **不重新折腾已完成的 P0**（无回归、无违规、无明确任务时不重审）。
 - **不改弱验证**：不伪造 evidence / provenance / identity；原子持久化、崩溃恢复、幂等重跑不变。

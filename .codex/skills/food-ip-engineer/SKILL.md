@@ -1,426 +1,234 @@
 ---
 name: food-ip-engineer
-description: 用于维护 Food IP Studio 项目的 Professional Creative Knowledge System、前后端、AI 脚本生成、素材处理、时间轴编辑和 FFmpeg 导出流程。适用于分析、修改、调试或扩展该项目时，尤其适用于需要遵守既有 API、文件持久化、知识证据边界、AI 质量约束和视频时间轴规则的任务。
+description: 用于开发和维护 Food-IP「餐饮老板的 AI 内容编导」，覆盖 EXPLORE、DEEPEN、CREATE、REVIEW、READY 产品主链，以及前后端、知识生产、素材、时间轴和 FFmpeg 导出。适用于需要遵守 Owner Facts / Knowledge 边界、既有 API 与持久化兼容、知识证据约束和工程验证纪律的任务。
 ---
 
 # 项目定位
 
-Food IP Studio 是面向餐饮老板的 AI 短视频 IP 生产系统。
+Food-IP 是餐饮老板的 AI 内容编导。
 
-当前项目主线是继续建设完整的 Food-IP Professional Creative Knowledge
-System。现有课程视频 pipeline 是已经实现并验证的一条知识摄入路径，不是
-Knowledge System 的全部知识来源；知识源分层、准入标准、证据质量与时效治理
-尚未确认，不在本 Skill 中自行设计。
+当前产品主链：
 
-Fact Contract / Fact Boundary、Creative Decision、Memory、Retrieval 是未来产品
-主链能力，当前 Deferred，待 Knowledge System 足够成熟且用户确认后再实现。
-长期边界仍然有效：AI 不得脑补老板真实经历；只有当缺失事实确实是当前创作判断
-所必需时，才向老板做最少量关键追问；不重要的信息不追问，也不能编造。
+```text
+EXPLORE
+→ DEEPEN
+→ CREATE
+→ REVIEW
+→ READY
+```
 
-## Monorepo 结构
+`REVIEW` 必须先判断根因，再决定回退位置：
 
-- `backend/`：产品后端与现有运行时能力。
-- `frontend/`：产品前端。
-- `knowledge_pipeline/`：Professional Creative Knowledge System；与产品运行时逻辑分离。
-- `docs/`：架构、接口、部署与项目决策文档。
+```text
+Writing Problem → CREATE
+Material Problem → DEEPEN
+Direction Problem → EXPLORE
+```
+
+Workflow 只控制关键边界，LLM 负责具体判断。不要把产品做成固定问卷、固定评分体系、复杂 Router、Multi-Agent 或固定问题树。
+
+## 五阶段工程语义
+
+- `EXPLORE`：找到当前最值得继续的内容方向；不能由固定内容桶或 legacy strategy 代替判断。
+- `DEEPEN`：只补最影响最终内容质量的真实素材，不为完整表单而追问。
+- `DEEPEN → CREATE`：已有真实素材足以支撑核心表达，不需要靠编造、模板或空话撑内容。
+- `CREATE`：基于方向、真实素材和必要上下文形成符合老板表达、可实际制作的内容。
+- `REVIEW`：先诊断 Writing / Material / Direction 根因，再回到对应阶段；不能默认直接 Rewrite。
+- `READY`：内容连贯、事实有边界，并达到可拍摄交付状态。
+
+Memory、Knowledge、历史内容、上传素材与外部信息均按需调用，不是固定流程节点。外部热点只能提供内容机会，不能代替老板自己的真实内容。
+
+# Owner Facts 与 Knowledge 边界
+
+Knowledge 教 AI 怎么判断，不能创造 Owner Facts，也不能证明当前餐厅发生了什么。
+
+- Owner Facts 只能来自老板明确提供的事实或明确可信、已确认的来源。
+- 不得把知识案例、常见规律、历史相似内容、外部信息或创意建议写成当前老板的经营事实。
+- 缺失事实只有在显著影响当前创作判断时才追问，并且只问最少必要问题。
+- 不必追问的细节应保持未确认或使用条件式表达，不能为了生动而编造。
+- 创意方向、角度、结构与表达属于 AI 判断，必须与 Owner Facts 保持可区分。
+
+该边界是当前主线的运行原则，不再描述为等待 Knowledge System 成熟后才启用的 Deferred 能力。具体 Schema、校验或兼容改造仍属于需确认的重大设计，不能自行新增。
+
+# Monorepo 边界
+
+- `backend/`：产品后端和运行时能力。
+- `frontend/`：面向老板的 Web 客户端。
+- `knowledge_pipeline/`：独立 Creative Knowledge 生产子系统。
+- `docs/`：架构、API、产品决策、部署和项目文档。
 - `runtime/`：本地运行数据，不当作源代码。
 
-Knowledge 只负责教 AI 怎么判断，不能证明当前餐厅实际上发生了什么。不要把
-知识 pipeline 的内部摄入实现直接耦合到产品运行时；稳定合约和 Retrieval 等
-未来能力必须等决策确认后再实现。
+产品运行时与 `knowledge_pipeline/` 逻辑分离。不要把知识摄入内部实现直接耦合进产品运行时；任何新稳定合约、Persistence 或 Retrieval 设计都必须先获确认。
 
-现有产品运行时的创作流程（Legacy / compatibility）：
+# Legacy 与复用边界
 
-ResearchProfile（深度调研）
-→ IPProfile（IP定位）
-→ CreativeConversation（AI编导共创）
-→ CreativeBrief 确认
-→ TopicCard（推荐选题层，可跳过）
-→ ScriptBundle（多脚本候选）
-→ 用户选择候选
-→ script.json（当前脚本）
+现有 Script Engine、`ResearchProfile`、legacy `BossInfo`、`IPProfile`、`CreativeConversation`、`CreativeBrief`、`TopicCard`、`ScriptBundle`、Writer / Review 工具、素材、时间轴、FFmpeg 与导出流程，属于 legacy、compatibility 或可复用能力，不是未来产品主链。
 
-之后进入：素材上传 → 时间轴编辑 → FFmpeg 导出。
+- 未经明确授权，不删除或破坏既有能力和已有项目数据。
+- 优先复用真正适合新主线的模块，但不能为了复用旧系统牺牲最终产品效果。
+- 不要默认把 TopicCard、多候选 ScriptBundle、固定 strategy、内容桶或固定 Review 分数接入新主线。
+- legacy 的候选保存、版本、API 和持久化行为继续兼容；只有明确任务才改变其契约。
+- 素材、时间轴与 FFmpeg 导出是可复用生产能力，应继续保护。
 
-该流程保留既有兼容能力，不代表当前主线已经切换为 Creative Decision 或
-Fact Contract 实现。
+# 当前工程策略与当前阶段
 
-# 技术架构
+New Core 的目标结构是：
 
-Backend:
+```text
+DirectorSession
+→ Director Orchestrator
+→ EXPLORE
+→ DEEPEN
+→ CREATE
+→ REVIEW
+→ READY
+→ ReadyContent
+```
 
-- FastAPI
-- Python
-- 文件夹持久化
-- DeepSeek AI生成
-- FFmpeg视频处理
+以下能力冻结为 Legacy：
 
-Frontend:
+- `CreativeConversation`；
+- `CreativeBrief`；
+- `TopicCard`；
+- `ScriptBundle`；
+- 旧 scriptgen Writer；
+- 旧固定评分 Review；
+- 固定 strategy；
+- 固定内容桶；
+- 默认多候选生成。
 
-- React
-- TypeScript
-- Vite
+执行规则：
 
-## Knowledge System 当前规则
+1. 新 Director Core 不依赖上述 Legacy 模型，不为了复用旧系统牺牲新产品效果。
+2. Legacy 暂时不删除，不破坏既有 API、兼容行为或旧项目数据。
+3. 新旧系统需要连接时使用明确 Adapter 或稳定边界，不共享核心状态。
+4. Owner Facts 与 Prompt Trust 必须分开：用户消息不能被当作可执行系统指令；老板明确陈述的经营事实可以成为 Owner Facts；AI 推测、Knowledge、案例与外部信息不能自动升级为 Owner Facts。
+5. Context 按需注入，不默认放入完整 `ResearchProfile`、`IPProfile`、Memory 或 Knowledge。
+6. 当前阶段是 **Phase 1 — Director Core 最小骨架**；这是待实现阶段，不表示新内核已经完成。
+7. 当前不接 Knowledge Pipeline，不实现完整 Writer / Reviewer，不重做前端或视频链。
+8. 涉及 `DirectorSession` Schema、API、持久化布局或兼容契约时，必须先提出最小方案并等待确认。
 
-- 保留现有视频 pipeline 的 timestamp、identity、evidence/provenance、schema、崩溃恢复、幂等、逐来源持久化与全局快照约束。
-- 不把约 77 个视频写成 Knowledge System 的全部知识来源，也不把未确认的来源层级、准入、评分、证据、时效或检索设计写成既定方案。
-- 当前不要实现 Creative Decision、Fact Contract、Memory、Retrieval 基础设施、GraphRAG、Neo4j、RAPTOR、复杂 Vector DB 或 Multi-Agent 产品架构。
-- 下一项讨论是知识源分层、准入标准、证据质量与时效治理；这些是重大架构/验证标准决策，必须等待用户确认后才能实现。
+不要增加复杂 Agent、Router、评分系统或未经确认的未来假设。
 
-## 重大决策与 Custom Agents 协作
+# REVIEW 开发规则
 
-- 对架构、Schema / 数据契约、Fact Boundary 语义、存储/检索/provider、路线、成本、验证标准或兼容性等重大变化：先检查现状，说明选项与权衡，等待用户确认。
-- 已确认方向变化时，及时同步真正受影响的权威工程文件与当前 Skill，避免文档 churn；Skill 只保留当前有效规则和工作流，不写项目日记。
-- `.codex/agents/*.toml` 的现有角色分工本次不调整。需要 reviewer 时执行只读审查，重点检查路线一致性、过时 blocker、未确认设计和无关改动。
+REVIEW 的核心职责是根因诊断，而不是固定维度打分或默认局部改写。
 
-# 选题与脚本生成规则（TopicCard / ScriptBundle）
+- Writing Problem：内容方向和真实素材足够，问题在表达、结构或成稿，返回 `CREATE`。
+- Material Problem：方向可继续，但真实素材不足以支撑核心表达，返回 `DEEPEN`。
+- Direction Problem：当前方向本身不值得继续或无法成立，返回 `EXPLORE`。
+- 程序合规、真实性和结构校验可以作为保护边界，但不能用固定总分代替 LLM 的根因判断。
+- REVIEW 不得改变 Owner Facts，也不得把外部热点或知识案例补成老板事实。
 
-## TopicCard 锁题
+现有 Director Review、评分字段或局部修稿能力只作为 legacy / 可复用实现事实保留，不作为新主线的固定运行逻辑。
 
-- TopicCard 是 CreativeBrief 与详细脚本之间的选题层。
-- 用户一旦选择 TopicCard，后续详细脚本必须锁定该 TopicCard 的核心主题。
-- 三套候选脚本必须围绕同一个 TopicCard。
-- 三套脚本的差异应来自不同表达方式、叙事结构、Hook、证据展示方式或拍摄方式，而不是来自不同主题。
-- 不允许底层通用 strategy 再把三套候选重新变成三个不同主题。
+# Knowledge Pipeline 规则
 
-## 跳过 TopicCard 的例外
+`knowledge_pipeline/` 继续作为独立知识生产子系统保留，但不是仓库当前正式主线。仓库当前正式主线是 **Director Core Phase 1 — 最小骨架**。现有课程视频 pipeline 是已经实现并验证的一条摄入路径，不代表全部未来知识来源。
 
-- 若用户没有选择 TopicCard，而是明确选择「跳过 TopicCard，直接从 confirmed Brief 生成」，可以继续使用现有 strategy 推荐逻辑（不同 strategy 可各自成题）。
+除非出现具体回归、测试失败、不变量被破坏或用户明确要求，不重开已完成的可靠性工作。保留：
 
-## ScriptBundle 数据边界
+- timestamp authority；
+- stable deterministic identities；
+- evidence / provenance；
+- strict schema validation；
+- crash / resume；
+- idempotency；
+- per-source persistence；
+- atomic global snapshots；
+- fail-fast validation。
 
-- 生成 ScriptBundle 只产出候选，不写入当前脚本。
-- ScriptBundle 不得自动覆盖当前 script.json。
-- 只有用户明确选择某个候选后，才将该脚本保存为当前 script.json。
-- 保留现有 script version 行为（当前脚本实际变化时向 script_versions.json 追加快照）。
+不得把尚未确认的知识源分层、准入规则、证据标准、时效治理、评分、Retrieval 或评估方案写成既定设计。知识管线的专属实现与测试规则以 `knowledge_pipeline/AGENTS.md` 为准。
 
-# AI 脚本质量规则（编剧 / 编导职责分离）
+# 决策权限
 
-## 1. AI 脚本质量流程原则
+以下重大变化必须先检查现状、说明选项与权衡、给出建议，并等待用户确认：
 
-推荐流程：
+- 产品架构或 Workflow 关键边界；
+- Schema / 数据契约；
+- Owner Facts / Knowledge 边界语义；
+- Persistence、存储或 Retrieval 策略；
+- 模型 / provider 策略；
+- 重大依赖；
+- 路线、阶段或成本；
+- 验证与验收标准；
+- 兼容性保证。
 
-脚本生成
-→ 程序硬规则校验
-→ AI 编导审稿
-→ 对低质量部分进行局部修稿
-→ 再次程序校验
-→ 输出最终候选
+不要自行新增 Schema、Persistence 设计、Router、Agent、评分机制、新状态或 Retrieval 架构。`.codex/agents/*.toml` 只有在用户明确要求时才能修改。
 
-## 2. AI 编剧与 AI 编导职责分离
+# 任务执行协议
 
-AI 编剧负责：
+## 1. 开始前
 
-- 根据已确认事实、IP、Brief、TopicCard 生成脚本。
-- 负责创意表达和镜头设计。
+- 先运行 `git status --short`，识别并保护用户已有修改。
+- 阅读任务涉及的代码、测试、API 与文档，不根据名称猜实现。
+- 用户当前指令和已确认产品决策决定目标方向；代码与测试说明当前已实现行为；发现冲突时报告，不把旧实现误当未来路线。
+- 只读取完成任务所需的项目文件，避免无关范围扩张。
 
-AI 编导负责：
+## 2. 修改前
 
-- 不负责重新选题。
-- 不擅自增加新经营事实。
-- 对已生成脚本进行独立质量评价。
-- 找出具体低质量位置并给出修改建议。
+- 梳理当前实现、涉及模块、数据流、前后端影响、兼容边界和风险。
+- 如果触及重大决策，先停下获取确认。
+- 已确认边界内优先选择最小、清晰、可验证的改动。
 
-底层可以暂时使用同一个模型，但 system prompt、输入输出 Schema 和职责必须分开。
+## 3. 实现纪律
 
-## 3. 编导评价维度
+- 优先修改和复用现有模块，避免平行系统、重复抽象与无关重构。
+- 保持 API 兼容和旧项目数据可读，除非任务明确改变契约。
+- 新增或改变行为时补充相应测试。
+- AI 输出必须经过与风险相称的程序约束，不能直接覆盖真实业务数据或生成未确认事实。
+- 外部付费 AI 调用在自动化测试中必须 mock，除非用户明确要求受控集成测试。
+- 不删除文件、不修改 secrets / `.env`、不 commit 或 push，除非用户明确要求。
 
-至少评价以下维度：
+## 4. 前端边界
 
-- opening_hook_strength：开头吸引力
-- oral_naturalness：老板说话是否自然、是否存在 AI 腔
-- information_density：是否有废话或重复表达
-- progression：内容是否持续推进、有没有继续观看动力
-- evidence_strength：核心观点是否有真实证据支撑
-- ip_alignment：是否符合老板 IP
-- shootability：普通餐饮老板能否实际完成拍摄
-- ad_feeling：是否过于像硬广告
-- distinctiveness：三套候选之间是否有足够差异
+修改前端前，先检查当前页面流程、项目状态和刷新恢复实现。避免随意增加全局状态、复制业务状态或为了新主线无关重构。
 
-## 4. 修稿原则
+## 5. 视频与导出兼容
 
-- 优先局部修稿，不要因为一个镜头有问题就整篇重新生成。
-- 编导必须指出具体问题位置，而不是只给一个总分。
-- 修稿不得改变已确认事实。
-- 修稿不得偏离 confirmed Brief 或 selected TopicCard。
-- 修稿不得偷偷改变 IP 定位。
-- 修稿后仍必须经过现有程序硬规则校验。
+视频相关修改必须保护：
 
-## 5. 编导评分 ≠ 发布审核
+- `shot` 编号一致性；
+- `backend/app/engine/timeline.py` 的时长权威；
+- materials / upload 流程；
+- FFmpeg 导出流程。
 
-编导审稿是「内容质量优化层」；现有真实性、敏感词、拍摄限制等程序检查继续存在。
+不要在前端或多个模块重复维护最终时长逻辑。
 
-- 程序规则负责：不能出错、不能违规、不能编事实。
-- AI 编导负责：脚本好不好看、像不像真人说话、有没有网感、节奏和表达是否够强。
+## 6. 验证与完成
 
-两者职责不同，编导评分不替代程序合规检查。
-
-## 6. 用户确认边界
-
-可自动执行（内部）：
-
-- AI 编导评分
-- 局部自动修稿
-- 再次质检
-
-不得自动执行：
-
-- 修改长期档案
-- 修改已确认事实
-- 修改 selected TopicCard
-- 自动替用户选择最终候选脚本
-
-# Creative 路径失败降级原则（fallback）
-
-## 1. 模板 fallback 的适用范围
-
-普通旧 AI 生成入口可以继续使用现有 template fallback。
-
-## 2. 上下文驱动路径禁止静默降级
-
-以下上下文驱动路径：
-
-- IPProfile
-- confirmed CreativeBrief
-- selected TopicCard
-
-如果 AI 生成失败，不允许直接静默退回完全不使用这些上下文的旧模板。
-
-## 3. Creative 路径 fallback 的约束
-
-- 保留 IPProfile。
-- 保留 confirmed CreativeBrief。
-- 如果已选择 TopicCard，必须继续锁定该 TopicCard。
-- 不得重新换题。
-- 不得丢失已确认事实。
-- 不得凭空补充经营事实。
-
-## 4. 推荐失败顺序
-
-AI 正常生成
-→ 修复 / 重试
-→ 仍失败
-→ 使用当前 Creative Context 做简化安全生成
-→ 如果无法安全生成，则明确返回错误
-
-不要为了「永远返回三套脚本」而生成与用户选题无关的内容。
-
-## 5. 目标
-
-fallback 的目标是「降低生成复杂度」，不是「丢弃上下文」。
-
-# 开发原则
-
-1. 项目事实来源优先级（从高到低，详见「任务执行协议」第 1 节）：
-
-   - 当前实际代码
-   - 自动化测试
-   - `AGENTS.md`
-   - `docs/architecture.md`
-   - `docs/next-tasks.md`
-   - `docs/api.md`
-   - `README.md`
-   - `HANDOFF.md` / `CLAUDE.md`（完成重写前仅作历史参考，不作权威来源）
-
-   文档与当前代码或测试冲突时，一律以代码和测试为准。
-
-2. 不允许破坏已有流程：
-
-   - 项目创建
-   - 调研
-   - IP确认
-   - AI共创
-   - 脚本
-   - 素材
-   - 剪辑
-   - 导出
-
-3. 所有新增功能：
-
-   - 优先小范围修改
-   - 保持 API 兼容
-   - 补充测试
-
-4. 前端修改：
-
-   注意 `frontend/src/App.tsx` 目前承担：
-
-   - 页面流程状态
-   - 当前项目状态
-   - 刷新恢复逻辑
-
-   不要随意重构。
-
-5. AI相关：
-
-   - AI生成内容必须经过程序约束。
-   - 不要让模型直接覆盖业务数据。
-
-6. 视频相关：
-
-   保持：
-
-   - `shot` 编号
-   - `timeline` 权威计算
-   - FFmpeg 导出流程
-
-7. 执行任务时：
-
-   - 先分析现状
-   - 说明方案
-   - 再修改代码
-
-   不要直接重构。
-
-## Project-specific references
-
-No bundled scripts, references, or assets are required. Read the project files listed above directly when a task needs them.
-# Task Execution Protocol
-
-所有开发任务必须遵循以下流程。
-
-## 1. 任务开始前
-
-执行任务前：
-
-- 检查 git status，确认当前工作区状态。
-- 不覆盖用户已有修改。
-- 阅读任务涉及的代码和文档。
-- 不根据任务名称直接猜测实现方式。
-
-按项目事实来源优先级阅读（从高到低）：
-
-- 当前实际代码
-- 自动化测试
-- AGENTS.md
-- docs/architecture.md
-- docs/next-tasks.md
-- docs/api.md
-- README.md
-- HANDOFF.md / CLAUDE.md（完成重写前仅作历史参考）
-
-文档与当前代码或测试冲突时，以代码和测试为准；不把 HANDOFF.md 无条件当作权威来源。
-
-
-## 2. 修改前分析
-
-开始编码前，先分析：
-
-- 当前代码实现方式
-- 涉及模块
-- 数据流变化
-- 前后端影响范围
-- 可能风险
-
-
-输出：
-
-1. 当前实现
-2. 修改方案
-3. 风险点
-
-
-确认方案合理后再修改代码。
-
-
-## 3. 编码原则
-
-所有修改：
-
-- 优先小范围修改。
-- 不进行无关重构。
-- 保持已有 API 兼容。
-- 保持旧项目数据可读取。
-- 新增能力必须补充测试。
-
-
-禁止：
-
-- 删除已有功能。
-- 修改不相关模块。
-- 改变核心数据结构而不说明。
-
-
-## 4. 前端修改规则
-
-修改 React 前端时：
-
-注意当前 App.tsx 负责：
-
-- 页面流程控制
-- 当前项目状态
-- 刷新恢复逻辑
-
-
-修改前必须确认：
-
-- 是否影响页面恢复。
-- 是否影响项目上下文。
-- 是否需要拆分组件。
-
-
-避免：
-
-- 随意增加全局状态。
-- 在组件内复制业务状态。
-
-
-## 5. AI功能修改规则
-
-AI生成内容：
-
-必须经过业务约束。
-
-禁止：
-
-- 直接信任模型输出。
-- 覆盖真实业务数据。
-- 自动生成未经确认的事实。
-
-
-AI 对业务状态产生实际变更时，需要按对应流程获得用户确认。
-
-以下内部处理可以自动执行：
-
-- 结构化解析
-- 程序校验
-- AI 编导评分
-- 局部自动修稿
-- 再次质检
-
-自动处理不得修改：
-
-- 已确认事实
-- 长期档案
-- 已确认 IP 定位
-- selected TopicCard
-- 用户最终脚本选择
-
-
-## 6. 视频流程规则
-
-视频相关修改：
-
-保持：
-
-- shot编号一致。
-- timeline.py作为时间权威。
-- FFmpeg导出流程。
-
-
-禁止：
-
-- 前端自行计算最终时长。
-- 多处维护时间逻辑。
-
-
-## 7. 完成任务后
-
-必须执行：
+使用与改动范围匹配的最窄测试迭代，再运行受影响组件的完整检查。
 
 后端：
 
-```bash
-pytest backend/app/tests -q
+```powershell
+backend/.venv/Scripts/python.exe -m pytest backend/app/tests -q --basetemp .pytest-basetemp
 ```
+
+前端：
+
+```powershell
+cd frontend
+npm.cmd run build
+```
+
+Knowledge pipeline：
+
+```powershell
+cd knowledge_pipeline
+python -m pytest -q
+```
+
+完成前必须检查：
+
+- 测试 / build / type / lint 结果；
+- `git diff`；
+- `git status --short`；
+- 兼容性影响；
+- 是否存在无关改动。
+
+最终汇报实际修改、验证结果、兼容性与剩余风险，不把未实现能力描述为已完成。
+
+# Project-specific references
+
+No bundled scripts, references, or assets are required. Read the relevant project files directly when a task needs them.

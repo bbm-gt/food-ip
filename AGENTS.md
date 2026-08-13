@@ -2,27 +2,58 @@
 
 ## Mission
 
-Food-IP helps restaurant owners with little or no short-video experience decide what is worth filming today and quickly turn real business events, ideas, or goals into shoot-ready content that sounds like the owner.
+Food-IP is the AI content director for restaurant owners. It helps an owner identify what is most worth saying now, deepen the real material that makes it worth watching, create the content, diagnose quality problems, and reach a shoot-ready result.
 
-The target product flow is a future product capability, not the current implementation priority:
+The current product mainline is:
 
 ```text
-Owner Input
-→ Intent / Business Objective
-→ confirmed_facts
-→ missing_facts
-→ relevant Memory
-→ relevant Knowledge
-→ Creative Decision
-→ Writer
-→ Critic
-→ Directed Rewrite
-→ Shoot-ready Script
+EXPLORE
+→ DEEPEN
+→ CREATE
+→ REVIEW
+→ READY
 ```
 
-Keep the user-facing product simple. Prefer a clear structured workflow over unnecessary architectural complexity.
+`REVIEW` must diagnose the root cause before choosing the next action:
 
-The current mainline is continued development of the complete Food-IP Professional Creative Knowledge System. The existing video pipeline is one implemented and validated knowledge-ingestion path, not the complete definition of all future knowledge sources. Knowledge-source tiers, admission rules, evidence standards, and freshness governance remain open decisions and must not be invented here.
+```text
+Writing Problem → CREATE
+Material Problem → DEEPEN
+Direction Problem → EXPLORE
+```
+
+The workflow controls only critical boundaries. The LLM makes the concrete creative judgments inside those boundaries.
+
+---
+
+## Product Workflow Rules
+
+- `EXPLORE`: find the content direction most worth continuing now.
+- `DEEPEN`: obtain only the real material that most affects the final content quality.
+- `DEEPEN → CREATE`: proceed when the available real material can support the core expression without invention, templates, or empty filler.
+- `CREATE`: turn the chosen direction and real material into content that sounds like the owner and can be produced.
+- `REVIEW`: identify whether the root problem is writing, material, or direction; do not default directly to rewrite.
+- `READY`: the result is coherent, factually grounded, and shoot-ready.
+
+Memory, Knowledge, historical content, uploaded materials, and external information are on-demand capabilities, not mandatory workflow nodes. External trends may reveal a content opportunity, but they cannot replace the owner's own real content.
+
+Do not make fixed questionnaires, fixed scoring systems, complex Routers, Multi-Agent systems, or fixed question trees the core product logic. Do not add unconfirmed workflow states, schemas, persistence designs, scoring mechanisms, Retrieval architecture, Routers, or Agents.
+
+---
+
+## Fact and Knowledge Boundary
+
+Knowledge teaches the AI **how to judge**. It does not establish **what happened at the owner's restaurant**.
+
+Owner Facts must come from the owner or another explicitly trusted and confirmed source. Never promote examples, general knowledge, historical patterns, external information, or creative suggestions into facts about the current owner.
+
+When a useful fact is missing:
+
+- ask the minimum necessary question if it materially affects the current creative decision;
+- otherwise mark the detail as unconfirmed or express the suggestion conditionally;
+- never invent operational details to make the content more vivid.
+
+Creative judgment may recommend an angle, framing, structure, or expression, but it must remain distinguishable from Owner Facts.
 
 ---
 
@@ -30,164 +61,75 @@ The current mainline is continued development of the complete Food-IP Profession
 
 ```text
 backend/
-    Food-IP product backend and runtime capabilities.
+    Product backend and runtime capabilities.
 
 frontend/
     Web client.
 
 knowledge_pipeline/
-    Offline Creative Knowledge production system.
-    It turns source material into structured, validated, traceable knowledge.
+    Independent Creative Knowledge production subsystem.
 
 docs/
     Architecture, API, product decisions, deployment, and project documentation.
 
 runtime/
-    Local runtime/project data. Do not treat generated runtime data as source code.
+    Local runtime/project data; not source code.
 ```
 
-The knowledge pipeline and the Food-IP runtime belong to the same product but remain logically separated.
-
-```text
-knowledge_pipeline
-    produces knowledge
-
-backend / frontend
-    currently provide the product runtime and legacy script/video capabilities
-
-Creative Decision
-    is a future product layer that will decide how knowledge affects the current creative task
-```
-
-Do not couple the production application directly to internal ingestion implementation details when a stable knowledge contract is sufficient. Retrieval infrastructure and the future Creative Decision path are deferred.
+The runtime product and `knowledge_pipeline/` belong to the same product but remain logically separated. Do not couple the application to ingestion internals when an approved stable contract is sufficient.
 
 ---
 
-## Core Product Rules
+## Legacy and Reuse
 
-### 1. Fact Boundary (future product capability; Deferred)
+The existing Script Engine, `ResearchProfile`, legacy `BossInfo`, `IPProfile`, `CreativeConversation`, `CreativeBrief`, `TopicCard`, `ScriptBundle`, Writer/Review utilities, materials, timeline, FFmpeg, and export flows are legacy, compatibility, or reusable capabilities. They are not the future product mainline.
 
-Always distinguish:
+Preserve them unless an approved change explicitly alters their contract. Prefer reusing sound existing capabilities over parallel implementations, but never sacrifice the final product effect merely to reuse or preserve an old flow. Do not extend legacy structures into the new mainline by default.
+
+Fixed strategies, content buckets, TopicCard selection, multi-candidate bundles, and fixed review scores may remain for legacy compatibility, but they must not determine the new workflow's creative judgment or routing.
+
+### Current Implementation Strategy
+
+The old creative core is frozen as Legacy: `CreativeConversation`, `CreativeBrief`, `TopicCard`, `ScriptBundle`, the old Writer, and fixed-score Review. Do not implement the new product mainline by continuing to modify these objects.
+
+The approved target is an independent Director Core:
 
 ```text
-confirmed_facts
-creative_decision
-missing_facts
+DirectorSession
+→ Director Orchestrator
+→ EXPLORE
+→ DEEPEN
+→ CREATE
+→ REVIEW
+→ READY
+→ ReadyContent
 ```
 
-`confirmed_facts` are facts explicitly provided by the owner or already confirmed in a trusted memory source.
+The new and legacy creative cores do not share a core state machine. When reuse is needed, connect through an explicit Adapter or stable boundary; do not let legacy `ScriptModel` or `ScriptBundle` contracts constrain the new core.
 
-`creative_decision` contains AI judgments, recommendations, framing choices, and creative suggestions.
+Continue to reuse and protect general project/file persistence capabilities, message-idempotency patterns, Materials / Upload, Timeline, FFmpeg, Export, and applicable programmatic safety checks.
 
-`missing_facts` contains information required for a useful creative decision but not yet confirmed.
-
-Knowledge teaches the system **how to judge**. It does not establish **what happened at the current restaurant**.
-
-Never promote knowledge, examples, likely behavior, or creative suggestions into confirmed restaurant facts.
-
-If a useful detail is not confirmed:
-
-* ask for it when necessary;
-* mark it as requiring confirmation; or
-* express the creative suggestion conditionally.
-
-Do not invent concrete operational details to make a script more vivid.
-
-The long-term principle remains: AI must not invent the owner's real experiences. Ask the owner only the minimum necessary question when a missing fact is genuinely required for the current creative judgment; do not ask for irrelevant details and do not fabricate them.
-
-Fact Contract / Fact Boundary implementation and compatibility changes are Deferred until the Knowledge System is sufficiently mature. When that work is authorized, it must eventually be protected structurally through schemas and validation rather than prompt wording alone.
+The current formal development stage is **Phase 1 — Director Core minimum skeleton**. Phase 1 does not include a frontend rewrite, Knowledge Retrieval, complex Memory, Multi-Agent, complete CREATE or REVIEW prompts, or editing-pipeline refactoring. This is an approved implementation direction, not a claim that Director Core already exists.
 
 ---
 
-### 2. Creative Architecture
+## Knowledge Pipeline Rules
 
-The future architecture is the structured workflow defined above.
+`knowledge_pipeline/` remains an independent knowledge-production subsystem; it is not the product's current mainline. The repository's formal mainline is **Director Core Phase 1 — minimum skeleton**. Its existing video pipeline is one implemented and validated ingestion path, not the definition of all future knowledge sources.
 
-Do not introduce Multi-Agent architecture unless there is clear evidence that the simpler workflow cannot satisfy a verified requirement.
+Do not reopen completed reliability work without a concrete regression, failed test, violated invariant, or explicit task. Preserve:
 
-Do not add architectural layers for sophistication alone.
+- timestamp authority;
+- stable deterministic identities;
+- evidence and provenance;
+- strict schema validation;
+- crash/resume behavior;
+- idempotency;
+- per-source persistence;
+- atomic global snapshot behavior;
+- fail-fast validation.
 
-Prefer:
-
-```text
-simple module
-→ explicit contract
-→ validation
-→ test
-```
-
-over additional agents, orchestration layers, or infrastructure.
-
----
-
-### 3. Legacy Script Generation
-
-The existing script generation system is:
-
-```text
-compatibility
-+ baseline
-+ reusable capabilities
-```
-
-It is not the future creative-decision architecture.
-
-Do not delete it.
-
-Do not continue adding unrelated patches to it in an attempt to turn it into the new architecture.
-
-Prefer reuse where appropriate:
-
-* `ResearchProfile` → owner facts / memory source
-* `IPProfile` → long-term positioning and expression constraints
-* `CreativeConversation` → intent discovery and missing-fact interaction
-* `CreativeBrief` → existing reusable contract; schema changes require approval
-* `TopicCard` → optional interaction
-* existing Writer → future script writing from Creative Decision
-* Director Review → candidate for Critic
-* `revise_script_candidate` → candidate for Directed Rewrite
-* materials / timeline / FFmpeg / export → preserve
-
-Fixed strategies and content buckets may remain for legacy compatibility but must not determine what the owner should film in the new path.
-
----
-
-## Knowledge System Rules
-
-`knowledge_pipeline/` is the current mainline: the professional Food-IP Creative Knowledge System.
-
-Its supported source is not limited to the existing course-video pipeline. Other source categories, admission rules, evidence standards, and freshness policies are not yet decided; do not encode them as a contract or implementation plan.
-
-The existing video pipeline and its pilot/reliability results are historical validation of one ingestion path. They are not a claim that the Knowledge System has only that source or that all future sources have already been accepted.
-
-Its reliability baseline is already established.
-
-Do not reopen completed reliability work without a concrete regression, failed test, violated invariant, or explicit task.
-
-Preserve:
-
-* timestamp authority
-* stable deterministic identities
-* evidence and provenance
-* strict schema validation
-* crash/resume behavior
-* idempotency
-* per-source persistence
-* atomic global snapshot behavior
-* fail-fast validation
-
-Unless explicitly approved, do not introduce:
-
-* GraphRAG
-* Neo4j
-* RAPTOR
-* complex vector infrastructure
-* Multi-Agent systems
-* unrelated knowledge-platform infrastructure
-
-Do not turn an unconfirmed source list, admission policy, scoring scheme, freshness policy, retrieval design, or evaluation standard into an implementation decision. The next discussion is knowledge-source stratification, admission, evidence quality, and freshness governance; implementation waits for explicit confirmation.
-
-Knowledge-pipeline-specific implementation and test rules belong in `knowledge_pipeline/AGENTS.md`.
+Knowledge-source tiers, admission rules, evidence standards, freshness governance, Retrieval design, and evaluation standards remain unconfirmed unless the user explicitly approves them. Do not turn them into implementation decisions. Knowledge-pipeline-specific rules belong in `knowledge_pipeline/AGENTS.md`.
 
 ---
 
@@ -195,19 +137,16 @@ Knowledge-pipeline-specific implementation and test rules belong in `knowledge_p
 
 Do not silently make product or architecture decisions that materially change:
 
-* architecture
-* schemas or data contracts
-* Fact Boundary semantics
-* storage strategy
-* retrieval strategy
-* model/provider strategy
-* major dependencies
-* roadmap or phase boundaries
-* operating cost
-* validation or acceptance standards
-* compatibility guarantees
-
-Also treat updates to the authoritative engineering files and the active project Skill as part of the decision workflow when a confirmed project direction changes. Keep `.codex/agents/*.toml` role assignments unchanged unless explicitly requested.
+- architecture or workflow boundaries;
+- schemas or data contracts;
+- Fact / Knowledge boundary semantics;
+- persistence, storage, or Retrieval strategy;
+- model or provider strategy;
+- major dependencies;
+- roadmap or phase boundaries;
+- operating cost;
+- validation or acceptance standards;
+- compatibility guarantees.
 
 For such decisions:
 
@@ -216,73 +155,49 @@ For such decisions:
 3. recommend an option;
 4. stop and obtain user approval before implementation.
 
-Routine implementation details inside an already approved boundary do not require separate approval.
+Routine implementation details inside an approved boundary do not require separate approval. Keep authoritative engineering guidance and the active project Skill aligned when a product decision is confirmed. Do not change `.codex/agents/*.toml` role assignments unless explicitly requested.
 
 ---
 
 ## Engineering Rules
 
-Prefer modifying and reusing existing modules over creating parallel systems.
+Before modifying code, inspect `git status --short` and read the relevant code and tests. Preserve unrelated user changes.
 
-Keep the repository tidy.
+Prefer focused changes to existing modules. Keep the repository tidy and avoid duplicate abstractions, temporary committed scripts, redundant reports, unrelated refactors, directory churn, speculative infrastructure, and unnecessary renames.
 
-Avoid:
+Do not delete files, commit, push, modify secrets, or change `.env` files unless explicitly requested. Mock paid external AI calls in automated tests unless the task explicitly requires a controlled integration test.
 
-* duplicate abstractions
-* unnecessary helper modules
-* temporary scripts committed to the repository
-* redundant reports
-* unrelated refactors
-* directory churn
-* speculative infrastructure
-* renaming files without a concrete need
-
-Do not overwrite unrelated local changes.
-
-Before modifying code, inspect:
-
-```bash
-git status --short
-```
-
-Read the code and tests relevant to the task before changing behavior.
-
-Do not delete files, commit, push, modify secrets, or change `.env` files unless explicitly requested.
-
-External paid AI calls must be mocked in automated tests unless the task explicitly requires a controlled integration test.
+When implementation and documentation disagree, use code and tests to establish current implemented behavior, use confirmed product decisions to establish intended direction, and report the discrepancy instead of silently treating either as authoritative for both.
 
 ---
 
 ## Compatibility
 
-Preserve existing Food-IP capabilities unless the task explicitly changes their contract.
+Preserve existing capabilities unless the task explicitly changes their contract, including:
 
-In particular, do not casually break:
+- REST API behavior and persisted projects;
+- ResearchProfile / legacy BossInfo compatibility;
+- script and ScriptBundle compatibility;
+- materials and upload workflows;
+- timeline behavior;
+- FFmpeg export;
+- legacy script generation.
 
-* existing REST API behavior
-* existing persisted projects
-* ResearchProfile / legacy BossInfo compatibility
-* script and script-bundle compatibility
-* materials and upload workflows
-* timeline behavior
-* FFmpeg export
-* existing legacy script generation
-
-`backend/app/engine/timeline.py` remains the authoritative source for timeline duration unless an approved architecture decision explicitly changes that contract.
+`backend/app/engine/timeline.py` remains authoritative for timeline duration unless an approved architecture decision changes that contract.
 
 ---
 
 ## Build and Test
 
-From the repository root, run the checks relevant to the files changed.
+Run checks relevant to the files changed, using narrow tests during implementation and the appropriate broader validation before completion.
 
-Food-IP backend:
+Backend:
 
 ```powershell
 backend/.venv/Scripts/python.exe -m pytest backend/app/tests -q --basetemp .pytest-basetemp
 ```
 
-Food-IP frontend:
+Frontend:
 
 ```powershell
 cd frontend
@@ -291,14 +206,12 @@ npm.cmd run build
 
 Knowledge pipeline:
 
-```bash
+```powershell
 cd knowledge_pipeline
 python -m pytest -q
 ```
 
-Use the narrowest relevant tests during implementation, then run the appropriate broader validation before declaring the task complete.
-
-Never claim success based only on code inspection when executable validation is available.
+Do not claim success from inspection alone when executable validation is available.
 
 ---
 
@@ -306,34 +219,11 @@ Never claim success based only on code inspection when executable validation is 
 
 Before reporting completion:
 
-1. run relevant tests;
-2. run required build/type/lint checks for affected components;
-3. inspect `git status --short`;
-4. inspect the final diff;
-5. verify compatibility with the requested behavior;
-6. check for accidental unrelated changes.
+1. run relevant tests and build/type/lint checks;
+2. inspect `git status --short` and the final diff;
+3. verify the requested behavior and compatibility impact;
+4. check for accidental unrelated changes.
 
-Report:
+Report what changed, validations and results, compatibility considerations, and remaining risks or unresolved decisions. Do not describe unimplemented capabilities as complete.
 
-* what changed;
-* which files changed;
-* which validations ran;
-* their results;
-* any compatibility considerations;
-* remaining risks or unresolved decisions.
-
-Do not describe unimplemented capabilities as complete.
-
----
-
-## Documentation
-
-Keep this file concise and focused on durable repository-wide guidance.
-
-Do not turn `AGENTS.md` into a project diary or task history.
-
-Detailed architecture belongs in `docs/`.
-
-Current task state and handoff information should live in the appropriate project documentation rather than accumulating indefinitely here.
-
-When documentation and implementation disagree, inspect code and tests and report the discrepancy instead of silently assuming either side is correct.
+Keep this file concise and durable. Detailed architecture belongs in `docs/`; task history and handoff state do not belong here.
