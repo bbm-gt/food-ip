@@ -1,8 +1,10 @@
 # Food-IP Knowledge Pipeline — 维护指南
 
-本仓库是**专业 Food-IP Creative Knowledge System**。现有课程视频 pipeline 是一条已经实现并验证的知识摄入路径（课程视频 → 结构化、可追溯、有边界的知识），不是全部知识来源。未来知识源分层、准入标准、证据质量与时效治理尚未确认，不在本文件中预设。
+`knowledge_pipeline/` 是 Food-IP 仓库中的**独立 Creative Knowledge 生产子系统**。本文件中的“当前阶段”“当前工作”与“当前主线”均只指该子系统，不代表整个 Food-IP 产品当前主线；产品主线以父级 `AGENTS.md` 与 `docs/architecture.md` 为准。
 
-> 本文件是本仓库 AI 编程工具的主要工程规则入口。详细架构、验收记录与历史阶段信息以相关 `docs/` 文档为准。`CLAUDE.md` 保留为 Claude Code 专用项目指令，不维护与本文档冲突的工程规则。
+现有课程视频 pipeline 是一条已经实现并验证的知识摄入路径（课程视频 → 结构化、可追溯、有边界的知识），不是全部知识来源。未来知识源分层、准入标准、证据质量与时效治理尚未确认，不在本文件中预设。
+
+> 本文件是 `knowledge_pipeline/` 子系统的工程规则入口。详细架构、验收记录与历史阶段信息以该子系统相关 `docs/` 文档为准；全仓库规范以父级 `AGENTS.md` 为最高权威。
 
 ## 开始工作
 
@@ -28,8 +30,7 @@ food-ip/frontend/           = 老板最终使用的产品前端
 ```
 
 本文件只约束 `knowledge_pipeline/` 子系统；全仓库工程规则以父级
-`food-ip/AGENTS.md` 为最高权威。`knowledge_pipeline/CLAUDE.md` 仅提供
-Claude Code 操作补充，不高于任一 `AGENTS.md`。
+`food-ip/AGENTS.md` 为最高权威。
 
 Knowledge 只教 AI **怎么判断**，不能告诉 AI **当前老板实际上发生了什么**（见"事实边界"）。
 
@@ -41,7 +42,7 @@ P0 Reliability                 = FINAL GO / CLOSED（勿重新折腾）
 Knowledge Creative Value       = Strong Positive Signal
 Phase 0.5 Creative Value Gate  = PARTIAL / STRONG POSITIVE（非 PASS）
 以上为历史验收状态，不是当前 blocker
-当前主线                       = 继续建设完整的 Professional Creative Knowledge System
+子系统当前工作方向             = 继续建设 Professional Creative Knowledge System
 下一项讨论                     = 知识源分层 / 准入 / 证据质量 / 时效治理
 Fact Contract / Fact Boundary  = 未来产品能力，当前 Deferred
 ```

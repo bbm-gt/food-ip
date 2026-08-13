@@ -1,98 +1,45 @@
-# 待办任务（Next Tasks）
+# 下一任务：Director Core Phase 1
 
-> 记录日期：2026-08-07。保留 T111（Creative 流程接入前端）及后续脚本质量阶段的历史完成记录与 Legacy 维护待办；当前项目主线见下方“当前方向”，旧脚本待办不代表当前路线。
->
-> 已完成并提交（按顺序）：
-> - `daf2412` 修复用户可见错误信息乱码
-> - `c4c231e` 前端接入 IP 定位 + AI 共创流程（含 useCreativeFlow hook）
-> - `0050e56` AI 脚本 CTA 目标感知 + 质检失败 template_fallback 兜底
-> - `9aafdce` 规则路径 CTA 文案与 AI 路径对齐、去除禁用表达
-> - `209d6aa` 话术校验改为上下文约束（放行开场「先别划走」、结尾「收藏/报到」，保留夸大词硬禁）
-> - `b88d8d3` TopicCard 锁题 + AI 编导审稿管线（9 维评分、ScriptBundle review 接入、审稿失败隔离、程序化低分判定）
-> - `b532a6a` AI 局部修稿（`revise_script_candidate`：补丁式只修 issues 指定位置、锁题不可换题、修稿后过现有硬校验）
-> - `900aea8` 恢复主 Schema（`AIBundleOutput.candidates` 保持 min_length=2）；抽出 `_validate_candidates` 供单候选修稿复用硬校验
+> 更新日期：2026-08-13。本文只定义下一阶段开发范围；本次文档清理不实现任何业务代码、Schema、API、测试或运行时变更。
 
-## 当前方向（2026-08-11）
+## 当前主线
 
-**当前主线：继续建设完整的 Food-IP Professional Creative Knowledge System。**
+**Phase 1 — Director Core 最小骨架**
 
-```text
-Knowledge System
-```
+目标是在不改造旧创作系统的前提下，新建一个与 `CreativeConversation` 独立的 Director Core，为后续 `EXPLORE → DEEPEN → CREATE → REVIEW → READY` 产品主链建立最小、可恢复、可验证的运行骨架。
 
-- 现有课程视频 pipeline 是一条已经实现并验证的知识摄入路径，不是 Knowledge System 的全部知识来源。
-- 知识源分层、准入标准、证据质量与时效治理尚未确认；不要自行规定来源层级、评分权重、Schema、检索方案或其他基础设施。
-- Fact Contract / Fact Boundary、Creative Decision、Memory、Retrieval 是未来产品主链能力，当前 Deferred，待 Knowledge System 足够成熟且用户确认后再实现。
-- 当前不要实现 GraphRAG、Neo4j、RAPTOR、复杂 Vector DB 或 Multi-Agent 产品架构。
+采用“新内核重做 + 成熟工程底座复用”：旧 creative/scriptgen 系统冻结为 Legacy，既有 Materials、Timeline、FFmpeg、Export 与适用的持久化能力继续保护和复用。
 
-**下一项讨论（仅讨论，未授权实现）：**知识源分层、准入标准、证据质量与时效治理。这些属于重大架构/验证标准决策；先检查现状、说明选项与权衡，等待用户确认。
+## Phase 1 目标
 
-以下“本阶段已完成”内容是历史验收事实，不代表当前主线。下列 P1/P2 待办与“Legacy 路径待办”仅作为 legacy 路径维护记录；未经用户明确授权，不继续推进。
+- `DirectorSession`：定义新内核最小会话边界，不复用旧 `CreativeConversation` 作为新主线状态。
+- 五阶段状态机：支持 `EXPLORE`、`DEEPEN`、`CREATE`、`REVIEW`、`READY` 的最小合法流转骨架。
+- Orchestrator：接收用户输入、调用当前阶段能力并执行边界内流转；不提前演化为复杂 Router 或 Multi-Agent。
+- 独立持久化：Director Core 状态与旧创作会话分开保存，不破坏既有项目数据与兼容读取。
+- `client_message_id` 幂等：同一客户端消息重试不会重复推进会话或重复产生副作用。
+- 最小 API：只暴露创建/读取会话、提交消息及恢复所需的必要接口。
+- 状态恢复：进程或客户端中断后，可以从已持久化状态继续会话。
+- 基础测试：覆盖状态流转、持久化/恢复、消息幂等、最小 API 与 Legacy 隔离。
 
-## 本阶段已完成（2026-08-07 提交 `b88d8d3`）
+详细 Schema、API 路径、持久化布局与错误契约属于 Phase 1 实施前需要基于现状提出并确认的设计，不在本次 docs-only 更新中提前定案。
 
-- selected TopicCard 锁题：选中后三套候选锁定同一主题，锁题模式下 `strategy` 只是表现角度（Hook / 叙事 / 证据展示 / 老板表达 / 镜头组织）
-- 非锁题模式保留原 strategy 各开一题逻辑，行为不变
-- 独立 AI 编导审稿（`scriptgen/review.py`）：9 维 1-10 评分 + issues（定位 shot/字段）/ strengths / should_revise
-- `ScriptBundle` 新增可选 `review` / `review_error`，旧数据无此字段仍兼容读取
-- 审稿失败隔离：不丢弃已生成候选，仅记录 `review_error` 与 warning
-- 程序化低分判定 `review.judge_revision_needed`（纯程序规则，不调 AI）
+## 当前暂不做
 
-## 后续已完成（2026-08-07 提交 `b532a6a` / `900aea8`）
+- 前端重做；
+- Knowledge Retrieval 接入；
+- 完整 `CREATE` Prompt；
+- 完整 `REVIEW` Prompt；
+- 复杂 Memory；
+- Vector DB、GraphRAG 或其他复杂 Retrieval 基础设施；
+- Multi-Agent 或 Agent 网络；
+- 自动剪辑、Timeline、FFmpeg 或 Export 重构。
 
-- AI 局部修稿 `review.revise_script_candidate`：输入原候选 + 编导审稿 + 低分判定 + 调研档案 + creative_context，输出修稿后的新候选。只修改 verdict / issues 指向的镜头或字段（锚点限制）；补丁式输出（`extra=forbid`）结构上杜绝整篇重写；`candidate_id` / `strategy` 不可变；selected TopicCard 锁题时禁止改标题（防换题）；修稿后复用现有程序硬规则校验并重新生成 `quality_risks`；修稿 Prompt 独立于编剧与编导审稿。
-- 恢复主生成 Schema：`AIBundleOutput.candidates` 保持 `min_length=2`，不为局部修稿放宽；从 `_validate_quality` 抽出可复用核心 `_validate_candidates`，单候选修稿直接复用同一套硬校验。
+## Legacy 处理
 
-## Legacy 路径待办（非当前主线；未实现，勿标记为已完成）
+- 旧 `ResearchProfile → IPProfile → CreativeBrief → TopicCard → ScriptBundle → 固定评分 Review` 路径不再继续修补为新内核。
+- 未经明确任务，不删除旧系统，不改变其 Schema、API、持久化或运行行为。
+- Legacy 历史完成记录与维护事项以 Git 历史、现有 API 文档、代码和测试为准，不再把它们列为当前产品路线。
 
-> 属于 Legacy Script Generation 的旧待办，不是当前产品主线。未经用户明确授权，不继续推进。
+## Phase 1 开始前
 
-- 自动触发：低分候选自动调用局部修稿（接入生成流程 / 前端展示修稿结果与用户选择），当前 `revise_script_candidate` 只是独立函数，未自动接线。
-- 重新审稿：修稿后对结果再次 AI 编导审稿（当前仅局部修稿 + 程序硬校验，未重新评分）。
-- 与用户确认：修稿结果作为新候选保留还是替换原候选。
-
----
-
-## 历史 Legacy 路径待办（包括下列 P0/P1/P2；非当前主线）
-
-以下条目是旧脚本/运行时路径的历史维护记录，不是当前 Knowledge System 的立即任务；如需继续处理，必须获得用户明确授权。
-
-## P0 ｜ 代码一致性
-
-### 1. `/script-bundles/ip-ai` 缺少质检兜底
-- 现状：`backend/app/api/script.py` 的 `generate_ip_script_bundle_route` 仍只 `except AIScriptError` → 502；`AIResponseError`（质检失败）没有走 `template_fallback`。
-- 对比：普通 `/script-bundles/ai` 已实现兜底（`0050e56`）。
-- ⚠️ 注意：兜底使用规则模板，会**丢弃 IP 定位上下文**。需与用户确认是否要与普通路径保持一致。
-
-## P0 ｜ 文档更新（当前文档已失真）
-
-### 2. ✅ 修正 `docs/api.md` 中 `/script-bundles/ai` 的 502 语义（已完成，2026-08-07）
-- 已同步：两次输出未通过校验 → **200 + `generator=template_fallback`**（并写入 `script_bundle.json`，覆盖最近一次方案）；服务异常（`AIScriptError`：超时/连接/429/截断）→ 502；未配置/密钥无效（`AIConfigurationError`）→ 503。
-
-### 3. 重写 `HANDOFF.md`
-- 2026-08-07 已做必要修正并加历史说明标注（纯规则模板、AI 共创未实现等旧描述已更正），但完整重写仍待。
-- 需更新到真实状态：DeepSeek 为主路径、IP 定位 / AI 共创已实现、TopicCard 锁题、AI 编导审稿、质检失败 template_fallback。
-
----
-
-## P1 ｜ 端到端确认
-
-### 4. 真实环境触发一次 fallback
-- 构造必失败的 AI 输出场景（例如多次用弱提示），用真实 DeepSeek 确认 `/script-bundles/ai` 兜底在实跑中生效。
-- 单元测试已覆盖逻辑（`test_ai_quality_failure_falls_back_to_template`），本项是补一次实跑确认。
-
----
-
-## P2 ｜ 基础设施（较大，建议另起任务）
-
-### 5. 前端自动化测试
-- 当前前端只有 `npm run build`，无单测。
-- 建议引入 vitest，覆盖 `workflow.ts` 恢复逻辑、`useCreativeFlow` handler、`api/client.ts`。
-
-### 6. 环境整理
-- 安装正式 ffprobe（当前用 imageio-ffmpeg + ffmpeg 回退探测，实测准确但非正式）。
-- 清理 `runtime/projects/` 下 9 个遗留旧项目（动旧数据前需用户确认）。
-
-### 7. 二期方向（明确不在本次范围）
-- AI 视频润色真实 provider 接入（当前仅 `null` provider，恒 `not_configured`）。
-- 云端部署 / 手机端适配（`docs/deploy.md` 有思路）。
+正式实现前，应先检查当前代码、测试和持久化行为，提出最小设计与兼容影响，并对涉及 Schema、API 与持久化的决策取得用户确认。
