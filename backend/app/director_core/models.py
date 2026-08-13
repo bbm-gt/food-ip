@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator, model_validator
 
 from .canonical import is_blank_text
 
@@ -49,7 +49,7 @@ def _nonblank(value: str) -> str:
     return value
 
 
-UUID4Text = Annotated[StrictStr, Field(pattern=UUID4_PATTERN.pattern)]
+UUID4Text = Annotated[StrictStr, AfterValidator(validate_uuid4)]
 NonBlankText = Annotated[StrictStr, Field(min_length=1)]
 
 
@@ -332,6 +332,8 @@ class ExecutionStep(StrictModel):
             raise ValueError("illegal Director Core stage transition")
         if self.run_control == "READY" and self.target_stage != "READY":
             raise ValueError("READY run control requires READY target stage")
+        if self.run_control == "WAIT_FOR_OWNER" and self.target_stage != self.entered_stage:
+            raise ValueError("WAIT_FOR_OWNER must remain in the entered stage")
         if self.review is not None:
             expected = {
                 "WRITING_PROBLEM": "CREATE",
@@ -359,9 +361,85 @@ class TurnExecutionTrace(StrictModel):
                 raise ValueError("step_no and candidate_revision must be consecutive")
             if index < len(self.steps) and step.run_control != "CONTINUE":
                 raise ValueError("only the final step may stop the loop")
+            if index > 1 and step.entered_stage != self.steps[index - 2].target_stage:
+                raise ValueError("trace stage chain is discontinuous")
             if index == len(self.steps) and step.run_control == "CONTINUE":
                 raise ValueError("final step must WAIT_FOR_OWNER or READY")
         return self
+
+
+def validate_turn_execution_trace(
+    value: dict,
+    *,
+    pre_stage: Stage,
+    final_run_control: Literal["WAIT_FOR_OWNER", "READY"],
+    target_stage: Stage,
+    transition_reason_code: str,
+    gate_outcome: str | None,
+    review_root_cause: str | None,
+) -> TurnExecutionTrace:
+    """Validate a persisted trace as one closed execution chain, not loose steps."""
+    trace = TurnExecutionTrace.model_validate(value)
+    steps = trace.steps
+    if steps[0].entered_stage != pre_stage:
+        raise ValueError("trace first stage does not match Turn pre-state")
+    final = steps[-1]
+    if (
+        final.run_control != final_run_control
+        or final.target_stage != target_stage
+        or final.transition_reason_code != transition_reason_code
+        or (final.gate.outcome if final.gate else None) != gate_outcome
+        or (final.review.root_cause if final.review else None) != review_root_cause
+    ):
+        raise ValueError("Turn top-level fields do not close over the final trace step")
+
+    reason_routes = {
+        "OWNER_INPUT_REQUIRED": {("EXPLORE", "EXPLORE"), ("DEEPEN", "DEEPEN"), ("CREATE", "CREATE"), ("REVIEW", "REVIEW")},
+        "DIRECTION_CONFIRMED": {("EXPLORE", "DEEPEN")},
+        "DIRECTION_INVALID": {("REVIEW", "EXPLORE")},
+        "MATERIAL_GAP": {("DEEPEN", "DEEPEN"), ("REVIEW", "DEEPEN")},
+        "MATERIAL_SUFFICIENT": {("DEEPEN", "CREATE")},
+        "DRAFT_CREATED": {("CREATE", "REVIEW")},
+        "WRITING_REPAIR": {("REVIEW", "CREATE")},
+        "REVIEW_PASSED": {("REVIEW", "READY")},
+    }
+    for step in steps:
+        if (step.entered_stage, step.target_stage) not in reason_routes[step.transition_reason_code]:
+            raise ValueError("transition reason code does not match its transition")
+        if step.transition_reason_code == "OWNER_INPUT_REQUIRED" and step.run_control != "WAIT_FOR_OWNER":
+            raise ValueError("OWNER_INPUT_REQUIRED requires WAIT_FOR_OWNER")
+        if step.transition_reason_code == "REVIEW_PASSED":
+            if step.run_control != "READY" or step.gate is None or step.gate.gate_code != "READINESS_PASSED" or step.gate.outcome != "PASSED" or step.review is None or step.review.outcome != "PASSED":
+                raise ValueError("REVIEW_PASSED requires READY, a passed readiness gate, and passed review")
+        review_reasons = {
+            "DIRECTION_INVALID": "DIRECTION_PROBLEM",
+            "WRITING_REPAIR": "WRITING_PROBLEM",
+        }
+        if step.entered_stage == "REVIEW" and step.transition_reason_code == "MATERIAL_GAP":
+            review_reasons["MATERIAL_GAP"] = "MATERIAL_PROBLEM"
+        expected_root = review_reasons.get(step.transition_reason_code)
+        if expected_root is not None and (
+            step.review is None
+            or step.review.outcome != "BLOCKED"
+            or step.review.root_cause != expected_root
+        ):
+            raise ValueError("review outcome and root cause do not match the repair transition")
+        if step.gate is not None:
+            gate_targets = {
+                "READINESS_PASSED": ("PASSED", "READY"),
+                "DIRECTION_NOT_CONFIRMED": ("BLOCKED", "EXPLORE"),
+                "MATERIAL_INSUFFICIENT": ("BLOCKED", "DEEPEN"),
+                "CONTENT_INCOMPLETE": ("BLOCKED", "CREATE"),
+                "FACT_BOUNDARY_UNCLEAR": ("BLOCKED", "EXPLORE"),
+                "NOT_SHOOTABLE": ("BLOCKED", "CREATE"),
+                "OWNER_VOICE_MISMATCH": ("BLOCKED", "CREATE"),
+            }
+            if (step.gate.outcome, step.target_stage) != gate_targets[step.gate.gate_code]:
+                raise ValueError("gate outcome/code does not match target stage")
+        if step.review is not None and step.review.outcome == "BLOCKED":
+            if step.run_control != "CONTINUE":
+                raise ValueError("blocked review must continue to its repair stage")
+    return trace
 
 
 class TurnPostStateSnapshot(StrictModel):
@@ -430,6 +508,8 @@ class FirstResponse(StrictModel):
             raise ValueError("ready_content_id presence must match READY run control")
         if self.run_control == "READY" and self.stage != "READY":
             raise ValueError("READY response must target READY stage")
+        if self.stage == "READY" and self.run_control != "READY":
+            raise ValueError("READY stage requires READY run control")
         return self
 
 

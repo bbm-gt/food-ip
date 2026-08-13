@@ -13,6 +13,7 @@ from .canonical import (
     canonical_sha256,
     canonical_text,
     checkpoint_sha256,
+    normalize_text,
     parse_canonical_object,
     state_sha256,
     validate_normalized_request,
@@ -25,6 +26,7 @@ from .models import (
     TurnExecutionTrace,
     TurnPostStateSnapshot,
     validate_utc_millis,
+    validate_turn_execution_trace,
     validate_uuid4,
     validate_working_state,
 )
@@ -238,6 +240,7 @@ class DirectorRepository:
                 raise DirectorIntegrityError("Working State hash mismatch")
             self._validate_state_turn_link(row)
             self._validate_evidence_closure(session, validated)
+            self._validate_session_lifecycle(session, row)
             validate_utc_millis(row["updated_at"])
         except (ValueError, TypeError) as exc:
             if isinstance(exc, DirectorIntegrityError):
@@ -252,6 +255,17 @@ class DirectorRepository:
             latest_successful_turn_id=row["latest_successful_turn_id"],
             updated_at=row["updated_at"],
         )
+
+    def _validate_session_lifecycle(self, session: SessionRecord, state_row: sqlite3.Row) -> None:
+        """Enforce the READY terminal state across the four authoritative records."""
+        ready_row = self.connection.execute(
+            "SELECT id FROM director_ready_content WHERE session_id = ?", (session.id,)
+        ).fetchone()
+        if state_row["stage"] == "READY":
+            if session.lifecycle_status != "READY" or ready_row is None:
+                raise DirectorIntegrityError("READY Working State requires READY Session and ReadyContent")
+        elif session.lifecycle_status == "READY" or ready_row is not None:
+            raise DirectorIntegrityError("READY Session lifecycle requires READY Working State")
 
     def _validate_state_turn_link(self, row: sqlite3.Row) -> None:
         if row["state_version"] == 0:
@@ -272,16 +286,58 @@ class DirectorRepository:
     def _validate_evidence_closure(
         self, session: SessionRecord, state: dict[str, Any]
     ) -> None:
-        objects: list[dict[str, Any]] = []
-        objects.extend(state["owner_facts"])
-        objects.extend(state["owner_constraints"])
+        objects: list[tuple[str, dict[str, Any]]] = []
+        objects.extend(("owner_facts", item) for item in state["owner_facts"])
+        objects.extend(("owner_constraints", item) for item in state["owner_constraints"])
         if state["direction"] is not None:
-            objects.append(state["direction"])
-        objects.extend(state["rejected_items"])
-        objects.extend(state["material_state"]["required_confirmations"])
-        for item in objects:
+            objects.append(("direction", state["direction"]))
+        objects.extend(("rejected_items", item) for item in state["rejected_items"])
+        objects.extend(("required_confirmations", item) for item in state["material_state"]["required_confirmations"])
+        source_state: dict[str, Any] | None = None
+        source_session_id: str | None = None
+        for object_kind, item in objects:
             refs = list(item.get("evidence_refs", [])) + list(item.get("rejected_by_evidence_refs", []))
             inherited = item.get("inherited_from")
+            if inherited is not None:
+                if session.source_ready_content_id is None:
+                    raise DirectorIntegrityError("ordinary Session cannot contain inherited objects")
+                if object_kind not in {"owner_facts", "owner_constraints", "direction"}:
+                    raise DirectorIntegrityError("only active facts, constraints, and direction may be inherited")
+                if inherited["source_ready_content_id"] != session.source_ready_content_id:
+                    raise DirectorIntegrityError("inherited object does not name the direct ReadyContent")
+                if source_state is None:
+                    source_row = self.connection.execute(
+                        """SELECT rc.session_id, ws.state_version, ws.stage, ws.state_json,
+                                  ws.state_sha256, source.source_ready_content_id
+                           FROM director_ready_content rc
+                           JOIN director_sessions source ON source.id = rc.session_id
+                           JOIN director_working_state ws ON ws.session_id = source.id
+                           WHERE rc.id = ? AND source.lifecycle_status = 'READY'
+                             AND source.workspace_id = ? AND source.project_id = ?""",
+                        (session.source_ready_content_id, session.workspace_id, session.project_id),
+                    ).fetchone()
+                    if source_row is None:
+                        raise DirectorIntegrityError("revision source ReadyContent is missing")
+                    source_session_id = source_row["session_id"]
+                    source_state = validate_working_state(
+                        parse_canonical_object(source_row["state_json"]),
+                        stage=source_row["stage"], state_version=source_row["state_version"],
+                        source_ready_content_id=source_row["source_ready_content_id"],
+                    ).model_dump(mode="json")
+                    if source_row["stage"] != "READY" or state_sha256(
+                        source_row["state_version"], source_row["stage"], source_state
+                    ) != source_row["state_sha256"]:
+                        raise DirectorIntegrityError("direct source final Working State is invalid")
+                if inherited["source_session_id"] != source_session_id:
+                    raise DirectorIntegrityError("inherited object does not name the producing Session")
+                source_items = [source_state[object_kind]] if object_kind == "direction" else source_state[object_kind]
+                candidate = deepcopy(item)
+                candidate.pop("inherited_from")
+                if not any(
+                    (lambda copy: (copy.pop("inherited_from", None), copy)[1])(deepcopy(source_item)) == candidate
+                    for source_item in source_items
+                ):
+                    raise DirectorIntegrityError("inherited object differs from its direct source state")
             for reference in refs:
                 target = self.connection.execute(
                     """
@@ -340,8 +396,20 @@ class DirectorRepository:
                 or row["snapshot_format_version"] != 1
             ):
                 raise DirectorIntegrityError("unsupported Turn JSON format version")
-            trace = TurnExecutionTrace.model_validate(
-                parse_canonical_object(row["execution_trace_json"])
+            pre_stage = "EXPLORE" if row["pre_state_version"] == 0 else self.connection.execute(
+                "SELECT target_stage FROM director_turns WHERE session_id = ? AND post_state_version = ?",
+                (row["session_id"], row["pre_state_version"]),
+            ).fetchone()
+            if pre_stage is None:
+                raise DirectorIntegrityError("Turn pre-state is missing")
+            if not isinstance(pre_stage, str):
+                pre_stage = pre_stage["target_stage"]
+            trace = validate_turn_execution_trace(
+                parse_canonical_object(row["execution_trace_json"]),
+                pre_stage=pre_stage,
+                final_run_control=row["final_run_control"], target_stage=row["target_stage"],
+                transition_reason_code=row["transition_reason_code"], gate_outcome=row["gate_outcome"],
+                review_root_cause=row["review_root_cause"],
             ).model_dump(mode="json")
             response = FirstResponse.model_validate(
                 parse_canonical_object(row["first_response_json"])
@@ -375,6 +443,8 @@ class DirectorRepository:
                 raise DirectorIntegrityError("Turn response Message identity mismatch")
             if response["director_message"] != messages[1]["content"]:
                 raise DirectorIntegrityError("Turn response differs from DIRECTOR Message")
+            if normalize_text(messages[0]["content"]) != normalized_request["owner_text"]:
+                raise DirectorIntegrityError("OWNER Message differs from normalized request text")
         except (ValueError, TypeError) as exc:
             if isinstance(exc, DirectorIntegrityError):
                 raise
@@ -536,8 +606,23 @@ class DirectorRepository:
                 and session_row["gate_outcome"] == "PASSED"
             ):
                 raise DirectorIntegrityError("ReadyContent production Turn mismatch")
-            state = parse_canonical_object(session_row["state_json"])
-            draft = state.get("draft")
+            scope = self.connection.execute(
+                "SELECT workspace_id, project_id FROM director_sessions WHERE id = ?", (row["session_id"],)
+            ).fetchone()
+            if scope is None:
+                raise DirectorIntegrityError("ReadyContent Session is missing")
+            working = self.get_working_state(
+                AuthorizationScope(scope["workspace_id"], scope["project_id"]), row["session_id"]
+            )
+            if working.stage != "READY" or working.latest_successful_turn_id != row["created_by_turn_id"]:
+                raise DirectorIntegrityError("ReadyContent does not match the final Working State")
+            turn = self._validated_turn_row(self.connection.execute(
+                "SELECT * FROM director_turns WHERE id = ? AND session_id = ?",
+                (row["created_by_turn_id"], row["session_id"]),
+            ).fetchone())
+            if turn["first_response_json"]["ready_content_id"] != row["id"]:
+                raise DirectorIntegrityError("ReadyContent response ID mismatch")
+            draft = working.state_json.get("draft")
             if not isinstance(draft, dict) or draft.get("content") != payload:
                 raise DirectorIntegrityError("ReadyContent differs from reviewed draft")
         except (ValueError, TypeError) as exc:

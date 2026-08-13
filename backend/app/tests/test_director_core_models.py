@@ -8,6 +8,7 @@ from backend.app.director_core.models import (
     FirstResponse,
     TurnExecutionTrace,
     WorkingState,
+    validate_turn_execution_trace,
     validate_working_state,
 )
 
@@ -139,3 +140,29 @@ def test_trace_checkpoint_and_first_response_are_strict() -> None:
     response["ready_content_id"] = uid()
     with pytest.raises(ValidationError):
         FirstResponse.model_validate(response)
+
+
+@pytest.mark.parametrize("bad_id", ["x00000000-0000-4000-8000-000000000000", "00000000-0000-4000-8000-000000000000x", "00000000-0000-1000-8000-000000000000", "00000000-0000-4000-7000-000000000000", "00000000-0000-4000-8000-00000000000A"])
+def test_uuid_fields_require_a_complete_normalized_v4_uuid(bad_id: str) -> None:
+    with pytest.raises(ValidationError):
+        FirstResponse.model_validate({"session_id": bad_id, "turn_id": uid(), "owner_message_id": uid(), "director_message_id": uid(), "state_version": 1, "stage": "EXPLORE", "run_control": "WAIT_FOR_OWNER", "director_message": "reply", "ready_content_id": None})
+
+
+def test_trace_closure_rejects_broken_chain_reason_and_top_level_mismatch() -> None:
+    trace = {"format_version": 1, "steps": [
+        {"step_no": 1, "entered_stage": "EXPLORE", "run_control": "CONTINUE", "target_stage": "DEEPEN", "transition_reason_code": "DIRECTION_CONFIRMED", "gate": None, "review": None, "candidate_revision": 1},
+        {"step_no": 2, "entered_stage": "CREATE", "run_control": "WAIT_FOR_OWNER", "target_stage": "CREATE", "transition_reason_code": "OWNER_INPUT_REQUIRED", "gate": None, "review": None, "candidate_revision": 2},
+    ]}
+    with pytest.raises(ValueError):
+        validate_turn_execution_trace(trace, pre_stage="EXPLORE", final_run_control="WAIT_FOR_OWNER", target_stage="CREATE", transition_reason_code="OWNER_INPUT_REQUIRED", gate_outcome=None, review_root_cause=None)
+    trace["steps"][1].update(entered_stage="DEEPEN", target_stage="DEEPEN", transition_reason_code="DRAFT_CREATED")
+    with pytest.raises(ValueError):
+        validate_turn_execution_trace(trace, pre_stage="EXPLORE", final_run_control="WAIT_FOR_OWNER", target_stage="DEEPEN", transition_reason_code="DRAFT_CREATED", gate_outcome=None, review_root_cause=None)
+    trace["steps"][1]["transition_reason_code"] = "OWNER_INPUT_REQUIRED"
+    with pytest.raises(ValueError):
+        validate_turn_execution_trace(trace, pre_stage="EXPLORE", final_run_control="WAIT_FOR_OWNER", target_stage="CREATE", transition_reason_code="OWNER_INPUT_REQUIRED", gate_outcome=None, review_root_cause=None)
+
+
+def test_ready_stage_cannot_be_paired_with_wait_for_owner() -> None:
+    with pytest.raises(ValidationError):
+        FirstResponse.model_validate({"session_id": uid(), "turn_id": uid(), "owner_message_id": uid(), "director_message_id": uid(), "state_version": 1, "stage": "READY", "run_control": "WAIT_FOR_OWNER", "director_message": "reply", "ready_content_id": None})

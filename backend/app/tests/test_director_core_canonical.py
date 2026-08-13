@@ -55,3 +55,8 @@ def test_state_and_snapshot_hash_use_same_envelope() -> None:
     assert state_sha256(3, "CREATE", state) == canonical_sha256(
         {"state_version": 3, "stage": "CREATE", "state_json": state}
     )
+
+
+def test_canonical_json_rejects_python_tuple_arrays() -> None:
+    with pytest.raises(CanonicalJSONError):
+        canonical_bytes(("not", "a", "JSON", "array"))

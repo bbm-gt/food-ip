@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import unicodedata
-from collections.abc import Mapping, Sequence
 from typing import Any
 
 
@@ -59,14 +58,14 @@ def _validate(value: Any) -> None:
     if isinstance(value, str):
         _validate_unicode(value)
         return
-    if isinstance(value, Mapping):
+    if type(value) is dict:
         for key, item in value.items():
             if not isinstance(key, str):
                 raise CanonicalJSONError("object keys must be strings")
             _validate_unicode(key)
             _validate(item)
         return
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+    if type(value) is list:
         for item in value:
             _validate(item)
         return
