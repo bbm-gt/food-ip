@@ -1,6 +1,12 @@
 """Independent Director Core persistence foundation."""
 
 from .concurrency import SessionLockManager, shared_session_lock_manager
+from .orchestrator import (
+    DirectorOrchestrator,
+    DirectorTurnRequest,
+    TurnCandidateBuilder,
+    TurnOrchestrationContext,
+)
 from .repository import (
     AuthorizationScope,
     CommitOutcomeIndeterminateError,
@@ -15,8 +21,12 @@ __all__ = [
     "CommitOutcomeIndeterminateError",
     "CommitRolledBackError",
     "DirectorRepository",
+    "DirectorOrchestrator",
+    "DirectorTurnRequest",
     "IdempotencyConflictError",
     "SessionLockManager",
     "SQLiteBusyError",
+    "TurnCandidateBuilder",
+    "TurnOrchestrationContext",
     "shared_session_lock_manager",
 ]
