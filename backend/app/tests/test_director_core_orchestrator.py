@@ -3,7 +3,6 @@ from __future__ import annotations
 import sqlite3
 import threading
 from copy import deepcopy
-from dataclasses import fields, replace
 from uuid import UUID, uuid4
 
 import pytest
@@ -21,8 +20,8 @@ from backend.app.director_core.execution import (
 from backend.app.director_core.orchestrator import (
     DirectorOrchestrator,
     DirectorTurnRequest,
-    TurnCandidate,
-    TurnOrchestrationContext,
+    StageExecutionContext,
+    StageExecutionResult,
 )
 from backend.app.director_core.repository import (
     AuthorizationScope,
@@ -73,33 +72,18 @@ def request(
     )
 
 
-def wait_candidate(
-    context: TurnOrchestrationContext,
+def wait_result(
+    context: StageExecutionContext,
     message: str = "请再补充一个真实细节。",
-) -> TurnCandidate:
-    stage = context.working_state.stage
-    return TurnCandidate(
+) -> StageExecutionResult:
+    return StageExecutionResult(
         director_message=message,
-        execution_trace={
-            "format_version": 1,
-            "steps": [{
-                "step_no": 1,
-                "entered_stage": stage,
-                "run_control": "WAIT_FOR_OWNER",
-                "target_stage": stage,
-                "transition_reason_code": "OWNER_INPUT_REQUIRED",
-                "gate": None,
-                "review": None,
-                "candidate_revision": 1,
-            }],
-        },
-        post_state=deepcopy(context.working_state.state_json),
-        final_run_control="WAIT_FOR_OWNER",
-        target_stage=stage,
+        post_state=deepcopy(context.working_state),
+        run_control="WAIT_FOR_OWNER",
+        target_stage=context.stage,
         transition_reason_code="OWNER_INPUT_REQUIRED",
-        gate_outcome=None,
-        review_root_cause=None,
-        ready_content=None,
+        gate=None,
+        review=None,
     )
 
 
@@ -114,15 +98,15 @@ def repository(tmp_path):
     return repository, scope, session.id
 
 
-def test_same_request_replays_and_skips_candidate_builder(repository) -> None:
+def test_same_request_replays_and_skips_stage_executor(repository) -> None:
     repo, scope, session_id = repository
     calls: list[int] = []
 
-    def builder(context):
-        calls.append(context.working_state.state_version)
-        return wait_candidate(context)
+    def executor(context):
+        calls.append(context.candidate_revision)
+        return wait_result(context)
 
-    orchestrator = DirectorOrchestrator(repo, scope, builder)
+    orchestrator = DirectorOrchestrator(repo, scope, executor, 2)
     first_request = request(session_id, "same-request")
     first = orchestrator.run(first_request)
     before = snapshot(repo)
@@ -136,11 +120,11 @@ def test_same_request_replays_and_skips_candidate_builder(repository) -> None:
     assert repo.get_working_state(scope, session_id).state_version == 1
 
 
-def test_stale_expected_version_fails_before_candidate_builder(repository) -> None:
+def test_stale_expected_version_fails_before_stage_executor(repository) -> None:
     repo, scope, session_id = repository
     calls: list[int] = []
     orchestrator = DirectorOrchestrator(
-        repo, scope, lambda context: (calls.append(1) or wait_candidate(context))
+        repo, scope, lambda context: (calls.append(1) or wait_result(context)), 2
     )
     before = snapshot(repo)
 
@@ -151,25 +135,25 @@ def test_stale_expected_version_fails_before_candidate_builder(repository) -> No
     assert snapshot(repo) == before
 
 
-def test_missing_working_state_recovers_without_model_and_builder_sees_authority(repository) -> None:
+def test_missing_working_state_recovers_without_model_and_executor_sees_authority(repository) -> None:
     repo, scope, session_id = repository
     repo.connection.execute("DROP TRIGGER director_working_state_delete_guard")
     repo.connection.execute(
         "DELETE FROM director_working_state WHERE session_id = ?", (session_id,)
     )
     repo.connection.commit()
-    seen: list[tuple[int, str]] = []
+    seen: list[str] = []
 
-    def builder(context):
-        seen.append((context.working_state.state_version, context.working_state.stage))
-        return wait_candidate(context)
+    def executor(context):
+        seen.append(context.stage)
+        return wait_result(context)
 
-    result = DirectorOrchestrator(repo, scope, builder).run(
+    result = DirectorOrchestrator(repo, scope, executor, 2).run(
         request(session_id, "recover-missing")
     )
 
     assert result.replayed is False
-    assert seen == [(0, "EXPLORE")]
+    assert seen == ["EXPLORE"]
     assert repo.connection.execute("SELECT count(*) FROM director_turns").fetchone()[0] == 1
     assert repo.connection.execute("SELECT count(*) FROM director_messages").fetchone()[0] == 2
     assert repo.connection.execute("SELECT count(*) FROM director_ready_content").fetchone()[0] == 0
@@ -178,7 +162,7 @@ def test_missing_working_state_recovers_without_model_and_builder_sees_authority
 
 def test_hash_mismatched_working_state_recovers_latest_authority_once(repository) -> None:
     repo, scope, session_id = repository
-    first = DirectorOrchestrator(repo, scope, wait_candidate).run(
+    first = DirectorOrchestrator(repo, scope, wait_result, 2).run(
         request(session_id, "recover-seed")
     )
     assert first.replayed is False
@@ -191,26 +175,26 @@ def test_hash_mismatched_working_state_recovers_latest_authority_once(repository
     seen: list[tuple[int, str]] = []
     calls = 0
 
-    def builder(context):
+    def executor(context):
         nonlocal calls
         calls += 1
-        seen.append((context.working_state.state_version, context.working_state.stage))
-        return wait_candidate(context)
+        seen.append(context.stage)
+        return wait_result(context)
 
-    result = DirectorOrchestrator(repo, scope, builder).run(
+    result = DirectorOrchestrator(repo, scope, executor, 2).run(
         request(session_id, "recover-hash", expected_version=1)
     )
 
     assert result.replayed is False
     assert calls == 1
-    assert seen == [(1, "EXPLORE")]
+    assert seen == ["EXPLORE"]
     assert repo.connection.execute("SELECT count(*) FROM director_turns").fetchone()[0] == 2
     assert repo.get_working_state(scope, session_id).state_version == 2
 
 
-def test_unrecoverable_working_state_skips_builder_and_writes_nothing(repository) -> None:
+def test_unrecoverable_working_state_skips_executor_and_writes_nothing(repository) -> None:
     repo, scope, session_id = repository
-    DirectorOrchestrator(repo, scope, wait_candidate).run(
+    DirectorOrchestrator(repo, scope, wait_result, 2).run(
         request(session_id, "unrecoverable-seed")
     )
     repo.connection.execute("DROP TRIGGER director_working_state_update_guard")
@@ -227,12 +211,12 @@ def test_unrecoverable_working_state_skips_builder_and_writes_nothing(repository
     before = snapshot(repo)
     calls: list[int] = []
 
-    def builder(_context):
+    def executor(_context):
         calls.append(1)
-        return wait_candidate(_context)
+        return wait_result(_context)
 
     with pytest.raises(DirectorIntegrityError):
-        DirectorOrchestrator(repo, scope, builder).run(
+        DirectorOrchestrator(repo, scope, executor, 2).run(
             request(session_id, "unrecoverable-next", expected_version=1)
         )
 
@@ -240,15 +224,15 @@ def test_unrecoverable_working_state_skips_builder_and_writes_nothing(repository
     assert snapshot(repo) == before
 
 
-def test_same_client_id_with_different_normalized_request_conflicts_before_builder(repository) -> None:
+def test_same_client_id_with_different_normalized_request_conflicts_before_executor(repository) -> None:
     repo, scope, session_id = repository
     calls: list[int] = []
 
-    def builder(context):
+    def executor(context):
         calls.append(1)
-        return wait_candidate(context)
+        return wait_result(context)
 
-    orchestrator = DirectorOrchestrator(repo, scope, builder)
+    orchestrator = DirectorOrchestrator(repo, scope, executor, 2)
     orchestrator.run(request(session_id, "conflict-key", text="第一次原文。"))
     before = snapshot(repo)
 
@@ -261,35 +245,10 @@ def test_same_client_id_with_different_normalized_request_conflicts_before_build
     assert snapshot(repo) == before
 
 
-def test_turn_candidate_is_business_only_and_orchestrator_owns_persistence_boundary(
+def test_stage_executor_is_business_only_and_orchestrator_owns_persistence_boundary(
     repository, monkeypatch
 ) -> None:
     repo, scope, session_id = repository
-    candidate_fields = {field.name for field in fields(TurnCandidate)}
-    assert candidate_fields == {
-        "director_message",
-        "execution_trace",
-        "post_state",
-        "final_run_control",
-        "target_stage",
-        "transition_reason_code",
-        "gate_outcome",
-        "review_root_cause",
-        "ready_content",
-    }
-    candidate = TurnCandidate(
-        director_message="回复",
-        execution_trace={},
-        post_state={},
-        final_run_control="WAIT_FOR_OWNER",
-        target_stage="EXPLORE",
-        transition_reason_code="OWNER_INPUT_REQUIRED",
-        gate_outcome=None,
-        review_root_cause=None,
-        ready_content=None,
-    )
-    with pytest.raises(TypeError):
-        replace(candidate, turn_id=uid())
 
     generated_ids = iter(
         UUID(value)
@@ -307,7 +266,7 @@ def test_turn_candidate_is_business_only_and_orchestrator_owns_persistence_bound
     monkeypatch.setattr(orchestrator_module, "_utc_now", lambda: "2026-08-14T10:20:30.123Z")
     owner_text = "  老板原文\r\n第二行  "
 
-    result = DirectorOrchestrator(repo, scope, wait_candidate).run(
+    result = DirectorOrchestrator(repo, scope, wait_result, 2).run(
         request(session_id, "boundary-request", text=owner_text)
     )
     turn = repo.connection.execute(
@@ -333,11 +292,11 @@ def test_turn_candidate_is_business_only_and_orchestrator_owns_persistence_bound
 
 def test_ready_session_replays_success_and_rejects_new_request(repository) -> None:
     repo, scope, session_id = repository
-    calls: list[int] = []
+    calls: list[str] = []
 
-    def builder(context):
-        calls.append(context.working_state.state_version)
-        state = deepcopy(context.working_state.state_json)
+    def executor(context):
+        calls.append(context.stage)
+        state = deepcopy(context.working_state)
         content = {
             "title": "一碗汤的来历",
             "script_text": "这道汤不是为了复杂，而是为了让客人喝到我们真正熟悉的味道。",
@@ -364,22 +323,32 @@ def test_ready_session_replays_success_and_rejects_new_request(repository) -> No
             "review_id": uid(), "outcome": "PASSED", "root_cause": None,
             "against_draft_id": draft_id, "against_content": content,
         }
-        candidate = wait_candidate(context, "这版已经可以拍了。")
-        return replace(
-            candidate,
-            execution_trace={"format_version": 1, "steps": [
-                {"step_no": 1, "entered_stage": "EXPLORE", "run_control": "CONTINUE", "target_stage": "DEEPEN", "transition_reason_code": "DIRECTION_CONFIRMED", "gate": None, "review": None, "candidate_revision": 1},
-                {"step_no": 2, "entered_stage": "DEEPEN", "run_control": "CONTINUE", "target_stage": "CREATE", "transition_reason_code": "MATERIAL_SUFFICIENT", "gate": None, "review": None, "candidate_revision": 2},
-                {"step_no": 3, "entered_stage": "CREATE", "run_control": "CONTINUE", "target_stage": "REVIEW", "transition_reason_code": "DRAFT_CREATED", "gate": None, "review": None, "candidate_revision": 3},
-                {"step_no": 4, "entered_stage": "REVIEW", "run_control": "READY", "target_stage": "READY", "transition_reason_code": "REVIEW_PASSED", "gate": {"outcome": "PASSED", "gate_code": "READINESS_PASSED", "explanation": "内容完整、真实且可拍。"}, "review": {"outcome": "PASSED", "root_cause": None}, "candidate_revision": 4},
-            ]},
-            post_state=state,
-            final_run_control="READY", target_stage="READY",
-            transition_reason_code="REVIEW_PASSED", gate_outcome="PASSED",
-            review_root_cause=None, ready_content=content,
+        if context.stage == "EXPLORE":
+            return StageExecutionResult(
+                director_message=None, post_state=state, run_control="CONTINUE",
+                target_stage="DEEPEN", transition_reason_code="DIRECTION_CONFIRMED",
+                gate=None, review=None,
+            )
+        if context.stage == "DEEPEN":
+            return StageExecutionResult(
+                director_message=None, post_state=state, run_control="CONTINUE",
+                target_stage="CREATE", transition_reason_code="MATERIAL_SUFFICIENT",
+                gate=None, review=None,
+            )
+        if context.stage == "CREATE":
+            return StageExecutionResult(
+                director_message=None, post_state=state, run_control="CONTINUE",
+                target_stage="REVIEW", transition_reason_code="DRAFT_CREATED",
+                gate=None, review=None,
+            )
+        return StageExecutionResult(
+            director_message="这版已经可以拍了。", post_state=state, run_control="READY",
+            target_stage="READY", transition_reason_code="REVIEW_PASSED",
+            gate={"outcome": "PASSED", "gate_code": "READINESS_PASSED", "explanation": "内容完整、真实且可拍。"},
+            review={"outcome": "PASSED", "root_cause": None},
         )
 
-    orchestrator = DirectorOrchestrator(repo, scope, builder)
+    orchestrator = DirectorOrchestrator(repo, scope, executor, 8)
     ready_request = request(session_id, "ready-request", expected_version=0)
     first = orchestrator.run(ready_request)
     assert first.response["run_control"] == "READY"
@@ -387,12 +356,12 @@ def test_ready_session_replays_success_and_rejects_new_request(repository) -> No
     replay = orchestrator.run(ready_request)
     assert replay.replayed is True
     assert replay.first_response_json == first.first_response_json
-    assert calls == [0]
+    assert calls == ["EXPLORE", "DEEPEN", "CREATE", "REVIEW"]
     assert snapshot(repo) == before
 
     with pytest.raises(DirectorExecutionValidationError):
         orchestrator.run(request(session_id, "new-after-ready", expected_version=1))
-    assert calls == [0]
+    assert calls == ["EXPLORE", "DEEPEN", "CREATE", "REVIEW"]
     assert snapshot(repo) == before
 
 
@@ -408,22 +377,41 @@ def test_same_session_turns_are_serial_and_second_reads_latest_version(tmp_path)
     first_entered = threading.Event()
     release_first = threading.Event()
     second_entered = threading.Event()
-    seen_versions: list[int] = []
+    seen_stages: list[str] = []
     results: list[object] = [None, None]
+    first_judgment_marker = "serial-first-turn-marker"
 
-    def first_builder(context):
-        seen_versions.append(context.working_state.state_version)
+    def first_executor(context):
+        seen_stages.append(context.stage)
         first_entered.set()
         assert release_first.wait(2)
-        return wait_candidate(context, "第一轮完成。")
+        state = deepcopy(context.working_state)
+        state["ai_judgments"].append({
+            "item_id": uid(),
+            "judgment_kind": "DIRECTION_CANDIDATE",
+            "statement": first_judgment_marker,
+        })
+        return StageExecutionResult(
+            director_message="第一轮完成。",
+            post_state=state,
+            run_control="WAIT_FOR_OWNER",
+            target_stage=context.stage,
+            transition_reason_code="OWNER_INPUT_REQUIRED",
+            gate=None,
+            review=None,
+        )
 
-    def second_builder(context):
-        seen_versions.append(context.working_state.state_version)
+    def second_executor(context):
+        seen_stages.append(context.stage)
         second_entered.set()
-        return wait_candidate(context, "第二轮完成。")
+        assert any(
+            judgment["statement"] == first_judgment_marker
+            for judgment in context.working_state["ai_judgments"]
+        )
+        return wait_result(context, "第二轮完成。")
 
-    first_orchestrator = DirectorOrchestrator(first_repo, scope, first_builder)
-    second_orchestrator = DirectorOrchestrator(second_repo, scope, second_builder)
+    first_orchestrator = DirectorOrchestrator(first_repo, scope, first_executor, 2)
+    second_orchestrator = DirectorOrchestrator(second_repo, scope, second_executor, 2)
 
     def run(index: int, orchestrator: DirectorOrchestrator, turn_request: DirectorTurnRequest):
         try:
@@ -443,12 +431,12 @@ def test_same_session_turns_are_serial_and_second_reads_latest_version(tmp_path)
 
     assert not first_thread.is_alive() and not second_thread.is_alive()
     assert all(not isinstance(result, BaseException) for result in results), repr(results)
-    assert seen_versions == [0, 1]
+    assert seen_stages == ["EXPLORE", "EXPLORE"]
     assert first_repo.get_working_state(scope, session_id).state_version == 2
     assert first_repo.connection.execute("SELECT count(*) FROM director_turns").fetchone()[0] == 2
 
 
-def test_different_sessions_can_construct_candidates_in_parallel(tmp_path) -> None:
+def test_different_sessions_can_execute_stages_in_parallel(tmp_path) -> None:
     path = tmp_path / "different-sessions.sqlite"
     first_connection = connect(path, busy_timeout_ms=200, check_same_thread=False)
     apply_migrations(first_connection)
@@ -462,13 +450,13 @@ def test_different_sessions_can_construct_candidates_in_parallel(tmp_path) -> No
     entered: list[str] = []
     results: list[object] = [None, None]
 
-    def builder(context):
-        entered.append(context.session.id)
+    def executor(context):
+        entered.append(context.session_id)
         barrier.wait(2)
-        return wait_candidate(context)
+        return wait_result(context)
 
-    first_orchestrator = DirectorOrchestrator(first_repo, scope, builder)
-    second_orchestrator = DirectorOrchestrator(second_repo, scope, builder)
+    first_orchestrator = DirectorOrchestrator(first_repo, scope, executor, 2)
+    second_orchestrator = DirectorOrchestrator(second_repo, scope, executor, 2)
 
     def run(index: int, orchestrator: DirectorOrchestrator, session_id: str):
         try:
@@ -489,15 +477,15 @@ def test_different_sessions_can_construct_candidates_in_parallel(tmp_path) -> No
     assert set(entered) == {first_session, second_session}
 
 
-def test_candidate_exception_leaves_all_six_tables_unchanged(repository) -> None:
+def test_stage_executor_exception_leaves_all_six_tables_unchanged(repository) -> None:
     repo, scope, session_id = repository
     before = snapshot(repo)
 
-    def builder(_context):
-        raise RuntimeError("candidate construction failed")
+    def executor(_context):
+        raise RuntimeError("stage execution failed")
 
-    with pytest.raises(RuntimeError, match="candidate construction failed"):
-        DirectorOrchestrator(repo, scope, builder).run(request(session_id, "builder-failure"))
+    with pytest.raises(RuntimeError, match="stage execution failed"):
+        DirectorOrchestrator(repo, scope, executor, 2).run(request(session_id, "executor-failure"))
     assert snapshot(repo) == before
 
 
@@ -505,18 +493,26 @@ def test_prepare_failure_leaves_all_six_tables_unchanged(repository) -> None:
     repo, scope, session_id = repository
     before = snapshot(repo)
 
-    def builder(context):
-        candidate = wait_candidate(context)
-        return replace(candidate, target_stage="DEEPEN")
+    def executor(context):
+        result = wait_result(context)
+        return StageExecutionResult(
+            director_message=result.director_message,
+            post_state=result.post_state,
+            run_control=result.run_control,
+            target_stage="DEEPEN",
+            transition_reason_code=result.transition_reason_code,
+            gate=result.gate,
+            review=result.review,
+        )
 
     with pytest.raises(DirectorExecutionValidationError):
-        DirectorOrchestrator(repo, scope, builder).run(request(session_id, "prepare-failure"))
+        DirectorOrchestrator(repo, scope, executor, 2).run(request(session_id, "prepare-failure"))
     assert snapshot(repo) == before
 
 
 def test_authoritative_success_is_one_turn_two_messages_and_version_increment(repository) -> None:
     repo, scope, session_id = repository
-    result = DirectorOrchestrator(repo, scope, wait_candidate).run(
+    result = DirectorOrchestrator(repo, scope, wait_result, 2).run(
         request(session_id, "authoritative-success")
     )
     assert result.replayed is False
@@ -549,7 +545,7 @@ def fault_connection(path, mode: str) -> sqlite3.Connection:
     return connection
 
 
-def test_rolled_back_commit_does_not_reconstruct_candidate(tmp_path) -> None:
+def test_rolled_back_commit_does_not_rerun_stage_executor(tmp_path) -> None:
     path = tmp_path / "rolled-back.sqlite"
     connection = fault_connection(path, "none")
     apply_migrations(connection)
@@ -560,18 +556,18 @@ def test_rolled_back_commit_does_not_reconstruct_candidate(tmp_path) -> None:
     session_id = repo.create_session(scope).id
     calls: list[int] = []
 
-    def builder(context):
+    def executor(context):
         calls.append(1)
-        return wait_candidate(context)
+        return wait_result(context)
 
     connection.mode = "before"
     with pytest.raises(CommitRolledBackError):
-        DirectorOrchestrator(repo, scope, builder).run(request(session_id, "rolled-back"))
+        DirectorOrchestrator(repo, scope, executor, 2).run(request(session_id, "rolled-back"))
     assert calls == [1]
     assert repo.connection.execute("SELECT count(*) FROM director_turns").fetchone()[0] == 0
 
 
-def test_indeterminate_commit_does_not_reconstruct_candidate(tmp_path) -> None:
+def test_indeterminate_commit_does_not_rerun_stage_executor(tmp_path) -> None:
     path = tmp_path / "indeterminate.sqlite"
     connection = fault_connection(path, "none")
     apply_migrations(connection)
@@ -580,13 +576,13 @@ def test_indeterminate_commit_does_not_reconstruct_candidate(tmp_path) -> None:
     session_id = repo.create_session(scope).id
     calls: list[int] = []
 
-    def builder(context):
+    def executor(context):
         calls.append(1)
-        return wait_candidate(context)
+        return wait_result(context)
 
     connection.mode = "after"
     with pytest.raises(CommitOutcomeIndeterminateError):
-        DirectorOrchestrator(repo, scope, builder).run(request(session_id, "indeterminate"))
+        DirectorOrchestrator(repo, scope, executor, 2).run(request(session_id, "indeterminate"))
     assert calls == [1]
 
 
@@ -602,7 +598,7 @@ def test_commit_disambiguation_keeps_lock_until_resolution(tmp_path) -> None:
     session_id = repo.create_session(scope).id
     entered_resolution = threading.Event()
     release_resolution = threading.Event()
-    second_builder_entered = threading.Event()
+    second_executor_entered = threading.Event()
     original_resolve = repo.resolve_commit_outcome
 
     def blocking_resolve(*args, **kwargs):
@@ -615,15 +611,15 @@ def test_commit_disambiguation_keeps_lock_until_resolution(tmp_path) -> None:
 
     connection.mode = "after"
 
-    def first_builder(context):
-        return wait_candidate(context)
+    def first_executor(context):
+        return wait_result(context)
 
-    def second_builder(context):
-        second_builder_entered.set()
-        return wait_candidate(context)
+    def second_executor(context):
+        second_executor_entered.set()
+        return wait_result(context)
 
-    first_orchestrator = DirectorOrchestrator(repo, scope, first_builder)
-    second_orchestrator = DirectorOrchestrator(repo, scope, second_builder)
+    first_orchestrator = DirectorOrchestrator(repo, scope, first_executor, 2)
+    second_orchestrator = DirectorOrchestrator(repo, scope, second_executor, 2)
 
     def run_first():
         try:
@@ -642,7 +638,7 @@ def test_commit_disambiguation_keeps_lock_until_resolution(tmp_path) -> None:
     first_thread.start()
     assert entered_resolution.wait(2)
     second_thread.start()
-    assert not second_builder_entered.wait(0.1)
+    assert not second_executor_entered.wait(0.1)
     release_resolution.set()
     first_thread.join(3)
     second_thread.join(3)
@@ -650,5 +646,5 @@ def test_commit_disambiguation_keeps_lock_until_resolution(tmp_path) -> None:
     assert not first_thread.is_alive() and not second_thread.is_alive()
     assert not isinstance(results[0], BaseException), repr(results)
     assert not isinstance(results[1], BaseException), repr(results)
-    assert second_builder_entered.is_set()
+    assert second_executor_entered.is_set()
     assert repo.connection.execute("SELECT count(*) FROM director_turns").fetchone()[0] == 2

@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import uuid4
 
-from .canonical import SQLITE_INT_MAX
+from .canonical import SQLITE_INT_MAX, is_blank_text
 from .execution import (
     CommitSuccessfulTurnInput,
     DirectorExecutionValidationError,
@@ -17,6 +17,12 @@ from .execution import (
     SuccessfulTurnResult,
     prepare_idempotency_request,
     prepare_successful_turn,
+)
+from .models import (
+    ExecutionStep,
+    Stage,
+    validate_turn_execution_trace,
+    validate_working_state,
 )
 from .repository import (
     AuthorizationScope,
@@ -45,7 +51,7 @@ class DirectorTurnRequest:
 
 @dataclass(frozen=True)
 class TurnOrchestrationContext:
-    """The latest lock-owned authority snapshot visible to a candidate builder."""
+    """The lock-owned persistence bindings for the completed internal loop."""
 
     scope: AuthorizationScope
     request: DirectorTurnRequest
@@ -71,7 +77,7 @@ class TurnOrchestrationContext:
 
 @dataclass(frozen=True)
 class TurnCandidate:
-    """Business-only output from the injected candidate construction boundary."""
+    """Internal final candidate assembled after the stage loop completes."""
 
     director_message: str
     execution_trace: dict[str, Any]
@@ -84,17 +90,78 @@ class TurnCandidate:
     ready_content: dict[str, Any] | None
 
     def __post_init__(self) -> None:
-        # Keep the frozen envelope detached from mutable builder-owned payloads.
+        # Keep the frozen envelope detached from mutable loop-owned payloads.
         object.__setattr__(self, "execution_trace", deepcopy(self.execution_trace))
         object.__setattr__(self, "post_state", deepcopy(self.post_state))
         object.__setattr__(self, "ready_content", deepcopy(self.ready_content))
 
 
-class TurnCandidateBuilder(Protocol):
-    """Injected test/model boundary for producing business candidates only."""
+@dataclass(frozen=True)
+class StageExecutionContext:
+    """Business-only input for one provider-independent stage execution.
 
-    def __call__(self, context: TurnOrchestrationContext) -> TurnCandidate:
+    The context contains only the current business snapshot plus the
+    pre-allocated owner-evidence binding needed by the strict Phase 1 JSON
+    contract.  It contains no Turn ID, timestamp, or persistence result.  The
+    ``working_state`` is the latest in-memory candidate state at call time.
+    """
+
+    stage: Stage
+    working_state: dict[str, Any]
+    owner_text: str
+    parameters: dict[str, Any]
+    candidate_revision: int
+    # The current owner message is pre-allocated by the Orchestrator so a
+    # business executor can attach formal Owner Evidence without inventing an
+    # identity.  These are input bindings only; no infrastructure fields are
+    # accepted in StageExecutionResult.
+    session_id: str
+    owner_message_id: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "working_state", deepcopy(self.working_state))
+        object.__setattr__(self, "parameters", deepcopy(self.parameters))
+
+
+@dataclass(frozen=True)
+class StageExecutionResult:
+    """Business result for exactly one stage.
+
+    The Orchestrator adds step number, candidate revision, and execution trace
+    ordering.  The executor cannot provide infrastructure fields or a
+    pre-built whole-Turn trace.
+    """
+
+    director_message: str | None
+    post_state: dict[str, Any]
+    run_control: str
+    target_stage: str
+    transition_reason_code: str
+    gate: dict[str, Any] | None
+    review: dict[str, Any] | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "post_state", deepcopy(self.post_state))
+        object.__setattr__(self, "gate", deepcopy(self.gate))
+        object.__setattr__(self, "review", deepcopy(self.review))
+
+    @property
+    def candidate_state(self) -> dict[str, Any]:
+        """Readable alias for callers that use the workflow vocabulary."""
+
+        return deepcopy(self.post_state)
+
+
+class SingleStageExecutor(Protocol):
+    """Provider-neutral boundary for one current-stage business decision."""
+
+    def __call__(self, context: StageExecutionContext) -> StageExecutionResult:
         ...
+
+
+# Short aliases keep the public boundary discoverable without introducing a
+# second abstraction or a provider-specific name.
+StageExecutor = SingleStageExecutor
 
 
 @dataclass(frozen=True)
@@ -103,7 +170,15 @@ class DirectorOrchestrator:
 
     repository: DirectorRepository
     scope: AuthorizationScope
-    candidate_builder: TurnCandidateBuilder
+    stage_executor: SingleStageExecutor
+    max_internal_steps: int
+
+    def __post_init__(self) -> None:
+        if self.stage_executor is None or not callable(self.stage_executor):
+            raise DirectorExecutionValidationError(
+                "stage_executor must be provided"
+            )
+        self._validate_max_internal_steps(self.max_internal_steps)
 
     def run(self, request: DirectorTurnRequest) -> SuccessfulTurnResult:
         if not isinstance(request, DirectorTurnRequest):
@@ -158,9 +233,14 @@ class DirectorOrchestrator:
             ready_content_id=ready_content_id,
         )
 
-        # Any builder exception or invalid candidate exits before the write
-        # path.  There is intentionally no model retry or candidate retry here.
-        candidate = self.candidate_builder(context)
+        # Any executor exception or invalid candidate exits before the write
+        # path.  There is intentionally no model retry here.
+        candidate = self._run_internal_loop(
+            request=request,
+            working_state=working_state,
+            session=session,
+            owner_message_id=owner_message_id,
+        )
         command = self._bind_request_boundary(candidate, context)
         prepared = prepare_successful_turn(
             command,
@@ -173,6 +253,141 @@ class DirectorOrchestrator:
         # classification.  The outer lock is still held while it resolves an
         # uncertain COMMIT, so a same-Session waiter cannot enter construction.
         return self.repository.commit_successful_turn(self.scope, prepared)
+
+    def _run_internal_loop(
+        self,
+        *,
+        request: DirectorTurnRequest,
+        working_state: WorkingStateRecord,
+        session: SessionRecord,
+        owner_message_id: str,
+    ) -> TurnCandidate:
+        executor = self.stage_executor
+
+        candidate_state = deepcopy(working_state.state_json)
+        current_stage: Stage = working_state.stage  # type: ignore[assignment]
+        trace_steps: list[dict[str, Any]] = []
+        final_result: StageExecutionResult | None = None
+
+        for step_no in range(1, self.max_internal_steps + 1):
+            step_context = StageExecutionContext(
+                stage=current_stage,
+                working_state=candidate_state,
+                owner_text=request.owner_text,
+                parameters=deepcopy(request.parameters),
+                candidate_revision=step_no - 1,
+                session_id=session.id,
+                owner_message_id=owner_message_id,
+            )
+            result = executor(step_context)
+            if not isinstance(result, StageExecutionResult):
+                raise DirectorExecutionValidationError(
+                    "single-stage executor must return StageExecutionResult"
+                )
+            if result.run_control == "CONTINUE":
+                if result.director_message is not None:
+                    raise DirectorExecutionValidationError(
+                        "CONTINUE stage execution must not include director_message"
+                    )
+            elif result.run_control in {"WAIT_FOR_OWNER", "READY"}:
+                if not isinstance(result.director_message, str) or is_blank_text(result.director_message):
+                    raise DirectorExecutionValidationError(
+                        "terminal stage execution director_message must not be blank"
+                    )
+            if not isinstance(result.post_state, dict):
+                raise DirectorExecutionValidationError(
+                    "stage execution post_state must be an object"
+                )
+
+            try:
+                state_model = validate_working_state(
+                    deepcopy(result.post_state),
+                    stage=result.target_stage,
+                    state_version=working_state.state_version,
+                    source_ready_content_id=session.source_ready_content_id,
+                )
+                step = ExecutionStep.model_validate(
+                    {
+                        "step_no": step_no,
+                        "entered_stage": current_stage,
+                        "run_control": result.run_control,
+                        "target_stage": result.target_stage,
+                        "transition_reason_code": result.transition_reason_code,
+                        "gate": deepcopy(result.gate),
+                        "review": deepcopy(result.review),
+                        "candidate_revision": step_no,
+                    }
+                )
+            except (TypeError, ValueError) as exc:
+                raise DirectorExecutionValidationError(
+                    "single-stage execution result is invalid"
+                ) from exc
+
+            candidate_state = state_model.model_dump(mode="json")
+            trace_steps.append(step.model_dump(mode="json"))
+            current_stage = step.target_stage
+            final_result = result
+            if step.run_control != "CONTINUE":
+                break
+        else:
+            raise DirectorExecutionValidationError(
+                "max_internal_steps exceeded before the loop reached a terminal control"
+            )
+
+        if final_result is None:  # pragma: no cover - range is positive
+            raise DirectorExecutionValidationError("internal loop produced no result")
+        final_step = trace_steps[-1]
+        trace = {"format_version": 1, "steps": trace_steps}
+        try:
+            validate_turn_execution_trace(
+                deepcopy(trace),
+                pre_stage=working_state.stage,
+                final_run_control=final_step["run_control"],
+                target_stage=final_step["target_stage"],
+                transition_reason_code=final_step["transition_reason_code"],
+                gate_outcome=(final_step["gate"]["outcome"] if final_step["gate"] else None),
+                review_root_cause=(
+                    final_step["review"]["root_cause"] if final_step["review"] else None
+                ),
+            )
+        except (TypeError, ValueError) as exc:
+            raise DirectorExecutionValidationError(
+                "Orchestrator-generated execution trace is invalid"
+            ) from exc
+
+        ready_content = None
+        if final_step["run_control"] == "READY":
+            draft = candidate_state.get("draft")
+            if not isinstance(draft, dict) or not isinstance(draft.get("content"), dict):
+                raise DirectorExecutionValidationError(
+                    "READY requires a draft content object"
+                )
+            ready_content = deepcopy(draft["content"])
+        if not isinstance(final_result.director_message, str):  # pragma: no cover - terminal validation above
+            raise DirectorExecutionValidationError(
+                "terminal stage execution must provide director_message"
+            )
+        return TurnCandidate(
+            director_message=final_result.director_message,
+            execution_trace=trace,
+            post_state=candidate_state,
+            final_run_control=final_step["run_control"],
+            target_stage=final_step["target_stage"],
+            transition_reason_code=final_step["transition_reason_code"],
+            gate_outcome=(final_step["gate"]["outcome"] if final_step["gate"] else None),
+            review_root_cause=(
+                final_step["review"]["root_cause"] if final_step["review"] else None
+            ),
+            ready_content=ready_content,
+        )
+
+    @staticmethod
+    def _validate_max_internal_steps(value: Any) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise DirectorExecutionValidationError(
+                "max_internal_steps must be a positive integer"
+            )
+        return value
 
     def _read_or_recover_working_state(self, session_id: str) -> WorkingStateRecord:
         try:
@@ -197,11 +412,11 @@ class DirectorOrchestrator:
     ) -> CommitSuccessfulTurnInput:
         if not isinstance(candidate, TurnCandidate):
             raise DirectorExecutionValidationError(
-                "candidate builder must return TurnCandidate"
+                "internal loop must produce TurnCandidate"
             )
-        # Infrastructure identity comes from the lock-owned orchestrator, not
-        # from the injected builder.  The builder supplies only business
-        # output: visible reply, trace, post-state, and optional ReadyContent.
+        # Infrastructure identity comes from the lock-owned orchestrator.  The
+        # internal loop supplies only business output: visible reply, trace,
+        # post-state, and optional ReadyContent.
         return CommitSuccessfulTurnInput(
             session_id=context.request.session_id,
             client_message_id=context.request.client_message_id,
@@ -230,6 +445,9 @@ __all__ = [
     "DirectorOrchestrator",
     "DirectorTurnRequest",
     "TurnCandidate",
-    "TurnCandidateBuilder",
     "TurnOrchestrationContext",
+    "SingleStageExecutor",
+    "StageExecutor",
+    "StageExecutionContext",
+    "StageExecutionResult",
 ]
