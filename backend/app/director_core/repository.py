@@ -441,11 +441,18 @@ class DirectorRepository:
         """Atomically commit the complete authoritative result of one successful Turn."""
         if not isinstance(prepared, PreparedSuccessfulTurn):
             raise DirectorExecutionValidationError("prepared must be PreparedSuccessfulTurn")
-        self._write_ready()
-        session = self.get_session(scope, prepared.session_id)
-        prepared = self._validate_prepared_successful_turn(
-            prepared, source_ready_content_id=session.source_ready_content_id
-        )
+        try:
+            self._write_ready()
+            session = self.get_session(scope, prepared.session_id)
+            prepared = self._validate_prepared_successful_turn(
+                prepared, source_ready_content_id=session.source_ready_content_id
+            )
+        except BaseException as exc:
+            if is_sqlite_lock_error(exc):
+                raise SQLiteBusyError(
+                    "SQLite BUSY/LOCKED blocked successful Turn preflight"
+                ) from exc
+            raise
         transaction_started = False
         try:
             try:
@@ -461,7 +468,11 @@ class DirectorRepository:
                 self._prepared_request(prepared),
             )
             if replay is not None:
-                self.connection.commit()
+                # The replay branch has performed no writes.  End the
+                # transaction without COMMIT so there is no second uncertain
+                # COMMIT path to classify.  The original response and Turn
+                # remain the only authoritative result.
+                self.connection.rollback()
                 return replay
             if session.lifecycle_status != "ACTIVE":
                 raise DirectorExecutionValidationError("READY Session cannot accept a new successful Turn")
@@ -771,9 +782,9 @@ class DirectorRepository:
         the recovery validator below is the application-side integrity gate.
         """
         validate_uuid4(session_id)
-        session = self.get_session(scope, session_id)
-        self._write_ready()
         try:
+            session = self.get_session(scope, session_id)
+            self._write_ready()
             self.connection.execute("BEGIN IMMEDIATE")
         except BaseException as exc:
             if is_sqlite_lock_error(exc):
@@ -832,8 +843,10 @@ class DirectorRepository:
             result = self._working_state_from_row(session, row)
             self.connection.commit()
             return result
-        except Exception:
+        except BaseException as exc:
             self._rollback_current_connection()
+            if is_sqlite_lock_error(exc):
+                raise SQLiteBusyError("SQLite BUSY/LOCKED blocked Working State recovery") from exc
             raise
 
     def _working_state_from_row(

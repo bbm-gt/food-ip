@@ -205,6 +205,23 @@ def test_busy_timeout_is_bounded_and_original_request_can_retry(file_repositorie
         probe.close()
 
 
+def test_begin_preflight_read_busy_is_bounded_and_retryable(file_repositories) -> None:
+    path, scope, session_id, first, second = file_repositories
+    candidate = _prepare(first, session_id, "preflight-busy")
+    before = _snapshot(second)
+    first.connection.execute("BEGIN EXCLUSIVE")
+    started = time.monotonic()
+    try:
+        with pytest.raises(SQLiteBusyError):
+            second.commit_successful_turn(scope, candidate)
+    finally:
+        first.connection.rollback()
+    assert time.monotonic() - started < 1
+    assert _snapshot(second) == before
+    assert second.commit_successful_turn(scope, candidate).replayed is False
+    assert second.connection.execute("SELECT count(*) FROM director_turns").fetchone()[0] == 1
+
+
 @pytest.mark.parametrize("value", [-1, True, 1.5, "10", None])
 def test_busy_timeout_rejects_ambiguous_values(value) -> None:
     with pytest.raises(InvalidBusyTimeoutError):
@@ -225,6 +242,22 @@ class _CommitFaultConnection(sqlite3.Connection):
             raise sqlite3.OperationalError("injected response loss after COMMIT")
 
 
+class _ReplayCommitGuardConnection(sqlite3.Connection):
+    commit_calls = 0
+    rollback_calls = 0
+    reject_commit = False
+
+    def commit(self) -> None:
+        type(self).commit_calls += 1
+        if self.reject_commit:
+            raise AssertionError("replay path must not call COMMIT")
+        super().commit()
+
+    def rollback(self) -> None:
+        type(self).rollback_calls += 1
+        super().rollback()
+
+
 class _FreshQueryBusyConnection(sqlite3.Connection):
     def execute(self, sql, parameters=()):
         if "FROM director_turns" in sql:
@@ -238,6 +271,33 @@ def _fault_connection(path, mode: str):
     enable_and_verify_foreign_keys(connection)
     connection.mode = mode
     return connection
+
+
+def test_transaction_replay_ends_with_rollback_without_commit(tmp_path) -> None:
+    path = tmp_path / "replay-no-commit.sqlite"
+    _ReplayCommitGuardConnection.commit_calls = 0
+    _ReplayCommitGuardConnection.rollback_calls = 0
+    original = sqlite3.connect(path, timeout=0, factory=_ReplayCommitGuardConnection)
+    original.row_factory = sqlite3.Row
+    enable_and_verify_foreign_keys(original)
+    apply_migrations(original)
+    scope = AuthorizationScope("workspace-1", "project-1")
+    repository = DirectorRepository(original)
+    session = repository.create_session(scope)
+    candidate = _prepare(repository, session.id, "replay-no-commit")
+    first = repository.commit_successful_turn(scope, candidate)
+    before = _snapshot(repository)
+    commits_before_replay = _ReplayCommitGuardConnection.commit_calls
+    original.reject_commit = True
+
+    replay = repository.commit_successful_turn(scope, candidate)
+
+    assert replay.replayed is True
+    assert replay.first_response_json == first.first_response_json
+    assert _snapshot(repository) == before
+    assert _ReplayCommitGuardConnection.commit_calls == commits_before_replay
+    assert _ReplayCommitGuardConnection.rollback_calls >= 1
+    assert not original.in_transaction
 
 
 def test_commit_after_durable_write_replays_from_fresh_connection(tmp_path) -> None:

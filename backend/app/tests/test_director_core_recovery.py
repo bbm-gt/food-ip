@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from copy import deepcopy
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ from backend.app.director_core.repository import (
     AuthorizationScope,
     DirectorIntegrityError,
     DirectorRepository,
+    SQLiteBusyError,
 )
 from backend.app.tests.test_director_core_repository import (
     _drop_working_state,
@@ -84,6 +86,30 @@ def _ready_recovery_fixture(repository: DirectorRepository) -> tuple[Authorizati
     session_id, ready_id, _ = _finish_source(repository, scope)
     _drop_working_state(repository, session_id)
     return scope, session_id, ready_id
+
+
+def test_recovery_preflight_read_busy_is_bounded_and_retryable(tmp_path) -> None:
+    path = tmp_path / "recovery-preflight-busy.sqlite"
+    first_connection = connect(path, busy_timeout_ms=100)
+    apply_migrations(first_connection)
+    second_connection = connect(path, busy_timeout_ms=100)
+    first = DirectorRepository(first_connection)
+    second = DirectorRepository(second_connection)
+    scope = AuthorizationScope("workspace-a", "project-a")
+    session = first.create_session(scope)
+    before = _all_rows(second)
+
+    first_connection.execute("BEGIN EXCLUSIVE")
+    started = time.monotonic()
+    try:
+        with pytest.raises(SQLiteBusyError):
+            second.recover_working_state(scope, session.id)
+    finally:
+        first_connection.rollback()
+
+    assert time.monotonic() - started < 1
+    assert _all_rows(second) == before
+    assert second.recover_working_state(scope, session.id).state_version == 0
 
 
 def _finish_revision_ready(
