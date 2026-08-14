@@ -19,6 +19,16 @@ from .canonical import (
     validate_normalized_request,
 )
 from .database import require_foreign_keys
+from .execution import (
+    CommitSuccessfulTurnInput,
+    DirectorExecutionValidationError,
+    IdempotencyConflictError,
+    PreparedIdempotencyRequest,
+    PreparedSuccessfulTurn,
+    StaleStateVersionError,
+    SuccessfulTurnResult,
+    prepare_successful_turn,
+)
 from .models import (
     ContextCheckpoint,
     FirstResponse,
@@ -102,6 +112,232 @@ class DirectorRepository:
 
     def _write_ready(self) -> None:
         require_foreign_keys(self.connection)
+
+    def precheck_successful_turn(
+        self, scope: AuthorizationScope, request: PreparedIdempotencyRequest
+    ) -> SuccessfulTurnResult | None:
+        """Replay a fully validated prior success, or report that none exists."""
+        if not isinstance(request, PreparedIdempotencyRequest):
+            raise DirectorExecutionValidationError("request must be PreparedIdempotencyRequest")
+        session = self.get_session(scope, request.session_id)
+        return self._precheck_successful_turn_for_session(session, request)
+
+    def _precheck_successful_turn_for_session(
+        self, session: SessionRecord, request: PreparedIdempotencyRequest
+    ) -> SuccessfulTurnResult | None:
+        row = self.connection.execute(
+            """SELECT * FROM director_turns
+               WHERE session_id = ? AND client_message_id = ?""",
+            (session.id, request.client_message_id),
+        ).fetchone()
+        if row is None:
+            return None
+        self._validate_recovery_turn(session, row, require_current_lifecycle=False)
+        if (
+            row["request_format_version"] != request.request_format_version
+            or row["request_sha256"] != request.request_sha256
+            or row["normalized_request_json"] != request.normalized_request_json
+        ):
+            raise IdempotencyConflictError("client_message_id was committed with a different request")
+        return SuccessfulTurnResult(first_response_json=row["first_response_json"], replayed=True)
+
+    def _validate_prepared_successful_turn(
+        self, prepared: PreparedSuccessfulTurn, *, source_ready_content_id: str | None
+    ) -> PreparedSuccessfulTurn:
+        """Reject hand-built or tampered Prepared values before opening a write transaction."""
+        if not isinstance(prepared, PreparedSuccessfulTurn):
+            raise DirectorExecutionValidationError("prepared must be PreparedSuccessfulTurn")
+        try:
+            request = parse_canonical_object(prepared.normalized_request_json)
+            validate_normalized_request(request)
+            if canonical_sha256(request) != prepared.request_sha256:
+                raise DirectorExecutionValidationError("Prepared request hash mismatch")
+            trace = parse_canonical_object(prepared.execution_trace_json)
+            if not isinstance(trace.get("steps"), list) or not trace["steps"]:
+                raise DirectorExecutionValidationError("Prepared execution trace is empty")
+            current_stage = trace["steps"][0].get("entered_stage")
+            rebuilt = prepare_successful_turn(
+                CommitSuccessfulTurnInput(
+                    session_id=prepared.session_id,
+                    client_message_id=prepared.client_message_id,
+                    expected_state_version=prepared.pre_state_version,
+                    request_format_version=prepared.request_format_version,
+                    turn_id=prepared.turn_id,
+                    owner_message_id=prepared.owner_message_id,
+                    director_message_id=prepared.director_message_id,
+                    owner_message=prepared.owner_message,
+                    director_message=prepared.director_message,
+                    normalized_parameters=request["parameters"],
+                    execution_trace=trace,
+                    post_state=parse_canonical_object(prepared.post_state_json),
+                    final_run_control=prepared.final_run_control,
+                    target_stage=prepared.target_stage,
+                    transition_reason_code=prepared.transition_reason_code,
+                    gate_outcome=prepared.gate_outcome,
+                    review_root_cause=prepared.review_root_cause,
+                    ready_content_id=prepared.ready_content_id,
+                    ready_content=(None if prepared.final_content_json is None else parse_canonical_object(prepared.final_content_json)),
+                    created_at=prepared.created_at,
+                ),
+                current_state_version=prepared.pre_state_version,
+                current_max_message_seq=2 * prepared.pre_state_version,
+                current_stage=current_stage,
+                source_ready_content_id=source_ready_content_id,
+            )
+            if rebuilt != prepared:
+                raise DirectorExecutionValidationError("Prepared successful Turn is not closed")
+            return rebuilt
+        except DirectorExecutionValidationError:
+            raise
+        except (AttributeError, TypeError, ValueError, KeyError) as exc:
+            raise DirectorExecutionValidationError("Prepared successful Turn is invalid") from exc
+
+    def commit_successful_turn(
+        self, scope: AuthorizationScope, prepared: PreparedSuccessfulTurn
+    ) -> SuccessfulTurnResult:
+        """Atomically commit the complete authoritative result of one successful Turn."""
+        if not isinstance(prepared, PreparedSuccessfulTurn):
+            raise DirectorExecutionValidationError("prepared must be PreparedSuccessfulTurn")
+        self._write_ready()
+        session = self.get_session(scope, prepared.session_id)
+        prepared = self._validate_prepared_successful_turn(
+            prepared, source_ready_content_id=session.source_ready_content_id
+        )
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            session = self.get_session(scope, prepared.session_id)
+            replay = self._precheck_successful_turn_for_session(
+                session,
+                PreparedIdempotencyRequest(
+                    session_id=prepared.session_id,
+                    client_message_id=prepared.client_message_id,
+                    request_format_version=prepared.request_format_version,
+                    normalized_request_json=prepared.normalized_request_json,
+                    request_sha256=prepared.request_sha256,
+                ),
+            )
+            if replay is not None:
+                self.connection.commit()
+                return replay
+            if session.lifecycle_status != "ACTIVE":
+                raise DirectorExecutionValidationError("READY Session cannot accept a new successful Turn")
+            state_row = self.connection.execute(
+                "SELECT * FROM director_working_state WHERE session_id = ?", (session.id,)
+            ).fetchone()
+            if state_row is None:
+                raise DirectorIntegrityError("Director Session has no Working State")
+            current = self._working_state_from_row(session, state_row)
+            if current.state_version != prepared.pre_state_version:
+                raise StaleStateVersionError("Prepared pre_state_version is stale")
+            trace = prepared.execution_trace
+            if current.stage != trace["steps"][0]["entered_stage"]:
+                raise DirectorIntegrityError("Prepared authoritative pre-stage is stale")
+            max_message_seq = self.connection.execute(
+                "SELECT COALESCE(MAX(message_seq), 0) FROM director_messages WHERE session_id = ?",
+                (session.id,),
+            ).fetchone()[0]
+            if max_message_seq != 2 * prepared.pre_state_version:
+                raise DirectorIntegrityError("authoritative Message sequence does not match Working State")
+
+            self.connection.execute(
+                """INSERT INTO director_turns (
+                       id, session_id, client_message_id, request_format_version,
+                       normalized_request_json, request_sha256, pre_state_version,
+                       post_state_version, final_run_control, target_stage,
+                       transition_reason_code, gate_outcome, review_root_cause,
+                       execution_format_version, execution_trace_json, response_format_version,
+                       first_response_json, snapshot_format_version, post_state_snapshot_json,
+                       post_state_sha256, created_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    prepared.turn_id, prepared.session_id, prepared.client_message_id,
+                    prepared.request_format_version, prepared.normalized_request_json,
+                    prepared.request_sha256, prepared.pre_state_version, prepared.post_state_version,
+                    prepared.final_run_control, prepared.target_stage, prepared.transition_reason_code,
+                    prepared.gate_outcome, prepared.review_root_cause, prepared.execution_format_version,
+                    prepared.execution_trace_json, prepared.response_format_version,
+                    prepared.first_response_json, prepared.snapshot_format_version,
+                    prepared.post_state_snapshot_json, prepared.post_state_sha256, prepared.created_at,
+                ),
+            )
+            self.connection.execute(
+                """INSERT INTO director_messages
+                       (id, session_id, message_seq, visible_role, content, turn_id, created_at)
+                   VALUES (?, ?, ?, 'OWNER', ?, ?, ?)""",
+                (prepared.owner_message_id, prepared.session_id, prepared.owner_message_seq,
+                 prepared.owner_message, prepared.turn_id, prepared.created_at),
+            )
+            self.connection.execute(
+                """INSERT INTO director_messages
+                       (id, session_id, message_seq, visible_role, content, turn_id, created_at)
+                   VALUES (?, ?, ?, 'DIRECTOR', ?, ?, ?)""",
+                (prepared.director_message_id, prepared.session_id, prepared.director_message_seq,
+                 prepared.director_message, prepared.turn_id, prepared.created_at),
+            )
+            self._validate_evidence_closure(
+                session, prepared.post_state, inflight_turn_id=prepared.turn_id
+            )
+            updated = self.connection.execute(
+                """UPDATE director_working_state
+                   SET state_version = ?, stage = ?, state_json = ?, state_sha256 = ?,
+                       latest_successful_turn_id = ?, updated_at = ?
+                   WHERE session_id = ? AND state_version = ?
+                     AND EXISTS (SELECT 1 FROM director_sessions s
+                                 WHERE s.id = director_working_state.session_id
+                                   AND s.lifecycle_status = 'ACTIVE')""",
+                (
+                    prepared.post_state_version, prepared.target_stage, prepared.post_state_json,
+                    prepared.post_state_sha256, prepared.turn_id, prepared.created_at,
+                    prepared.session_id, prepared.pre_state_version,
+                ),
+            ).rowcount
+            if updated != 1:
+                raise StaleStateVersionError("Working State CAS did not update exactly one row")
+            if prepared.final_run_control == "READY":
+                self.connection.execute(
+                    """INSERT INTO director_ready_content
+                       (id, session_id, content_format_version, final_content_json,
+                        created_by_turn_id, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        prepared.ready_content_id, prepared.session_id, prepared.content_format_version,
+                        prepared.final_content_json, prepared.turn_id, prepared.created_at,
+                    ),
+                )
+
+            committed_turn = self.connection.execute(
+                "SELECT * FROM director_turns WHERE id = ? AND session_id = ?",
+                (prepared.turn_id, prepared.session_id),
+            ).fetchone()
+            if committed_turn is None:
+                raise DirectorIntegrityError("committed Turn disappeared")
+            final_session = self.get_session(scope, prepared.session_id)
+            self._validate_recovery_turn(final_session, committed_turn, require_current_lifecycle=True)
+            final_state = self.get_working_state(scope, prepared.session_id)
+            if final_state.latest_successful_turn_id != prepared.turn_id:
+                raise DirectorIntegrityError("Working State does not point to committed Turn")
+            if prepared.final_run_control == "READY":
+                if final_session.lifecycle_status != "READY" or final_session.ready_at != prepared.created_at:
+                    raise DirectorIntegrityError("READY Session lifecycle is not closed")
+                self._validated_ready_content_row(self.connection.execute(
+                    "SELECT * FROM director_ready_content WHERE id = ?", (prepared.ready_content_id,)
+                ).fetchone(), expected_session_id=prepared.session_id)
+            elif (
+                final_session.lifecycle_status != "ACTIVE"
+                or final_session.ready_at is not None
+                or final_state.stage == "READY"
+                or self.connection.execute(
+                    "SELECT 1 FROM director_ready_content WHERE session_id = ? AND created_by_turn_id = ?",
+                    (prepared.session_id, prepared.turn_id),
+                ).fetchone() is not None
+            ):
+                raise DirectorIntegrityError("non-READY successful Turn lifecycle is not closed")
+            self.connection.commit()
+            return SuccessfulTurnResult(first_response_json=prepared.first_response_json, replayed=False)
+        except Exception:
+            if self.connection.in_transaction:
+                self.connection.rollback()
+            raise
 
     def create_session(self, scope: AuthorizationScope) -> SessionRecord:
         return self._create_session(scope, source_ready_content_id=None)
@@ -651,7 +887,7 @@ class DirectorRepository:
             raise DirectorIntegrityError("recovery Evidence Turn message roles are invalid")
 
     def _validate_evidence_closure(
-        self, session: SessionRecord, state: dict[str, Any]
+        self, session: SessionRecord, state: dict[str, Any], *, inflight_turn_id: str | None = None
     ) -> None:
         objects: list[tuple[str, dict[str, Any]]] = []
         objects.extend(("owner_facts", item) for item in state["owner_facts"])
@@ -773,12 +1009,15 @@ class DirectorRepository:
                 )
             for reference in original_refs:
                 target = self._validate_evidence_reference(
-                    session, reference, allow_cross_session=inherited is not None
+                    session, reference, allow_cross_session=inherited is not None,
+                    inflight_turn_id=inflight_turn_id,
                 )
                 if inherited is None and target["session_id"] != session.id:
                     raise DirectorIntegrityError("non-inherited Evidence crosses Session")
             for reference in rejected_refs:
-                target = self._validate_evidence_reference(session, reference, allow_cross_session=False)
+                target = self._validate_evidence_reference(
+                    session, reference, allow_cross_session=False, inflight_turn_id=inflight_turn_id,
+                )
                 if target["session_id"] != session.id:
                     raise DirectorIntegrityError("rejection Evidence must belong to current Session")
 
@@ -788,6 +1027,7 @@ class DirectorRepository:
         reference: dict[str, Any],
         *,
         allow_cross_session: bool,
+        inflight_turn_id: str | None = None,
     ) -> sqlite3.Row:
         target = self.connection.execute(
             """
@@ -803,10 +1043,12 @@ class DirectorRepository:
             raise DirectorIntegrityError("Evidence crosses authorization scope")
         if not allow_cross_session and target["session_id"] != session.id:
             raise DirectorIntegrityError("Evidence crosses Session")
-        self._validate_evidence_turn_pair(target)
+        self._validate_evidence_turn_pair(target, inflight_turn_id=inflight_turn_id)
         return target
 
-    def _validate_evidence_turn_pair(self, owner_message: sqlite3.Row) -> None:
+    def _validate_evidence_turn_pair(
+        self, owner_message: sqlite3.Row, *, inflight_turn_id: str | None = None
+    ) -> None:
         """Validate the complete successful Turn visible to an Evidence reference.
 
         This deliberately does not call ``_validated_turn_row`` so Working State
@@ -818,6 +1060,9 @@ class DirectorRepository:
         ).fetchone()
         if turn is None:
             raise DirectorIntegrityError("Evidence Message does not belong to a Turn")
+        if turn["id"] == inflight_turn_id:
+            self._validate_evidence_turn_pair_shape(owner_message)
+            return
         try:
             validate_uuid4(turn["id"])
             validate_uuid4(turn["session_id"])

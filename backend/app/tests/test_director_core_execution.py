@@ -326,12 +326,13 @@ def test_same_input_produces_the_same_prepared_object() -> None:
     assert prepare(command) == prepare(command)
 
 
-def test_only_three_execution_exception_types_are_exported() -> None:
+def test_execution_exception_types_are_exported() -> None:
     import backend.app.director_core.execution as execution
 
     exported_errors = {name for name in execution.__all__ if name.endswith("Error")}
     assert exported_errors == {
-        "DirectorExecutionError", "DirectorExecutionValidationError", "StaleStateVersionError",
+        "DirectorExecutionError", "DirectorExecutionValidationError", "IdempotencyConflictError",
+        "StaleStateVersionError",
     }
     assert issubclass(StaleStateVersionError, DirectorExecutionError)
 

@@ -42,6 +42,25 @@ class StaleStateVersionError(DirectorExecutionError):
     """The request's expected state version is not the current authority."""
 
 
+class IdempotencyConflictError(DirectorExecutionError):
+    """A client message ID was previously committed with another request."""
+
+
+@dataclass(frozen=True)
+class PreparedIdempotencyRequest:
+    """Immutable canonical identity of a client request, excluding state version."""
+
+    session_id: str
+    client_message_id: str
+    request_format_version: int
+    normalized_request_json: str
+    request_sha256: str
+
+    @property
+    def normalized_request(self) -> dict[str, Any]:
+        return parse_canonical_object(self.normalized_request_json)
+
+
 @dataclass(frozen=True)
 class CommitSuccessfulTurnInput:
     """Raw successful-Turn facts; all persistence values are derived internally."""
@@ -240,6 +259,42 @@ def _canonical_payload(value: dict[str, Any], field_name: str) -> tuple[dict[str
     return deepcopy(value), canonical_json
 
 
+def prepare_idempotency_request(
+    session_id: str,
+    client_message_id: str,
+    request_format_version: int,
+    owner_message: str,
+    parameters: dict[str, Any],
+) -> PreparedIdempotencyRequest:
+    """Canonicalize the complete v1 request identity without database access."""
+
+    try:
+        prepared_session_id = _require_uuid(session_id, "session_id")
+        prepared_client_message_id = _require_nonblank_text(client_message_id, "client_message_id")
+        if (
+            isinstance(request_format_version, bool)
+            or not isinstance(request_format_version, int)
+            or request_format_version != 1
+        ):
+            raise DirectorExecutionValidationError("only request_format_version 1 is supported")
+        if not isinstance(parameters, dict):
+            raise DirectorExecutionValidationError("parameters must be an object")
+        request = normalized_request(owner_message, deepcopy(parameters))
+        validate_normalized_request(request)
+        _, request_json = _canonical_payload(request, "normalized_request")
+        return PreparedIdempotencyRequest(
+            session_id=prepared_session_id,
+            client_message_id=prepared_client_message_id,
+            request_format_version=request_format_version,
+            normalized_request_json=request_json,
+            request_sha256=canonical_sha256(request),
+        )
+    except DirectorExecutionError:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise DirectorExecutionValidationError("idempotency request is invalid") from exc
+
+
 def _validate_ready_closure(
     command: CommitSuccessfulTurnInput,
     *,
@@ -305,12 +360,6 @@ def prepare_successful_turn(
         )
         if expected_state_version != pre_state_version:
             raise StaleStateVersionError("expected_state_version does not match current_state_version")
-        if (
-            isinstance(command.request_format_version, bool)
-            or not isinstance(command.request_format_version, int)
-            or command.request_format_version != 1
-        ):
-            raise DirectorExecutionValidationError("only request_format_version 1 is supported")
         if pre_state_version >= SQLITE_INT_MAX:
             raise DirectorExecutionValidationError("post_state_version exceeds SQLite signed 64-bit range")
         if pre_state_version > SQLITE_INT_MAX // 2:
@@ -338,16 +387,16 @@ def prepare_successful_turn(
             raise DirectorExecutionValidationError("READY Session cannot accept a new successful Turn")
         target_stage = _require_stage(command.target_stage, "target_stage")
         validate_utc_millis(command.created_at)
-        if not isinstance(command.normalized_parameters, dict):
-            raise DirectorExecutionValidationError("normalized_parameters must be an object")
         if not isinstance(command.execution_trace, dict):
             raise DirectorExecutionValidationError("execution_trace must be an object")
         if not isinstance(command.post_state, dict):
             raise DirectorExecutionValidationError("post_state must be an object")
-        request = normalized_request(owner_message, deepcopy(command.normalized_parameters))
-        validate_normalized_request(request)
-        request, normalized_request_json = _canonical_payload(request, "normalized_request")
-        request_hash = canonical_sha256(request)
+        request_identity = prepare_idempotency_request(
+            session_id, client_message_id, command.request_format_version,
+            owner_message, command.normalized_parameters,
+        )
+        normalized_request_json = request_identity.normalized_request_json
+        request_hash = request_identity.request_sha256
         owner_message_seq = 2 * post_state_version - 1
         director_message_seq = 2 * post_state_version
         trace_model = validate_turn_execution_trace(
@@ -435,8 +484,11 @@ __all__ = [
     "CommitSuccessfulTurnInput",
     "DirectorExecutionError",
     "DirectorExecutionValidationError",
+    "IdempotencyConflictError",
+    "PreparedIdempotencyRequest",
     "PreparedSuccessfulTurn",
     "StaleStateVersionError",
     "SuccessfulTurnResult",
     "prepare_successful_turn",
+    "prepare_idempotency_request",
 ]
