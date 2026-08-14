@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import uuid4
 
-from .canonical import SQLITE_INT_MAX
+from .canonical import SQLITE_INT_MAX, is_blank_text
 from .execution import (
     CommitSuccessfulTurnInput,
     DirectorExecutionValidationError,
@@ -51,7 +51,7 @@ class DirectorTurnRequest:
 
 @dataclass(frozen=True)
 class TurnOrchestrationContext:
-    """The latest lock-owned authority snapshot visible to a candidate builder."""
+    """The lock-owned persistence bindings for the completed internal loop."""
 
     scope: AuthorizationScope
     request: DirectorTurnRequest
@@ -77,7 +77,7 @@ class TurnOrchestrationContext:
 
 @dataclass(frozen=True)
 class TurnCandidate:
-    """Business-only output from the injected candidate construction boundary."""
+    """Internal final candidate assembled after the stage loop completes."""
 
     director_message: str
     execution_trace: dict[str, Any]
@@ -90,17 +90,10 @@ class TurnCandidate:
     ready_content: dict[str, Any] | None
 
     def __post_init__(self) -> None:
-        # Keep the frozen envelope detached from mutable builder-owned payloads.
+        # Keep the frozen envelope detached from mutable loop-owned payloads.
         object.__setattr__(self, "execution_trace", deepcopy(self.execution_trace))
         object.__setattr__(self, "post_state", deepcopy(self.post_state))
         object.__setattr__(self, "ready_content", deepcopy(self.ready_content))
-
-
-class TurnCandidateBuilder(Protocol):
-    """Injected test/model boundary for producing business candidates only."""
-
-    def __call__(self, context: TurnOrchestrationContext) -> TurnCandidate:
-        ...
 
 
 @dataclass(frozen=True)
@@ -177,30 +170,15 @@ class DirectorOrchestrator:
 
     repository: DirectorRepository
     scope: AuthorizationScope
-    candidate_builder: TurnCandidateBuilder | None = None
-    max_internal_steps: int | None = None
-    stage_executor: SingleStageExecutor | None = None
+    stage_executor: SingleStageExecutor
+    max_internal_steps: int
 
     def __post_init__(self) -> None:
-        # New callers should use ``stage_executor=...`` and must explicitly
-        # inject the limit.  The positional ``(repo, scope, executor, max)``
-        # form is also accepted.  The old one-shot builder remains a narrow
-        # compatibility path for Phase 1C-1 callers and is not used by the
-        # Phase 1C-2 loop.
-        if self.stage_executor is None and self.max_internal_steps is not None:
-            object.__setattr__(self, "stage_executor", self.candidate_builder)
-            object.__setattr__(self, "candidate_builder", None)
-        if self.stage_executor is None and self.candidate_builder is None:
+        if self.stage_executor is None or not callable(self.stage_executor):
             raise DirectorExecutionValidationError(
                 "stage_executor must be provided"
             )
-        if self.stage_executor is not None and self.max_internal_steps is None:
-            if self.candidate_builder is None:
-                raise DirectorExecutionValidationError(
-                    "max_internal_steps must be explicitly injected"
-                )
-        if self.max_internal_steps is not None:
-            self._validate_max_internal_steps(self.max_internal_steps)
+        self._validate_max_internal_steps(self.max_internal_steps)
 
     def run(self, request: DirectorTurnRequest) -> SuccessfulTurnResult:
         if not isinstance(request, DirectorTurnRequest):
@@ -255,20 +233,14 @@ class DirectorOrchestrator:
             ready_content_id=ready_content_id,
         )
 
-        # Any executor/builder exception or invalid candidate exits before the
-        # write path.  There is intentionally no model retry or candidate
-        # retry here.
-        if self.stage_executor is not None:
-            candidate = self._run_internal_loop(
-                request=request,
-                working_state=working_state,
-                session=session,
-                owner_message_id=owner_message_id,
-            )
-        else:
-            # Frozen compatibility path for the previous Phase 1C-1 boundary.
-            # It is intentionally not part of the new workflow loop.
-            candidate = self.candidate_builder(context)  # type: ignore[misc]
+        # Any executor exception or invalid candidate exits before the write
+        # path.  There is intentionally no model retry here.
+        candidate = self._run_internal_loop(
+            request=request,
+            working_state=working_state,
+            session=session,
+            owner_message_id=owner_message_id,
+        )
         command = self._bind_request_boundary(candidate, context)
         prepared = prepare_successful_turn(
             command,
@@ -290,13 +262,7 @@ class DirectorOrchestrator:
         session: SessionRecord,
         owner_message_id: str,
     ) -> TurnCandidate:
-        if self.max_internal_steps is None:
-            raise DirectorExecutionValidationError(
-                "max_internal_steps must be explicitly injected"
-            )
         executor = self.stage_executor
-        if executor is None:  # pragma: no cover - guarded by __post_init__
-            raise DirectorExecutionValidationError("stage_executor must be provided")
 
         candidate_state = deepcopy(working_state.state_json)
         current_stage: Stage = working_state.stage  # type: ignore[assignment]
@@ -318,10 +284,16 @@ class DirectorOrchestrator:
                 raise DirectorExecutionValidationError(
                     "single-stage executor must return StageExecutionResult"
                 )
-            if not isinstance(result.director_message, str) or not result.director_message.strip():
-                raise DirectorExecutionValidationError(
-                    "stage execution director_message must not be blank"
-                )
+            if result.run_control == "CONTINUE":
+                if result.director_message is not None:
+                    raise DirectorExecutionValidationError(
+                        "CONTINUE stage execution must not include director_message"
+                    )
+            elif result.run_control in {"WAIT_FOR_OWNER", "READY"}:
+                if not isinstance(result.director_message, str) or is_blank_text(result.director_message):
+                    raise DirectorExecutionValidationError(
+                        "terminal stage execution director_message must not be blank"
+                    )
             if not isinstance(result.post_state, dict):
                 raise DirectorExecutionValidationError(
                     "stage execution post_state must be an object"
@@ -391,6 +363,10 @@ class DirectorOrchestrator:
                     "READY requires a draft content object"
                 )
             ready_content = deepcopy(draft["content"])
+        if not isinstance(final_result.director_message, str):  # pragma: no cover - terminal validation above
+            raise DirectorExecutionValidationError(
+                "terminal stage execution must provide director_message"
+            )
         return TurnCandidate(
             director_message=final_result.director_message,
             execution_trace=trace,
@@ -436,11 +412,11 @@ class DirectorOrchestrator:
     ) -> CommitSuccessfulTurnInput:
         if not isinstance(candidate, TurnCandidate):
             raise DirectorExecutionValidationError(
-                "candidate builder must return TurnCandidate"
+                "internal loop must produce TurnCandidate"
             )
-        # Infrastructure identity comes from the lock-owned orchestrator, not
-        # from the injected builder.  The builder supplies only business
-        # output: visible reply, trace, post-state, and optional ReadyContent.
+        # Infrastructure identity comes from the lock-owned orchestrator.  The
+        # internal loop supplies only business output: visible reply, trace,
+        # post-state, and optional ReadyContent.
         return CommitSuccessfulTurnInput(
             session_id=context.request.session_id,
             client_message_id=context.request.client_message_id,
@@ -469,7 +445,6 @@ __all__ = [
     "DirectorOrchestrator",
     "DirectorTurnRequest",
     "TurnCandidate",
-    "TurnCandidateBuilder",
     "TurnOrchestrationContext",
     "SingleStageExecutor",
     "StageExecutor",

@@ -9,7 +9,6 @@ from .orchestrator import (
     StageExecutionResult,
     StageExecutor,
     TurnCandidate,
-    TurnCandidateBuilder,
     TurnOrchestrationContext,
 )
 from .repository import (
@@ -36,7 +35,6 @@ __all__ = [
     "SessionLockManager",
     "SQLiteBusyError",
     "TurnCandidate",
-    "TurnCandidateBuilder",
     "TurnOrchestrationContext",
     "shared_session_lock_manager",
 ]

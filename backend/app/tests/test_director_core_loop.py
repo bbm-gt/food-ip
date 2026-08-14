@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import fields
 import json
 from uuid import uuid4
 
@@ -59,6 +60,9 @@ def empty_state() -> dict:
     }
 
 
+_DEFAULT_MESSAGE = object()
+
+
 def snapshot(repository: DirectorRepository) -> dict[str, tuple[tuple[object, ...], ...]]:
     return {
         table: tuple(
@@ -90,8 +94,10 @@ def result(
     reason: str,
     gate: dict | None = None,
     review: dict | None = None,
-    message: str = "请继续补充真实内容。",
+    message: str | None | object = _DEFAULT_MESSAGE,
 ) -> StageExecutionResult:
+    if message is _DEFAULT_MESSAGE:
+        message = None if run_control == "CONTINUE" else "请继续补充真实内容。"
     return StageExecutionResult(
         director_message=message,
         post_state=deepcopy(context.working_state if post_state is None else post_state),
@@ -508,3 +514,111 @@ def test_idempotent_replay_does_not_rerun_internal_loop(repository) -> None:
     replay = orchestrator.run(request(session_id, "replay-loop"))
     assert first.first_response_json == replay.first_response_json
     assert calls == ["EXPLORE"]
+
+
+def test_stage_executor_boundary_is_single_stage_and_builder_path_is_absent(repository) -> None:
+    repo, scope, _session_id = repository
+    assert not hasattr(DirectorOrchestrator, "candidate_builder")
+    assert not hasattr(__import__("backend.app.director_core", fromlist=["x"]), "TurnCandidateBuilder")
+    assert {field.name for field in fields(StageExecutionResult)} == {
+        "director_message", "post_state", "run_control", "target_stage",
+        "transition_reason_code", "gate", "review",
+    }
+
+    def executor(context: StageExecutionContext) -> StageExecutionResult:
+        return result(
+            context,
+            run_control="WAIT_FOR_OWNER",
+            target_stage=context.stage,
+            reason="OWNER_INPUT_REQUIRED",
+        )
+
+    with pytest.raises(TypeError):
+        DirectorOrchestrator(repo, scope, max_internal_steps=1)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        DirectorOrchestrator(repo, scope, stage_executor=executor)  # type: ignore[call-arg]
+    with pytest.raises(DirectorExecutionValidationError):
+        DirectorOrchestrator(repo, scope, stage_executor=None, max_internal_steps=1)  # type: ignore[arg-type]
+
+
+def test_continue_has_no_visible_message_and_terminal_message_is_committed(repository) -> None:
+    repo, scope, session_id = repository
+    calls: list[str] = []
+
+    def executor(context: StageExecutionContext) -> StageExecutionResult:
+        calls.append(context.stage)
+        if context.stage == "EXPLORE":
+            return result(
+                context,
+                run_control="CONTINUE",
+                target_stage="DEEPEN",
+                reason="DIRECTION_CONFIRMED",
+            )
+        return result(
+            context,
+            run_control="WAIT_FOR_OWNER",
+            target_stage="DEEPEN",
+            reason="OWNER_INPUT_REQUIRED",
+            message="终止步骤的老板可见回复。",
+        )
+
+    outcome = DirectorOrchestrator(
+        repo, scope, stage_executor=executor, max_internal_steps=2
+    ).run(request(session_id, "terminal-message"))
+    director_message = repo.connection.execute(
+        "SELECT content FROM director_messages WHERE session_id = ? AND visible_role = 'DIRECTOR'",
+        (session_id,),
+    ).fetchone()[0]
+    assert calls == ["EXPLORE", "DEEPEN"]
+    assert outcome.response["director_message"] == "终止步骤的老板可见回复。"
+    assert director_message == "终止步骤的老板可见回复。"
+
+
+def test_continue_with_visible_message_is_rejected(repository) -> None:
+    repo, scope, session_id = repository
+
+    def executor(context: StageExecutionContext) -> StageExecutionResult:
+        return result(
+            context,
+            run_control="CONTINUE",
+            target_stage="DEEPEN",
+            reason="DIRECTION_CONFIRMED",
+            message="不应进入 Transcript。",
+        )
+
+    before = snapshot(repo)
+    with pytest.raises(DirectorExecutionValidationError, match="CONTINUE"):
+        DirectorOrchestrator(
+            repo, scope, stage_executor=executor, max_internal_steps=2
+        ).run(request(session_id, "continue-visible"))
+    assert snapshot(repo) == before
+
+
+@pytest.mark.parametrize("run_control", ["WAIT_FOR_OWNER", "READY"])
+@pytest.mark.parametrize("message", [None, "", "\u2003\u00a0"])
+def test_terminal_steps_require_nonblank_unicode_message(repository, run_control: str, message: str | None) -> None:
+    repo, scope, session_id = repository
+
+    def executor(context: StageExecutionContext) -> StageExecutionResult:
+        return result(
+            context,
+            run_control=run_control,
+            target_stage="READY" if run_control == "READY" else context.stage,
+            reason="REVIEW_PASSED" if run_control == "READY" else "OWNER_INPUT_REQUIRED",
+            gate=(
+                {"outcome": "PASSED", "gate_code": "READINESS_PASSED", "explanation": "通过。"}
+                if run_control == "READY" else None
+            ),
+            review=(
+                {"outcome": "PASSED", "root_cause": None}
+                if run_control == "READY" else None
+            ),
+            message=message,
+        )
+
+    before = snapshot(repo)
+    with pytest.raises(DirectorExecutionValidationError, match="director_message"):
+        DirectorOrchestrator(
+            repo, scope, stage_executor=executor, max_internal_steps=1
+        ).run(request(session_id, f"blank-{run_control}-{message!r}"))
+    assert snapshot(repo) == before
