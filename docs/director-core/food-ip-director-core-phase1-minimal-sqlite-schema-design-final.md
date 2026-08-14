@@ -182,7 +182,8 @@ Turn 不反向保存 OWNER／DIRECTOR Message ID，避免 Turn 与 Messages 形�
 - 正常更新必须使用 `WHERE session_id = ? AND state_version = ?` 的乐观条件，且新版本严格等于旧版本加一；受影响行数不是 1 即整轮失败。
 - 正常更新时 Session 必须为 ACTIVE，`latest_successful_turn_id` 必须改为已经插入的本轮 Turn ID；该外键是单向的 Working State → Turn，不需要延迟或循环外键。
 - Working State CAS 更新前，事务内校验本轮 Turn 已存在、属于同一 Session，且恰好存在一条 OWNER 和一条 DIRECTOR Message。更新后 Turn 的 post version、target Stage、post-state hash 必须与当前 Working State 完全一致。
-- READY 后禁止任何产生新版本的更新。确定性修复不是新创作：如需从 Turn snapshot 恢复损坏投影，只允许受控维护路径写回同一版本、Stage、latest Turn 和经重新计算一致的哈希，不能借恢复名义推进版本。
+- READY 后禁止任何产生新版本的业务更新。确定性修复不是新创作：如需从 Turn snapshot 恢复损坏投影，只允许受控维护路径写回同一版本、Stage、latest Turn 和经重新计算一致的哈希，不能借恢复名义推进版本；READY Session 也只允许这一条严格同版本修复路径。
+- Working State 正常业务更新与确定性恢复是两个不同路径。恢复既可修复现有行，也可重建丢失行，但只能选择当前 Session 最大 `post_state_version` 的完整成功 Turn snapshot；不得使用较早 snapshot 降级，也不要求较早 snapshot 全部健康。READY 恢复还必须验证 Session、唯一 ReadyContent、生产 Turn、首次响应中的 `ready_content_id` 与 snapshot 最终 `draft.content` 完整闭合。
 - 哈希定义唯一且固定为：
 
 ```text

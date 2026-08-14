@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from uuid import uuid4
 
 import pytest
@@ -337,6 +338,9 @@ def test_inherited_owner_fact_can_be_rejected_without_losing_source_closure(repo
         "SELECT state_json FROM director_working_state WHERE session_id = ?", (revision.id,)
     ).fetchone()[0])
     state["rejected_items"][0]["rejected_by_evidence_refs"][0]["target_id"] = owner_id
+    # This intentionally manufactures a damaged projection; production writes
+    # must go through the recovery entry point and the trigger must reject it.
+    repository.connection.execute("DROP TRIGGER director_working_state_update_guard")
     repository.connection.execute(
         "UPDATE director_working_state SET state_json = ?, state_sha256 = ? WHERE session_id = ?",
         (canonical_text(state), state_sha256(1, "EXPLORE", state), revision.id),
@@ -565,3 +569,115 @@ def test_evidence_requires_complete_successful_turn(repository: DirectorReposito
         connection.execute("UPDATE director_messages SET message_seq = 99 WHERE id = ?", (owner["id"],))
     with pytest.raises(DirectorIntegrityError):
         repository.get_working_state(scope, session_id)
+
+
+def test_recover_missing_active_version_zero_is_deterministic(repository: DirectorRepository) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    session = repository.create_session(scope)
+    repository.connection.execute("DROP TRIGGER director_working_state_delete_guard")
+    repository.connection.execute("DELETE FROM director_working_state WHERE session_id = ?", (session.id,))
+    repository.connection.commit()
+    recovered = repository.recover_working_state(scope, session.id)
+    assert recovered.state_version == 0
+    assert recovered.stage == "EXPLORE"
+    assert recovered.latest_successful_turn_id is None
+    assert recovered.state_json == _empty_state_for_test()
+    assert repository.connection.execute(
+        "SELECT count(*) FROM director_turns WHERE session_id = ?", (session.id,)
+    ).fetchone()[0] == 0
+
+
+def _empty_state_for_test() -> dict:
+    return {
+        "format_version": 1,
+        "owner_facts": [],
+        "ai_judgments": [],
+        "unconfirmed_inferences": [],
+        "rejected_items": [],
+        "owner_constraints": [],
+        "direction": None,
+        "material_state": {"status": "UNKNOWN", "required_confirmations": []},
+        "draft": None,
+        "review": None,
+    }
+
+
+def test_recover_missing_and_corrupt_active_state_from_maximum_turn(
+    repository: DirectorRepository,
+) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    _, ready_id, _ = _finish_source(repository, scope)
+    session = repository.create_revision_session(scope, ready_id)
+    original = repository.get_working_state(scope, session.id)
+    _insert_revision_turn(repository, session.id, original.state_json)
+    expected = repository.get_working_state(scope, session.id)
+    turn_count = repository.connection.execute(
+        "SELECT count(*) FROM director_turns WHERE session_id = ?", (session.id,)
+    ).fetchone()[0]
+    message_count = repository.connection.execute(
+        "SELECT count(*) FROM director_messages WHERE session_id = ?", (session.id,)
+    ).fetchone()[0]
+    repository.connection.execute("DROP TRIGGER director_working_state_delete_guard")
+    repository.connection.execute("DELETE FROM director_working_state WHERE session_id = ?", (session.id,))
+    repository.connection.commit()
+    assert repository.recover_working_state(scope, session.id).state_json == expected.state_json
+    repository.connection.execute("DROP TRIGGER director_working_state_update_guard")
+    repository.connection.execute(
+        "UPDATE director_working_state SET state_json = '{}', state_sha256 = ? WHERE session_id = ?",
+        ("0" * 64, session.id),
+    )
+    repository.connection.commit()
+    repaired = repository.recover_working_state(scope, session.id)
+    assert repaired.state_version == expected.state_version
+    assert repaired.state_sha256 == expected.state_sha256
+    assert repository.connection.execute(
+        "SELECT count(*) FROM director_turns WHERE session_id = ?", (session.id,)
+    ).fetchone()[0] == turn_count
+    assert repository.connection.execute(
+        "SELECT count(*) FROM director_messages WHERE session_id = ?", (session.id,)
+    ).fetchone()[0] == message_count
+
+
+def test_recover_ready_state_from_ready_turn_and_reject_arbitrary_same_version_update(
+    repository: DirectorRepository,
+) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    session_id, ready_id, _ = _finish_source(repository, scope)
+    expected = repository.get_working_state(scope, session_id)
+    repository.connection.execute("DROP TRIGGER director_working_state_delete_guard")
+    repository.connection.execute("DELETE FROM director_working_state WHERE session_id = ?", (session_id,))
+    repository.connection.commit()
+    recovered = repository.recover_working_state(scope, session_id)
+    assert recovered.stage == "READY"
+    assert recovered.latest_successful_turn_id == expected.latest_successful_turn_id
+    assert repository.get_ready_content(scope, ready_id)["final_content_json"] == recovered.state_json["draft"]["content"]
+
+    changed = dict(recovered.state_json)
+    changed["ai_judgments"] = [{"item_id": uid(), "judgment_kind": "STRUCTURE", "statement": "篡改"}]
+    with pytest.raises(sqlite3.IntegrityError):
+        repository.connection.execute(
+            "UPDATE director_working_state SET state_json = ?, state_sha256 = ? WHERE session_id = ?",
+            (canonical_text(changed), state_sha256(recovered.state_version, recovered.stage, changed), session_id),
+        )
+
+
+def test_recovery_fails_closed_when_maximum_turn_snapshot_is_damaged(
+    repository: DirectorRepository,
+) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    session_id, _, _ = _finish_source(repository, scope)
+    turn_id = repository.connection.execute(
+        "SELECT id FROM director_turns WHERE session_id = ?", (session_id,)
+    ).fetchone()[0]
+    repository.connection.execute("DROP TRIGGER director_turns_update_guard")
+    repository.connection.execute(
+        "UPDATE director_turns SET post_state_sha256 = ? WHERE id = ?", ("0" * 64, turn_id)
+    )
+    repository.connection.execute("DROP TRIGGER director_working_state_delete_guard")
+    repository.connection.execute("DELETE FROM director_working_state WHERE session_id = ?", (session_id,))
+    repository.connection.commit()
+    with pytest.raises(DirectorIntegrityError):
+        repository.recover_working_state(scope, session_id)
+    assert repository.connection.execute(
+        "SELECT count(*) FROM director_working_state WHERE session_id = ?", (session_id,)
+    ).fetchone()[0] == 0

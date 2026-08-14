@@ -180,20 +180,123 @@ CREATE TRIGGER IF NOT EXISTS director_messages_delete_guard BEFORE DELETE ON dir
 CREATE TRIGGER IF NOT EXISTS director_working_state_insert_guard
 BEFORE INSERT ON director_working_state
 BEGIN
-    SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM director_sessions s WHERE s.id = NEW.session_id AND s.lifecycle_status = 'ACTIVE')
-        THEN RAISE(ABORT, 'initial Working State requires ACTIVE Session') END;
-    SELECT CASE WHEN NEW.state_version <> 0 OR NEW.stage <> 'EXPLORE' OR NEW.latest_successful_turn_id IS NOT NULL
-        THEN RAISE(ABORT, 'initial Working State must be EXPLORE version 0') END;
+    SELECT CASE WHEN NEW.state_version = 0 AND NOT EXISTS (
+        SELECT 1 FROM director_sessions s
+        WHERE s.id = NEW.session_id AND s.lifecycle_status = 'ACTIVE'
+    ) THEN RAISE(ABORT, 'initial Working State requires ACTIVE Session') END;
+    SELECT CASE WHEN NEW.state_version = 0 AND (
+        NEW.stage <> 'EXPLORE' OR NEW.latest_successful_turn_id IS NOT NULL
+    ) THEN RAISE(ABORT, 'initial Working State must be EXPLORE version 0') END;
+    SELECT CASE WHEN NEW.state_version = 0 AND EXISTS (
+        SELECT 1 FROM director_turns t WHERE t.session_id = NEW.session_id
+    ) THEN RAISE(ABORT, 'version 0 Working State cannot coexist with a Turn') END;
+    SELECT CASE WHEN NEW.state_version > 0 AND NOT EXISTS (
+        SELECT 1
+        FROM director_turns t
+        WHERE t.session_id = NEW.session_id
+          AND t.post_state_version = (
+              SELECT MAX(max_t.post_state_version)
+              FROM director_turns max_t WHERE max_t.session_id = NEW.session_id
+          )
+          AND t.id = NEW.latest_successful_turn_id
+          AND t.post_state_version = NEW.state_version
+          AND t.target_stage = NEW.stage
+          AND t.post_state_sha256 = NEW.state_sha256
+          AND json_extract(t.post_state_snapshot_json, '$.state_version') = NEW.state_version
+          AND json_extract(t.post_state_snapshot_json, '$.stage') = NEW.stage
+          AND json_extract(t.post_state_snapshot_json, '$.state_json') = NEW.state_json
+    ) THEN RAISE(ABORT, 'Working State must match the maximum Turn snapshot') END;
+    SELECT CASE WHEN NEW.state_version > 0 AND NEW.stage <> 'READY' AND NOT EXISTS (
+        SELECT 1 FROM director_sessions s
+        WHERE s.id = NEW.session_id AND s.lifecycle_status = 'ACTIVE'
+    ) THEN RAISE(ABORT, 'ACTIVE Working State requires ACTIVE Session') END;
+    SELECT CASE WHEN NEW.state_version > 0 AND NEW.stage <> 'READY' AND EXISTS (
+        SELECT 1 FROM director_ready_content rc WHERE rc.session_id = NEW.session_id
+    ) THEN RAISE(ABORT, 'ACTIVE Working State cannot have ReadyContent') END;
+    SELECT CASE WHEN NEW.state_version > 0 AND NEW.stage = 'READY' AND NOT EXISTS (
+        SELECT 1
+        FROM director_sessions s
+        JOIN director_ready_content rc ON rc.session_id = s.id
+        JOIN director_turns t ON t.id = NEW.latest_successful_turn_id AND t.session_id = s.id
+        WHERE s.id = NEW.session_id AND s.lifecycle_status = 'READY'
+          AND rc.created_by_turn_id = t.id
+          AND json_extract(t.first_response_json, '$.ready_content_id') = rc.id
+          AND json(rc.final_content_json) = json(json_extract(t.post_state_snapshot_json, '$.state_json.draft.content'))
+    ) THEN RAISE(ABORT, 'READY Working State requires closed ReadyContent') END;
 END;
 
 CREATE TRIGGER IF NOT EXISTS director_working_state_update_guard
 BEFORE UPDATE ON director_working_state
 BEGIN
     SELECT CASE WHEN NEW.session_id <> OLD.session_id THEN RAISE(ABORT, 'Working State Session is immutable') END;
-    SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM director_sessions s WHERE s.id = OLD.session_id AND s.lifecycle_status = 'ACTIVE')
-        THEN RAISE(ABORT, 'Working State update requires ACTIVE Session') END;
     SELECT CASE WHEN NEW.state_version NOT IN (OLD.state_version, OLD.state_version + 1)
         THEN RAISE(ABORT, 'Working State version must recover in place or increment once') END;
+    SELECT CASE WHEN NEW.state_version = OLD.state_version + 1 AND NOT EXISTS (
+        SELECT 1 FROM director_sessions s
+        WHERE s.id = OLD.session_id AND s.lifecycle_status = 'ACTIVE'
+    ) THEN RAISE(ABORT, 'normal Working State update requires ACTIVE Session') END;
+    SELECT CASE WHEN NEW.state_version = OLD.state_version + 1 AND NOT EXISTS (
+        SELECT 1
+        FROM director_turns t
+        WHERE t.session_id = NEW.session_id
+          AND t.post_state_version = NEW.state_version
+          AND t.post_state_version = (
+              SELECT MAX(max_t.post_state_version)
+              FROM director_turns max_t WHERE max_t.session_id = NEW.session_id
+          )
+          AND t.id = NEW.latest_successful_turn_id
+          AND t.target_stage = NEW.stage
+          AND t.post_state_sha256 = NEW.state_sha256
+          AND json_extract(t.post_state_snapshot_json, '$.state_version') = NEW.state_version
+          AND json_extract(t.post_state_snapshot_json, '$.stage') = NEW.stage
+          AND json_extract(t.post_state_snapshot_json, '$.state_json') = NEW.state_json
+    ) THEN RAISE(ABORT, 'normal Working State update must match the Turn snapshot') END;
+    SELECT CASE WHEN NEW.state_version = OLD.state_version AND NEW.state_version = 0 AND NOT EXISTS (
+        SELECT 1 FROM director_sessions s
+        WHERE s.id = NEW.session_id AND s.lifecycle_status = 'ACTIVE'
+    ) THEN RAISE(ABORT, 'version 0 recovery requires ACTIVE Session') END;
+    SELECT CASE WHEN NEW.state_version = OLD.state_version AND NEW.state_version = 0 AND EXISTS (
+        SELECT 1 FROM director_turns t WHERE t.session_id = NEW.session_id
+    ) THEN RAISE(ABORT, 'version 0 recovery cannot coexist with a Turn') END;
+    SELECT CASE WHEN NEW.state_version = OLD.state_version AND NEW.state_version = 0 AND (
+        NEW.stage <> 'EXPLORE' OR NEW.latest_successful_turn_id IS NOT NULL
+    ) THEN RAISE(ABORT, 'version 0 recovery must remain EXPLORE') END;
+    SELECT CASE WHEN NEW.state_version = OLD.state_version AND NEW.state_version > 0 AND NOT EXISTS (
+        SELECT 1
+        FROM director_turns t
+        WHERE t.session_id = NEW.session_id
+          AND t.post_state_version = (
+              SELECT MAX(max_t.post_state_version)
+              FROM director_turns max_t WHERE max_t.session_id = NEW.session_id
+          )
+          AND t.id = NEW.latest_successful_turn_id
+          AND t.post_state_version = NEW.state_version
+          AND t.target_stage = NEW.stage
+          AND t.post_state_sha256 = NEW.state_sha256
+          AND json_extract(t.post_state_snapshot_json, '$.state_version') = NEW.state_version
+          AND json_extract(t.post_state_snapshot_json, '$.stage') = NEW.stage
+          AND json_extract(t.post_state_snapshot_json, '$.state_json') = NEW.state_json
+    ) THEN RAISE(ABORT, 'Working State recovery must match the maximum Turn snapshot') END;
+    SELECT CASE WHEN NEW.state_version = OLD.state_version AND NEW.state_version > 0
+        AND NEW.stage <> 'READY' AND NOT EXISTS (
+        SELECT 1 FROM director_sessions s
+        WHERE s.id = NEW.session_id AND s.lifecycle_status = 'ACTIVE'
+    ) THEN RAISE(ABORT, 'ACTIVE Working State recovery requires ACTIVE Session') END;
+    SELECT CASE WHEN NEW.state_version = OLD.state_version AND NEW.state_version > 0
+        AND NEW.stage <> 'READY' AND EXISTS (
+        SELECT 1 FROM director_ready_content rc WHERE rc.session_id = NEW.session_id
+    ) THEN RAISE(ABORT, 'ACTIVE Working State recovery cannot have ReadyContent') END;
+    SELECT CASE WHEN NEW.state_version = OLD.state_version AND NEW.state_version > 0
+        AND NEW.stage = 'READY' AND NOT EXISTS (
+        SELECT 1
+        FROM director_sessions s
+        JOIN director_ready_content rc ON rc.session_id = s.id
+        JOIN director_turns t ON t.id = NEW.latest_successful_turn_id AND t.session_id = s.id
+        WHERE s.id = NEW.session_id AND s.lifecycle_status = 'READY'
+          AND rc.created_by_turn_id = t.id
+          AND json_extract(t.first_response_json, '$.ready_content_id') = rc.id
+          AND json(rc.final_content_json) = json(json_extract(t.post_state_snapshot_json, '$.state_json.draft.content'))
+    ) THEN RAISE(ABORT, 'READY Working State recovery requires closed ReadyContent') END;
 END;
 CREATE TRIGGER IF NOT EXISTS director_working_state_delete_guard BEFORE DELETE ON director_working_state BEGIN SELECT RAISE(ABORT, 'Working State cannot be deleted'); END;
 

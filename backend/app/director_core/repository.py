@@ -118,33 +118,7 @@ class DirectorRepository:
         self._write_ready()
         session_id = _uuid4()
         created_at = _utc_now()
-        state = _empty_state()
-
-        if source_ready_content_id is not None:
-            source = self._source_for_revision(scope, source_ready_content_id)
-            source_state = source["state"].state_json
-            inherited_from = {
-                "source_ready_content_id": source_ready_content_id,
-                "source_session_id": source["session"].id,
-            }
-            state["owner_facts"] = self._inherit_items(source_state["owner_facts"], inherited_from)
-            state["owner_constraints"] = self._inherit_items(source_state["owner_constraints"], inherited_from)
-            if source_state["direction"] is not None:
-                state["direction"] = deepcopy(source_state["direction"])
-                state["direction"]["inherited_from"] = deepcopy(inherited_from)
-            state["draft"] = {
-                "draft_id": None,
-                "content": deepcopy(source["ready_content"]["final_content_json"]),
-                "content_status": "WORKING",
-                "based_on_ready_content_id": source_ready_content_id,
-            }
-
-        validated = validate_working_state(
-            state,
-            stage="EXPLORE",
-            state_version=0,
-            source_ready_content_id=source_ready_content_id,
-        ).model_dump(mode="json")
+        validated = self._initial_state_for_session(scope, source_ready_content_id)
         state_text = canonical_text(validated)
         digest = state_sha256(0, "EXPLORE", validated)
 
@@ -171,6 +145,36 @@ class DirectorRepository:
         except sqlite3.DatabaseError:
             raise
         return self.get_session(scope, session_id)
+
+    def _initial_state_for_session(
+        self, scope: AuthorizationScope, source_ready_content_id: str | None
+    ) -> dict[str, Any]:
+        """Build the one approved version-zero baseline for a Session."""
+        state = _empty_state()
+        if source_ready_content_id is not None:
+            source = self._source_for_revision(scope, source_ready_content_id)
+            source_state = source["state"].state_json
+            inherited_from = {
+                "source_ready_content_id": source_ready_content_id,
+                "source_session_id": source["session"].id,
+            }
+            state["owner_facts"] = self._inherit_items(source_state["owner_facts"], inherited_from)
+            state["owner_constraints"] = self._inherit_items(source_state["owner_constraints"], inherited_from)
+            if source_state["direction"] is not None:
+                state["direction"] = deepcopy(source_state["direction"])
+                state["direction"]["inherited_from"] = deepcopy(inherited_from)
+            state["draft"] = {
+                "draft_id": None,
+                "content": deepcopy(source["ready_content"]["final_content_json"]),
+                "content_status": "WORKING",
+                "based_on_ready_content_id": source_ready_content_id,
+            }
+        return validate_working_state(
+            state,
+            stage="EXPLORE",
+            state_version=0,
+            source_ready_content_id=source_ready_content_id,
+        ).model_dump(mode="json")
 
     @staticmethod
     def _inherit_items(items: list[dict[str, Any]], inherited_from: dict[str, str]) -> list[dict[str, Any]]:
@@ -227,6 +231,109 @@ class DirectorRepository:
         ).fetchone()
         if row is None:
             raise DirectorIntegrityError("Director Session has no Working State")
+        try:
+            state = parse_canonical_object(row["state_json"])
+            validated = validate_working_state(
+                state,
+                stage=row["stage"],
+                state_version=row["state_version"],
+                source_ready_content_id=session.source_ready_content_id,
+            ).model_dump(mode="json")
+            digest = state_sha256(row["state_version"], row["stage"], validated)
+            if digest != row["state_sha256"]:
+                raise DirectorIntegrityError("Working State hash mismatch")
+            self._validate_state_turn_link(row)
+            self._validate_evidence_closure(session, validated)
+            self._validate_session_lifecycle(session, row)
+            validate_utc_millis(row["updated_at"])
+        except (ValueError, TypeError) as exc:
+            if isinstance(exc, DirectorIntegrityError):
+                raise
+            raise DirectorIntegrityError("invalid Working State") from exc
+        return WorkingStateRecord(
+            session_id=row["session_id"],
+            state_version=row["state_version"],
+            stage=row["stage"],
+            state_json=validated,
+            state_sha256=row["state_sha256"],
+            latest_successful_turn_id=row["latest_successful_turn_id"],
+            updated_at=row["updated_at"],
+        )
+
+    def recover_working_state(
+        self, scope: AuthorizationScope, session_id: str
+    ) -> WorkingStateRecord:
+        """Rebuild the projection from the maximum complete Turn snapshot.
+
+        Recovery is deliberately a short SQLite write transaction.  It never
+        creates a Turn, Message, or ReadyContent and never consults a
+        Checkpoint.  The trigger is the database-side second line of defense;
+        the recovery validator below is the application-side integrity gate.
+        """
+        validate_uuid4(session_id)
+        session = self.get_session(scope, session_id)
+        self._write_ready()
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            session = self.get_session(scope, session_id)
+            turn = self.connection.execute(
+                """SELECT * FROM director_turns
+                   WHERE session_id = ?
+                   ORDER BY post_state_version DESC, id DESC LIMIT 1""",
+                (session_id,),
+            ).fetchone()
+            if turn is None:
+                state = self._initial_state_for_session(scope, session.source_ready_content_id)
+                version, stage, latest_turn = 0, "EXPLORE", None
+            else:
+                recovered = self._validate_recovery_turn(
+                    session, turn, require_current_lifecycle=True
+                )
+                snapshot = recovered["post_state_snapshot_json"]
+                state = snapshot["state_json"]
+                version = snapshot["state_version"]
+                stage = snapshot["stage"]
+                latest_turn = turn["id"]
+            state_text = canonical_text(state)
+            digest = state_sha256(version, stage, state)
+            now = _utc_now()
+            existing = self.connection.execute(
+                "SELECT 1 FROM director_working_state WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            if existing is None:
+                self.connection.execute(
+                    """INSERT INTO director_working_state
+                       (session_id, state_version, stage, state_json, state_sha256,
+                        latest_successful_turn_id, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (session_id, version, stage, state_text, digest, latest_turn, now),
+                )
+            else:
+                self.connection.execute(
+                    """UPDATE director_working_state
+                       SET state_version = ?, stage = ?, state_json = ?, state_sha256 = ?,
+                           latest_successful_turn_id = ?, updated_at = ?
+                       WHERE session_id = ?""",
+                    (version, stage, state_text, digest, latest_turn, now, session_id),
+                )
+            row = self.connection.execute(
+                "SELECT * FROM director_working_state WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            if row is None:
+                raise DirectorIntegrityError("Working State recovery write disappeared")
+            # This is intentionally inside the transaction: a failed final
+            # read validation rolls the repair back with every other write.
+            result = self._working_state_from_row(session, row)
+            self.connection.commit()
+            return result
+        except Exception:
+            if self.connection.in_transaction:
+                self.connection.rollback()
+            raise
+
+    def _working_state_from_row(
+        self, session: SessionRecord, row: sqlite3.Row
+    ) -> WorkingStateRecord:
         try:
             state = parse_canonical_object(row["state_json"])
             validated = validate_working_state(
@@ -329,6 +436,188 @@ class DirectorRepository:
                 raise DirectorIntegrityError("non-READY Turn cannot create ReadyContent")
             if session_row["latest_successful_turn_id"] == row["id"] and session_row["stage"] == "READY":
                 raise DirectorIntegrityError("non-READY Turn cannot move its Working State to READY")
+
+    def _validate_recovery_turn(
+        self,
+        session: SessionRecord,
+        row: sqlite3.Row,
+        *,
+        require_current_lifecycle: bool,
+        visited: set[str] | None = None,
+    ) -> dict[str, Any]:
+        """Validate a Turn without reading the current Working State row."""
+        visited = set() if visited is None else visited
+        if row["id"] in visited:
+            raise DirectorIntegrityError("cyclic Evidence Turn reference")
+        visited.add(row["id"])
+        try:
+            if row["session_id"] != session.id or row["post_state_version"] != row["pre_state_version"] + 1:
+                raise DirectorIntegrityError("recovery Turn identity or version is invalid")
+            if any(row[name] != 1 for name in (
+                "request_format_version", "execution_format_version",
+                "response_format_version", "snapshot_format_version",
+            )):
+                raise DirectorIntegrityError("unsupported recovery Turn format version")
+            normalized_request = parse_canonical_object(row["normalized_request_json"])
+            validate_normalized_request(normalized_request)
+            if canonical_sha256(normalized_request) != row["request_sha256"]:
+                raise DirectorIntegrityError("recovery Turn request hash mismatch")
+            trace_payload = parse_canonical_object(row["execution_trace_json"])
+            trace_steps = trace_payload.get("steps") if isinstance(trace_payload, dict) else None
+            if not trace_steps:
+                raise DirectorIntegrityError("recovery Turn trace is empty")
+            pre_stage = trace_steps[0].get("entered_stage")
+            if row["pre_state_version"] == 0 and pre_stage != "EXPLORE":
+                raise DirectorIntegrityError("version 0 recovery Turn must enter EXPLORE")
+            trace = validate_turn_execution_trace(
+                trace_payload,
+                pre_stage=pre_stage,
+                final_run_control=row["final_run_control"],
+                target_stage=row["target_stage"],
+                transition_reason_code=row["transition_reason_code"],
+                gate_outcome=row["gate_outcome"],
+                review_root_cause=row["review_root_cause"],
+            ).model_dump(mode="json")
+            response = FirstResponse.model_validate(
+                parse_canonical_object(row["first_response_json"])
+            ).model_dump(mode="json")
+            snapshot = TurnPostStateSnapshot.model_validate(
+                parse_canonical_object(row["post_state_snapshot_json"])
+            ).model_dump(mode="json")
+            digest = state_sha256(snapshot["state_version"], snapshot["stage"], snapshot["state_json"])
+            if digest != row["post_state_sha256"]:
+                raise DirectorIntegrityError("recovery Turn snapshot hash mismatch")
+            if snapshot["state_version"] != row["post_state_version"] or snapshot["stage"] != row["target_stage"]:
+                raise DirectorIntegrityError("recovery Turn snapshot columns mismatch")
+            if (
+                response["session_id"] != row["session_id"]
+                or response["turn_id"] != row["id"]
+                or response["state_version"] != row["post_state_version"]
+                or response["stage"] != row["target_stage"]
+                or response["run_control"] != row["final_run_control"]
+            ):
+                raise DirectorIntegrityError("recovery Turn response does not close")
+            messages = self.connection.execute(
+                """SELECT id, visible_role, content, message_seq, turn_id
+                   FROM director_messages WHERE session_id = ? AND turn_id = ?
+                   ORDER BY message_seq""",
+                (row["session_id"], row["id"]),
+            ).fetchall()
+            if len(messages) != 2 or messages[0]["visible_role"] != "OWNER" or messages[1]["visible_role"] != "DIRECTOR":
+                raise DirectorIntegrityError("recovery Turn does not have a complete visible pair")
+            if (
+                messages[0]["message_seq"] != 2 * row["post_state_version"] - 1
+                or messages[1]["message_seq"] != 2 * row["post_state_version"]
+                or response["owner_message_id"] != messages[0]["id"]
+                or response["director_message_id"] != messages[1]["id"]
+                or response["director_message"] != messages[1]["content"]
+                or normalize_text(messages[0]["content"]) != normalized_request["owner_text"]
+            ):
+                raise DirectorIntegrityError("recovery Turn visible messages do not close")
+            if row["target_stage"] == "READY" or row["final_run_control"] == "READY":
+                if row["target_stage"] != "READY" or row["final_run_control"] != "READY":
+                    raise DirectorIntegrityError("recovery READY Turn top-level fields are inconsistent")
+                if response["ready_content_id"] is None:
+                    raise DirectorIntegrityError("recovery READY response is incomplete")
+                ready = self.connection.execute(
+                    "SELECT * FROM director_ready_content WHERE id = ?", (response["ready_content_id"],)
+                ).fetchone()
+                if ready is None or ready["session_id"] != row["session_id"] or ready["created_by_turn_id"] != row["id"]:
+                    raise DirectorIntegrityError("recovery READY Content relationship is invalid")
+                content = ReadyContent.model_validate(
+                    parse_canonical_object(ready["final_content_json"])
+                ).model_dump(mode="json")
+                draft = snapshot["state_json"].get("draft")
+                if not isinstance(draft, dict) or draft.get("content") != content:
+                    raise DirectorIntegrityError("recovery ReadyContent differs from snapshot draft")
+                if require_current_lifecycle and (
+                    session.lifecycle_status != "READY"
+                    or session.ready_at != ready["created_at"]
+                ):
+                    raise DirectorIntegrityError("recovery READY lifecycle is not closed")
+            else:
+                if response["ready_content_id"] is not None:
+                    raise DirectorIntegrityError("non-READY recovery Turn carries ReadyContent")
+                if self.connection.execute(
+                    "SELECT 1 FROM director_ready_content WHERE session_id = ? AND created_by_turn_id = ?",
+                    (row["session_id"], row["id"]),
+                ).fetchone() is not None:
+                    raise DirectorIntegrityError("non-READY recovery Turn created ReadyContent")
+                if require_current_lifecycle and session.lifecycle_status != "ACTIVE":
+                    raise DirectorIntegrityError("non-READY recovery requires ACTIVE Session")
+            self._validate_recovery_evidence_closure(session, snapshot["state_json"], visited)
+        except (ValueError, TypeError, KeyError) as exc:
+            if isinstance(exc, DirectorIntegrityError):
+                raise
+            raise DirectorIntegrityError("invalid recovery Turn") from exc
+        result = dict(row)
+        result.update(
+            normalized_request_json=normalized_request,
+            execution_trace_json=trace,
+            first_response_json=response,
+            post_state_snapshot_json=snapshot,
+        )
+        return result
+
+    def _validate_recovery_evidence_closure(
+        self,
+        session: SessionRecord,
+        state: dict[str, Any],
+        visited: set[str],
+    ) -> None:
+        objects: list[dict[str, Any]] = []
+        objects.extend(state["owner_facts"])
+        objects.extend(state["owner_constraints"])
+        if state["direction"] is not None:
+            objects.append(state["direction"])
+        objects.extend(state["rejected_items"])
+        objects.extend(state["material_state"]["required_confirmations"])
+        for item in objects:
+            for reference in list(item.get("evidence_refs", [])) + list(item.get("rejected_by_evidence_refs", [])):
+                target = self._validate_recovery_evidence_reference(session, reference)
+                turn = self.connection.execute(
+                    "SELECT * FROM director_turns WHERE id = ? AND session_id = ?",
+                    (target["turn_id"], target["session_id"]),
+                ).fetchone()
+                if turn is None:
+                    raise DirectorIntegrityError("recovery Evidence Turn is missing")
+                if turn["id"] in visited:
+                    continue
+                self._validate_recovery_turn(
+                    session if target["session_id"] == session.id else self.get_session(
+                        AuthorizationScope(session.workspace_id, session.project_id), target["session_id"]
+                    ),
+                    turn,
+                    require_current_lifecycle=False,
+                    visited=visited,
+                )
+
+    def _validate_recovery_evidence_reference(
+        self, session: SessionRecord, reference: dict[str, Any]
+    ) -> sqlite3.Row:
+        target = self.connection.execute(
+            """SELECT m.*, s.workspace_id, s.project_id
+               FROM director_messages m JOIN director_sessions s ON s.id = m.session_id
+               WHERE m.id = ? AND m.session_id = ?""",
+            (reference["target_id"], reference["target_session_id"]),
+        ).fetchone()
+        if target is None or target["visible_role"] != "OWNER":
+            raise DirectorIntegrityError("recovery Evidence does not resolve to an OWNER Message")
+        if target["workspace_id"] != session.workspace_id or target["project_id"] != session.project_id:
+            raise DirectorIntegrityError("recovery Evidence crosses authorization scope")
+        self._validate_evidence_turn_pair_shape(target)
+        return target
+
+    def _validate_evidence_turn_pair_shape(self, owner_message: sqlite3.Row) -> None:
+        messages = self.connection.execute(
+            """SELECT id, visible_role, message_seq, turn_id FROM director_messages
+               WHERE session_id = ? AND turn_id = ? ORDER BY message_seq""",
+            (owner_message["session_id"], owner_message["turn_id"]),
+        ).fetchall()
+        if len(messages) != 2 or messages[0]["id"] != owner_message["id"]:
+            raise DirectorIntegrityError("recovery Evidence Turn message pair is incomplete")
+        if messages[0]["visible_role"] != "OWNER" or messages[1]["visible_role"] != "DIRECTOR":
+            raise DirectorIntegrityError("recovery Evidence Turn message roles are invalid")
 
     def _validate_evidence_closure(
         self, session: SessionRecord, state: dict[str, Any]
