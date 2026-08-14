@@ -102,6 +102,61 @@ def _finish_source(repository: DirectorRepository, scope: AuthorizationScope) ->
     return session.id, ready_id, state
 
 
+def _insert_revision_turn(
+    repository: DirectorRepository,
+    session_id: str,
+    state: dict,
+    *,
+    owner_text: str = "老板纠正这条事实",
+) -> str:
+    """Persist one complete non-READY Turn for revision-session evidence tests."""
+    connection = repository.connection
+    turn_id, owner_id, director_id = uid(), uid(), uid()
+    state = json.loads(json.dumps(state))
+    state["draft"] = {
+        "draft_id": uid(),
+        "content": {"title": "修订中", "script_text": "等待老板确认。", "shooting_notes": ["拍摄门店"]},
+        "content_status": "WORKING",
+        "based_on_ready_content_id": state["draft"]["based_on_ready_content_id"],
+    }
+    request = {"owner_text": owner_text, "parameters": {}}
+    trace = {"format_version": 1, "steps": [{
+        "step_no": 1, "entered_stage": "EXPLORE", "run_control": "WAIT_FOR_OWNER",
+        "target_stage": "EXPLORE", "transition_reason_code": "OWNER_INPUT_REQUIRED",
+        "gate": None, "review": None, "candidate_revision": 1,
+    }]}
+    response = {
+        "session_id": session_id, "turn_id": turn_id, "owner_message_id": owner_id,
+        "director_message_id": director_id, "state_version": 1, "stage": "EXPLORE",
+        "run_control": "WAIT_FOR_OWNER", "director_message": "已记录老板意见。", "ready_content_id": None,
+    }
+    snapshot = {"snapshot_format_version": 1, "state_version": 1, "stage": "EXPLORE", "state_json": state}
+    digest = state_sha256(1, "EXPLORE", state)
+    created_at = "2026-01-02T00:00:00.000Z"
+    with connection:
+        connection.execute(
+            """INSERT INTO director_turns VALUES
+            (?, ?, ?, 1, ?, ?, 0, 1, 'WAIT_FOR_OWNER', 'EXPLORE', 'OWNER_INPUT_REQUIRED', NULL, NULL,
+             1, ?, 1, ?, 1, ?, ?, ?)""",
+            (turn_id, session_id, f"revision-{turn_id}", canonical_text(request), canonical_sha256(request),
+             canonical_text(trace), canonical_text(response), canonical_text(snapshot), digest, created_at),
+        )
+        connection.execute(
+            "INSERT INTO director_messages VALUES (?, ?, 1, 'OWNER', ?, ?, ?)",
+            (owner_id, session_id, owner_text, turn_id, created_at),
+        )
+        connection.execute(
+            "INSERT INTO director_messages VALUES (?, ?, 2, 'DIRECTOR', '已记录老板意见。', ?, ?)",
+            (director_id, session_id, turn_id, created_at),
+        )
+        connection.execute(
+            """UPDATE director_working_state SET state_version = 1, stage = 'EXPLORE', state_json = ?,
+               state_sha256 = ?, latest_successful_turn_id = ?, updated_at = ? WHERE session_id = ?""",
+            (canonical_text(state), digest, turn_id, created_at, session_id),
+        )
+    return owner_id
+
+
 def test_normal_session_version_zero_is_atomic_and_empty(repository: DirectorRepository) -> None:
     scope = AuthorizationScope("workspace-a", "project-a")
     session = repository.create_session(scope)
@@ -261,18 +316,43 @@ def test_ready_turn_replay_rejects_active_session_and_nonready_response_binding(
 
 def test_inherited_owner_fact_can_be_rejected_without_losing_source_closure(repository: DirectorRepository) -> None:
     scope = AuthorizationScope("workspace-a", "project-a")
-    source_session_id, ready_id, source_state = _finish_source(repository, scope)
+    source_session_id, ready_id, _ = _finish_source(repository, scope)
     revision = repository.create_revision_session(scope, ready_id)
     state = repository.get_working_state(scope, revision.id).state_json
     original = state["owner_facts"][0]
     state["owner_facts"] = []
+    correction_owner_id = uid()
+    correction_evidence = {
+        "evidence_type": "owner_message", "target_id": correction_owner_id, "target_session_id": revision.id,
+    }
     state["rejected_items"] = [{
         "item_id": original["item_id"], "item_kind": "OWNER_FACT", "statement": original["statement"],
         "rejection_code": "OWNER_CORRECTED", "evidence_refs": original["evidence_refs"],
-        "rejected_by_evidence_refs": original["evidence_refs"], "superseded_by_item_id": uid(),
+        "rejected_by_evidence_refs": [correction_evidence], "superseded_by_item_id": None,
         "inherited_from": {"source_ready_content_id": ready_id, "source_session_id": source_session_id},
     }]
-    repository.connection.execute("UPDATE director_working_state SET state_json = ?, state_sha256 = ? WHERE session_id = ?", (canonical_text(state), state_sha256(0, "EXPLORE", state), revision.id))
+    # Replace the generated ID so the helper's OWNER Message is the evidence target.
+    owner_id = _insert_revision_turn(repository, revision.id, state)
+    state = json.loads(repository.connection.execute(
+        "SELECT state_json FROM director_working_state WHERE session_id = ?", (revision.id,)
+    ).fetchone()[0])
+    state["rejected_items"][0]["rejected_by_evidence_refs"][0]["target_id"] = owner_id
+    repository.connection.execute(
+        "UPDATE director_working_state SET state_json = ?, state_sha256 = ? WHERE session_id = ?",
+        (canonical_text(state), state_sha256(1, "EXPLORE", state), revision.id),
+    )
+    # Correct the persisted Turn snapshot to include the final rejection payload.
+    turn = repository.connection.execute(
+        "SELECT id, post_state_snapshot_json FROM director_turns WHERE session_id = ?", (revision.id,)
+    ).fetchone()
+    snapshot = json.loads(turn["post_state_snapshot_json"])
+    snapshot["state_json"] = state
+    digest = state_sha256(1, "EXPLORE", state)
+    repository.connection.execute("DROP TRIGGER director_turns_update_guard")
+    repository.connection.execute(
+        "UPDATE director_turns SET post_state_snapshot_json = ?, post_state_sha256 = ? WHERE id = ?",
+        (canonical_text(snapshot), digest, turn["id"]),
+    )
     assert repository.get_working_state(scope, revision.id).state_json["rejected_items"][0]["item_id"] == original["item_id"]
 
 
@@ -302,3 +382,142 @@ def test_inherited_rejected_item_tampering_and_ordinary_session_are_rejected(rep
     repository.connection.execute("UPDATE director_working_state SET state_json = ?, state_sha256 = ? WHERE session_id = ?", (canonical_text(state), state_sha256(0, "EXPLORE", state), revision.id))
     with pytest.raises(DirectorIntegrityError):
         repository.get_working_state(scope, revision.id)
+
+
+def test_inherited_rejected_item_cannot_use_source_evidence_as_rejection_evidence(repository: DirectorRepository) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    source_session_id, ready_id, _ = _finish_source(repository, scope)
+    revision = repository.create_revision_session(scope, ready_id)
+    state = repository.get_working_state(scope, revision.id).state_json
+    original = state["owner_facts"].pop(0)
+    state["rejected_items"] = [{
+        "item_id": original["item_id"], "item_kind": "OWNER_FACT", "statement": original["statement"],
+        "rejection_code": "OWNER_CORRECTED", "evidence_refs": original["evidence_refs"],
+        "rejected_by_evidence_refs": original["evidence_refs"], "superseded_by_item_id": None,
+        "inherited_from": {"source_ready_content_id": ready_id, "source_session_id": source_session_id},
+    }]
+    repository.connection.execute(
+        "UPDATE director_working_state SET state_json = ?, state_sha256 = ? WHERE session_id = ?",
+        (canonical_text(state), state_sha256(0, "EXPLORE", state), revision.id),
+    )
+    with pytest.raises(DirectorIntegrityError):
+        repository.get_working_state(scope, revision.id)
+
+
+def test_inherited_rejected_item_cannot_use_another_session_rejection_evidence(repository: DirectorRepository) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    source_session_id, ready_id, _ = _finish_source(repository, scope)
+    other_session_id, _, _ = _finish_source(repository, scope)
+    revision = repository.create_revision_session(scope, ready_id)
+    state = repository.get_working_state(scope, revision.id).state_json
+    original = state["owner_facts"].pop(0)
+    other_owner_id = repository.connection.execute(
+        "SELECT id FROM director_messages WHERE session_id = ? AND visible_role = 'OWNER'", (other_session_id,)
+    ).fetchone()[0]
+    state["rejected_items"] = [{
+        "item_id": original["item_id"], "item_kind": "OWNER_FACT", "statement": original["statement"],
+        "rejection_code": "OWNER_CORRECTED", "evidence_refs": original["evidence_refs"],
+        "rejected_by_evidence_refs": [{"evidence_type": "owner_message", "target_id": other_owner_id, "target_session_id": other_session_id}],
+        "superseded_by_item_id": None,
+        "inherited_from": {"source_ready_content_id": ready_id, "source_session_id": source_session_id},
+    }]
+    repository.connection.execute(
+        "UPDATE director_working_state SET state_json = ?, state_sha256 = ? WHERE session_id = ?",
+        (canonical_text(state), state_sha256(0, "EXPLORE", state), revision.id),
+    )
+    with pytest.raises(DirectorIntegrityError):
+        repository.get_working_state(scope, revision.id)
+
+
+@pytest.mark.parametrize("source_kind", ["owner_facts", "owner_constraints", "direction"])
+def test_inherited_owner_objects_can_be_required_confirmations(
+    repository: DirectorRepository, source_kind: str
+) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    source_session_id, ready_id, _ = _finish_source(repository, scope)
+    revision = repository.create_revision_session(scope, ready_id)
+    state = repository.get_working_state(scope, revision.id).state_json
+    source_item = state[source_kind][0] if source_kind != "direction" else state["direction"]
+    state["material_state"]["required_confirmations"] = [{
+        "item_id": source_item["item_id"], "statement": source_item["statement"],
+        "reason": "当前语境变化，需要老板重新确认。", "evidence_refs": source_item["evidence_refs"],
+        "inherited_from": {"source_ready_content_id": ready_id, "source_session_id": source_session_id},
+    }]
+    repository.connection.execute(
+        "UPDATE director_working_state SET state_json = ?, state_sha256 = ? WHERE session_id = ?",
+        (canonical_text(state), state_sha256(0, "EXPLORE", state), revision.id),
+    )
+    confirmations = repository.get_working_state(scope, revision.id).state_json["material_state"]["required_confirmations"]
+    assert confirmations[0]["item_id"] == source_item["item_id"]
+
+
+def test_required_confirmation_inheritance_is_exact_and_direct(repository: DirectorRepository) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    source_session_id, ready_id, _ = _finish_source(repository, scope)
+    revision = repository.create_revision_session(scope, ready_id)
+    base = repository.get_working_state(scope, revision.id).state_json
+    source_item = base["owner_facts"][0]
+
+    for mutation in ("statement", "evidence_empty", "evidence_added", "evidence_replaced", "source_ready_content_id", "source_session_id"):
+        state = json.loads(json.dumps(base))
+        inherited = {"source_ready_content_id": ready_id, "source_session_id": source_session_id}
+        confirmation = {
+            "item_id": source_item["item_id"], "statement": source_item["statement"], "reason": "再次确认",
+            "evidence_refs": source_item["evidence_refs"], "inherited_from": inherited,
+        }
+        if mutation == "statement":
+            confirmation["statement"] = "被扩大后的说法"
+        elif mutation == "evidence_empty":
+            confirmation["evidence_refs"] = []
+        elif mutation == "evidence_added":
+            confirmation["evidence_refs"] = source_item["evidence_refs"] + source_item["evidence_refs"]
+        elif mutation == "evidence_replaced":
+            confirmation["evidence_refs"] = [{"evidence_type": "owner_message", "target_id": uid(), "target_session_id": source_session_id}]
+        elif mutation == "source_ready_content_id":
+            confirmation["inherited_from"]["source_ready_content_id"] = uid()
+        else:
+            confirmation["inherited_from"]["source_session_id"] = uid()
+        state["material_state"]["required_confirmations"] = [confirmation]
+        repository.connection.execute(
+            "UPDATE director_working_state SET state_json = ?, state_sha256 = ? WHERE session_id = ?",
+            (canonical_text(state), state_sha256(0, "EXPLORE", state), revision.id),
+        )
+        with pytest.raises(DirectorIntegrityError):
+            repository.get_working_state(scope, revision.id)
+
+
+def test_ordinary_session_cannot_have_inherited_required_confirmation(repository: DirectorRepository) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    session = repository.create_session(scope)
+    state = repository.get_working_state(scope, session.id).state_json
+    state["material_state"]["required_confirmations"] = [{
+        "item_id": uid(), "statement": "伪造事实", "reason": "伪造继承", "evidence_refs": [],
+        "inherited_from": {"source_ready_content_id": uid(), "source_session_id": uid()},
+    }]
+    repository.connection.execute(
+        "UPDATE director_working_state SET state_json = ?, state_sha256 = ? WHERE session_id = ?",
+        (canonical_text(state), state_sha256(0, "EXPLORE", state), session.id),
+    )
+    with pytest.raises(DirectorIntegrityError):
+        repository.get_working_state(scope, session.id)
+
+
+@pytest.mark.parametrize("corruption", ["half_pair", "orphan_turn", "bad_sequence"])
+def test_evidence_requires_complete_successful_turn(repository: DirectorRepository, corruption: str) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    session_id, _, _ = _finish_source(repository, scope)
+    connection = repository.connection
+    owner = connection.execute(
+        "SELECT id, turn_id FROM director_messages WHERE session_id = ? AND visible_role = 'OWNER'", (session_id,)
+    ).fetchone()
+    connection.execute("DROP TRIGGER director_messages_delete_guard")
+    connection.execute("DROP TRIGGER director_messages_update_guard")
+    if corruption == "half_pair":
+        connection.execute("DELETE FROM director_messages WHERE session_id = ? AND visible_role = 'DIRECTOR'", (session_id,))
+    elif corruption == "orphan_turn":
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute("UPDATE director_messages SET turn_id = ? WHERE id = ?", (uid(), owner["id"]))
+    else:
+        connection.execute("UPDATE director_messages SET message_seq = 99 WHERE id = ?", (owner["id"],))
+    with pytest.raises(DirectorIntegrityError):
+        repository.get_working_state(scope, session_id)

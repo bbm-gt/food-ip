@@ -343,7 +343,8 @@ class DirectorRepository:
         source_state: dict[str, Any] | None = None
         source_session_id: str | None = None
         for object_kind, item in objects:
-            refs = list(item.get("evidence_refs", [])) + list(item.get("rejected_by_evidence_refs", []))
+            original_refs = list(item.get("evidence_refs", []))
+            rejected_refs = list(item.get("rejected_by_evidence_refs", []))
             inherited = item.get("inherited_from")
             if inherited is not None:
                 if session.source_ready_content_id is None:
@@ -356,6 +357,8 @@ class DirectorRepository:
                     }.get(item.get("item_kind"))
                     if source_kind is None:
                         raise DirectorIntegrityError("only rejected inherited Owner Fact, Constraint, or Direction is allowed")
+                elif object_kind == "required_confirmations":
+                    source_kind = None
                 elif object_kind not in {"owner_facts", "owner_constraints", "direction"}:
                     raise DirectorIntegrityError("only active facts, constraints, and direction may be inherited")
                 else:
@@ -387,38 +390,149 @@ class DirectorRepository:
                         raise DirectorIntegrityError("direct source final Working State is invalid")
                 if inherited["source_session_id"] != source_session_id:
                     raise DirectorIntegrityError("inherited object does not name the producing Session")
-                source_items = [source_state[source_kind]] if source_kind == "direction" else source_state[source_kind]
-                if object_kind == "rejected_items":
-                    if not any(
-                        source_item["item_id"] == item["item_id"]
-                        and source_item["statement"] == item["statement"]
-                        and source_item["evidence_refs"] == item["evidence_refs"]
-                        for source_item in source_items
-                    ):
-                        raise DirectorIntegrityError("inherited rejected item differs from its direct source state")
+                if object_kind == "required_confirmations":
+                    candidates = []
+                    for candidate_kind in ("owner_facts", "owner_constraints"):
+                        candidates.extend(
+                            (candidate_kind, candidate)
+                            for candidate in source_state[candidate_kind]
+                            if candidate["item_id"] == item["item_id"]
+                        )
+                    if source_state["direction"] is not None and source_state["direction"]["item_id"] == item["item_id"]:
+                        candidates.append(("direction", source_state["direction"]))
+                    if len(candidates) != 1:
+                        raise DirectorIntegrityError("required confirmation must name one direct source Owner object")
+                    _, source_item = candidates[0]
+                    if not item["evidence_refs"] or item["statement"] != source_item["statement"]:
+                        raise DirectorIntegrityError("inherited required confirmation differs from its direct source state")
+                    if item["evidence_refs"] != source_item["evidence_refs"]:
+                        raise DirectorIntegrityError("inherited required confirmation evidence differs from its direct source state")
                 else:
-                    candidate = deepcopy(item)
-                    candidate.pop("inherited_from")
-                    if not any(
-                        (lambda copy: (copy.pop("inherited_from", None), copy)[1])(deepcopy(source_item)) == candidate
-                        for source_item in source_items
-                    ):
+                    source_items = [source_state[source_kind]] if source_kind == "direction" else source_state[source_kind]
+                    if object_kind == "rejected_items":
+                        matches = any(
+                            source_item["item_id"] == item["item_id"]
+                            and source_item["statement"] == item["statement"]
+                            and source_item["evidence_refs"] == item["evidence_refs"]
+                            for source_item in source_items
+                        )
+                    else:
+                        candidate = deepcopy(item)
+                        candidate.pop("inherited_from")
+                        matches = any(
+                            (lambda copy: (copy.pop("inherited_from", None), copy)[1])(deepcopy(source_item)) == candidate
+                            for source_item in source_items
+                        )
+                    if not matches:
                         raise DirectorIntegrityError("inherited object differs from its direct source state")
-            for reference in refs:
-                target = self.connection.execute(
-                    """
-                    SELECT m.session_id, m.visible_role, s.workspace_id, s.project_id
-                    FROM director_messages m JOIN director_sessions s ON s.id = m.session_id
-                    WHERE m.id = ? AND m.session_id = ?
-                    """,
-                    (reference["target_id"], reference["target_session_id"]),
-                ).fetchone()
-                if target is None or target["visible_role"] != "OWNER":
-                    raise DirectorIntegrityError("Evidence does not resolve to an OWNER Message")
-                if target["workspace_id"] != session.workspace_id or target["project_id"] != session.project_id:
-                    raise DirectorIntegrityError("Evidence crosses authorization scope")
+            for reference in original_refs:
+                target = self._validate_evidence_reference(
+                    session, reference, allow_cross_session=inherited is not None
+                )
                 if inherited is None and target["session_id"] != session.id:
                     raise DirectorIntegrityError("non-inherited Evidence crosses Session")
+            for reference in rejected_refs:
+                target = self._validate_evidence_reference(session, reference, allow_cross_session=False)
+                if target["session_id"] != session.id:
+                    raise DirectorIntegrityError("rejection Evidence must belong to current Session")
+
+    def _validate_evidence_reference(
+        self,
+        session: SessionRecord,
+        reference: dict[str, Any],
+        *,
+        allow_cross_session: bool,
+    ) -> sqlite3.Row:
+        target = self.connection.execute(
+            """
+            SELECT m.*, s.workspace_id, s.project_id
+            FROM director_messages m JOIN director_sessions s ON s.id = m.session_id
+            WHERE m.id = ? AND m.session_id = ?
+            """,
+            (reference["target_id"], reference["target_session_id"]),
+        ).fetchone()
+        if target is None or target["visible_role"] != "OWNER":
+            raise DirectorIntegrityError("Evidence does not resolve to an OWNER Message")
+        if target["workspace_id"] != session.workspace_id or target["project_id"] != session.project_id:
+            raise DirectorIntegrityError("Evidence crosses authorization scope")
+        if not allow_cross_session and target["session_id"] != session.id:
+            raise DirectorIntegrityError("Evidence crosses Session")
+        self._validate_evidence_turn_pair(target)
+        return target
+
+    def _validate_evidence_turn_pair(self, owner_message: sqlite3.Row) -> None:
+        """Validate the complete successful Turn visible to an Evidence reference.
+
+        This deliberately does not call ``_validated_turn_row`` so Working State
+        evidence validation cannot recurse through Turn validation.
+        """
+        turn = self.connection.execute(
+            "SELECT * FROM director_turns WHERE id = ? AND session_id = ?",
+            (owner_message["turn_id"], owner_message["session_id"]),
+        ).fetchone()
+        if turn is None:
+            raise DirectorIntegrityError("Evidence Message does not belong to a Turn")
+        try:
+            validate_uuid4(turn["id"])
+            validate_uuid4(turn["session_id"])
+        except (TypeError, ValueError) as exc:
+            raise DirectorIntegrityError("Evidence Turn identity is invalid") from exc
+        if turn["post_state_version"] != turn["pre_state_version"] + 1:
+            raise DirectorIntegrityError("Evidence Turn version chain is invalid")
+        if turn["execution_format_version"] != 1 or turn["response_format_version"] != 1 or turn["snapshot_format_version"] != 1:
+            raise DirectorIntegrityError("Evidence Turn format version is invalid")
+        try:
+            normalized_request = parse_canonical_object(turn["normalized_request_json"])
+            validate_normalized_request(normalized_request)
+            if canonical_sha256(normalized_request) != turn["request_sha256"]:
+                raise DirectorIntegrityError("Evidence Turn request hash mismatch")
+            pre_stage = "EXPLORE" if turn["pre_state_version"] == 0 else self.connection.execute(
+                "SELECT target_stage FROM director_turns WHERE session_id = ? AND post_state_version = ?",
+                (turn["session_id"], turn["pre_state_version"]),
+            ).fetchone()
+            if pre_stage is None:
+                raise DirectorIntegrityError("Evidence Turn pre-state is missing")
+            if not isinstance(pre_stage, str):
+                pre_stage = pre_stage["target_stage"]
+            validate_turn_execution_trace(
+                parse_canonical_object(turn["execution_trace_json"]),
+                pre_stage=pre_stage,
+                final_run_control=turn["final_run_control"], target_stage=turn["target_stage"],
+                transition_reason_code=turn["transition_reason_code"], gate_outcome=turn["gate_outcome"],
+                review_root_cause=turn["review_root_cause"],
+            )
+            response = FirstResponse.model_validate(parse_canonical_object(turn["first_response_json"])).model_dump(mode="json")
+            self._validate_turn_ready_closure(turn, response)
+            snapshot = TurnPostStateSnapshot.model_validate(parse_canonical_object(turn["post_state_snapshot_json"])).model_dump(mode="json")
+            if state_sha256(snapshot["state_version"], snapshot["stage"], snapshot["state_json"]) != turn["post_state_sha256"]:
+                raise DirectorIntegrityError("Evidence Turn snapshot hash mismatch")
+            if snapshot["state_version"] != turn["post_state_version"] or snapshot["stage"] != turn["target_stage"]:
+                raise DirectorIntegrityError("Evidence Turn snapshot columns mismatch")
+            if response["session_id"] != turn["session_id"] or response["turn_id"] != turn["id"]:
+                raise DirectorIntegrityError("Evidence Turn response identity mismatch")
+            if response["state_version"] != turn["post_state_version"] or response["stage"] != turn["target_stage"] or response["run_control"] != turn["final_run_control"]:
+                raise DirectorIntegrityError("Evidence Turn response state mismatch")
+        except (ValueError, TypeError) as exc:
+            if isinstance(exc, DirectorIntegrityError):
+                raise
+            raise DirectorIntegrityError("invalid Evidence Turn") from exc
+        messages = self.connection.execute(
+            """SELECT id, visible_role, content, message_seq, turn_id
+               FROM director_messages WHERE session_id = ? AND turn_id = ? ORDER BY message_seq""",
+            (turn["session_id"], turn["id"]),
+        ).fetchall()
+        if len(messages) != 2 or messages[0]["visible_role"] != "OWNER" or messages[1]["visible_role"] != "DIRECTOR":
+            raise DirectorIntegrityError("Evidence Message Turn is not a complete visible pair")
+        if messages[0]["id"] != owner_message["id"] or messages[0]["turn_id"] != turn["id"]:
+            raise DirectorIntegrityError("Evidence OWNER Message pairing is invalid")
+        if messages[0]["message_seq"] != 2 * turn["post_state_version"] - 1 or messages[1]["message_seq"] != 2 * turn["post_state_version"]:
+            raise DirectorIntegrityError("Evidence Message sequence mismatch")
+        if response["owner_message_id"] != messages[0]["id"] or response["director_message_id"] != messages[1]["id"]:
+            raise DirectorIntegrityError("Evidence Turn response Message identity mismatch")
+        if response["director_message"] != messages[1]["content"]:
+            raise DirectorIntegrityError("Evidence Turn response differs from DIRECTOR Message")
+        if normalize_text(messages[0]["content"]) != normalized_request["owner_text"]:
+            raise DirectorIntegrityError("Evidence OWNER Message differs from normalized request text")
 
     def find_successful_turn(
         self, scope: AuthorizationScope, session_id: str, client_message_id: str
