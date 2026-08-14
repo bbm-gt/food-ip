@@ -132,7 +132,7 @@ class StageExecutionResult:
     pre-built whole-Turn trace.
     """
 
-    director_message: str
+    director_message: str | None
     post_state: dict[str, Any]
     run_control: str
     target_stage: str

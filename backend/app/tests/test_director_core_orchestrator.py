@@ -379,16 +379,35 @@ def test_same_session_turns_are_serial_and_second_reads_latest_version(tmp_path)
     second_entered = threading.Event()
     seen_stages: list[str] = []
     results: list[object] = [None, None]
+    first_judgment_marker = "serial-first-turn-marker"
 
     def first_executor(context):
         seen_stages.append(context.stage)
         first_entered.set()
         assert release_first.wait(2)
-        return wait_result(context, "第一轮完成。")
+        state = deepcopy(context.working_state)
+        state["ai_judgments"].append({
+            "item_id": uid(),
+            "judgment_kind": "DIRECTION_CANDIDATE",
+            "statement": first_judgment_marker,
+        })
+        return StageExecutionResult(
+            director_message="第一轮完成。",
+            post_state=state,
+            run_control="WAIT_FOR_OWNER",
+            target_stage=context.stage,
+            transition_reason_code="OWNER_INPUT_REQUIRED",
+            gate=None,
+            review=None,
+        )
 
     def second_executor(context):
         seen_stages.append(context.stage)
         second_entered.set()
+        assert any(
+            judgment["statement"] == first_judgment_marker
+            for judgment in context.working_state["ai_judgments"]
+        )
         return wait_result(context, "第二轮完成。")
 
     first_orchestrator = DirectorOrchestrator(first_repo, scope, first_executor, 2)
