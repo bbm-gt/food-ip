@@ -3,8 +3,8 @@ from __future__ import annotations
 import sqlite3
 import threading
 from copy import deepcopy
-from dataclasses import replace
-from uuid import uuid4
+from dataclasses import fields, replace
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -14,20 +14,21 @@ from backend.app.director_core.database import (
     enable_and_verify_foreign_keys,
 )
 from backend.app.director_core.execution import (
-    CommitSuccessfulTurnInput,
     DirectorExecutionValidationError,
+    IdempotencyConflictError,
     StaleStateVersionError,
-    prepare_successful_turn,
 )
 from backend.app.director_core.orchestrator import (
     DirectorOrchestrator,
     DirectorTurnRequest,
+    TurnCandidate,
     TurnOrchestrationContext,
 )
 from backend.app.director_core.repository import (
     AuthorizationScope,
     CommitOutcomeIndeterminateError,
     CommitRolledBackError,
+    DirectorIntegrityError,
     DirectorRepository,
 )
 
@@ -44,21 +45,6 @@ TABLES = (
 
 def uid() -> str:
     return str(uuid4())
-
-
-def empty_state() -> dict:
-    return {
-        "format_version": 1,
-        "owner_facts": [],
-        "ai_judgments": [],
-        "unconfirmed_inferences": [],
-        "rejected_items": [],
-        "owner_constraints": [],
-        "direction": None,
-        "material_state": {"status": "UNKNOWN", "required_confirmations": []},
-        "draft": None,
-        "review": None,
-    }
 
 
 def snapshot(repository: DirectorRepository) -> dict[str, tuple[tuple[object, ...], ...]]:
@@ -90,19 +76,10 @@ def request(
 def wait_candidate(
     context: TurnOrchestrationContext,
     message: str = "请再补充一个真实细节。",
-) -> CommitSuccessfulTurnInput:
+) -> TurnCandidate:
     stage = context.working_state.stage
-    return CommitSuccessfulTurnInput(
-        session_id=context.session.id,
-        client_message_id=context.request.client_message_id,
-        expected_state_version=context.working_state.state_version,
-        request_format_version=1,
-        turn_id=context.turn_id,
-        owner_message_id=context.owner_message_id,
-        director_message_id=context.director_message_id,
-        owner_message=context.request.owner_text,
+    return TurnCandidate(
         director_message=message,
-        normalized_parameters={},
         execution_trace={
             "format_version": 1,
             "steps": [{
@@ -122,115 +99,7 @@ def wait_candidate(
         transition_reason_code="OWNER_INPUT_REQUIRED",
         gate_outcome=None,
         review_root_cause=None,
-        ready_content_id=None,
         ready_content=None,
-        created_at="2026-08-14T10:20:30.123Z",
-    )
-
-
-def _commit_seed(
-    repository: DirectorRepository,
-    scope: AuthorizationScope,
-    session_id: str,
-    client_id: str,
-    state: dict,
-    *,
-    expected_version: int,
-    entered_stage: str,
-    target_stage: str,
-    reason: str,
-    owner_id: str,
-    owner_text: str,
-) -> None:
-    command = CommitSuccessfulTurnInput(
-        session_id=session_id,
-        client_message_id=client_id,
-        expected_state_version=expected_version,
-        request_format_version=1,
-        turn_id=uid(),
-        owner_message_id=owner_id,
-        director_message_id=uid(),
-        owner_message=owner_text,
-        director_message="继续推进这一轮。",
-        normalized_parameters={},
-        execution_trace={
-            "format_version": 1,
-            "steps": [{
-                "step_no": 1,
-                "entered_stage": entered_stage,
-                "run_control": "WAIT_FOR_OWNER",
-                "target_stage": target_stage,
-                "transition_reason_code": reason,
-                "gate": None,
-                "review": None,
-                "candidate_revision": 1,
-            }],
-        },
-        post_state=state,
-        final_run_control="WAIT_FOR_OWNER",
-        target_stage=target_stage,
-        transition_reason_code=reason,
-        gate_outcome=None,
-        review_root_cause=None,
-        ready_content_id=None,
-        ready_content=None,
-        created_at="2026-08-14T10:20:30.123Z",
-    )
-    prepared = prepare_successful_turn(
-        command,
-        current_state_version=expected_version,
-        current_max_message_seq=2 * expected_version,
-        current_stage=entered_stage,
-        source_ready_content_id=None,
-    )
-    repository.commit_successful_turn(scope, prepared)
-
-
-def advance_to_review(repository: DirectorRepository, scope: AuthorizationScope, session_id: str) -> None:
-    state = empty_state()
-    first_owner_id = uid()
-    state["direction"] = {
-        "item_id": uid(),
-        "statement": "讲清这道菜为什么值得被记住",
-        "owner_confirmed": True,
-        "evidence_refs": [{
-            "evidence_type": "owner_message",
-            "target_id": first_owner_id,
-            "target_session_id": session_id,
-        }],
-        "inherited_from": None,
-    }
-    _commit_seed(
-        repository, scope, session_id, "seed-explore", state,
-        expected_version=0, entered_stage="EXPLORE", target_stage="DEEPEN",
-        reason="DIRECTION_CONFIRMED", owner_id=first_owner_id, owner_text="我确认这个方向。",
-    )
-
-    state = deepcopy(state)
-    state["material_state"] = {"status": "SUFFICIENT", "required_confirmations": []}
-    _commit_seed(
-        repository, scope, session_id, "seed-deepen", state,
-        expected_version=1, entered_stage="DEEPEN", target_stage="CREATE",
-        reason="MATERIAL_SUFFICIENT", owner_id=uid(), owner_text="真实素材够了。",
-    )
-
-    state = deepcopy(state)
-    content = {
-        "title": "一碗汤的来历",
-        "script_text": "这道汤不是为了复杂，而是为了让客人喝到我们真正熟悉的味道。",
-        "shooting_notes": ["从出锅画面开始"],
-    }
-    draft_id = uid()
-    state["draft"] = {
-        "draft_id": draft_id,
-        "content": content,
-        "content_status": "FINAL_CANDIDATE",
-        "based_on_ready_content_id": None,
-    }
-    _commit_seed(
-        repository, scope, session_id, "seed-create", state,
-        expected_version=2, entered_stage="CREATE", target_stage="REVIEW",
-        reason="DRAFT_CREATED", owner_id=uid(), owner_text="先看看这版草稿。",
     )
 
 
@@ -282,6 +151,186 @@ def test_stale_expected_version_fails_before_candidate_builder(repository) -> No
     assert snapshot(repo) == before
 
 
+def test_missing_working_state_recovers_without_model_and_builder_sees_authority(repository) -> None:
+    repo, scope, session_id = repository
+    repo.connection.execute("DROP TRIGGER director_working_state_delete_guard")
+    repo.connection.execute(
+        "DELETE FROM director_working_state WHERE session_id = ?", (session_id,)
+    )
+    repo.connection.commit()
+    seen: list[tuple[int, str]] = []
+
+    def builder(context):
+        seen.append((context.working_state.state_version, context.working_state.stage))
+        return wait_candidate(context)
+
+    result = DirectorOrchestrator(repo, scope, builder).run(
+        request(session_id, "recover-missing")
+    )
+
+    assert result.replayed is False
+    assert seen == [(0, "EXPLORE")]
+    assert repo.connection.execute("SELECT count(*) FROM director_turns").fetchone()[0] == 1
+    assert repo.connection.execute("SELECT count(*) FROM director_messages").fetchone()[0] == 2
+    assert repo.connection.execute("SELECT count(*) FROM director_ready_content").fetchone()[0] == 0
+    assert repo.get_working_state(scope, session_id).state_version == 1
+
+
+def test_hash_mismatched_working_state_recovers_latest_authority_once(repository) -> None:
+    repo, scope, session_id = repository
+    first = DirectorOrchestrator(repo, scope, wait_candidate).run(
+        request(session_id, "recover-seed")
+    )
+    assert first.replayed is False
+    repo.connection.execute("DROP TRIGGER director_working_state_update_guard")
+    repo.connection.execute(
+        "UPDATE director_working_state SET state_sha256 = ? WHERE session_id = ?",
+        ("0" * 64, session_id),
+    )
+    repo.connection.commit()
+    seen: list[tuple[int, str]] = []
+    calls = 0
+
+    def builder(context):
+        nonlocal calls
+        calls += 1
+        seen.append((context.working_state.state_version, context.working_state.stage))
+        return wait_candidate(context)
+
+    result = DirectorOrchestrator(repo, scope, builder).run(
+        request(session_id, "recover-hash", expected_version=1)
+    )
+
+    assert result.replayed is False
+    assert calls == 1
+    assert seen == [(1, "EXPLORE")]
+    assert repo.connection.execute("SELECT count(*) FROM director_turns").fetchone()[0] == 2
+    assert repo.get_working_state(scope, session_id).state_version == 2
+
+
+def test_unrecoverable_working_state_skips_builder_and_writes_nothing(repository) -> None:
+    repo, scope, session_id = repository
+    DirectorOrchestrator(repo, scope, wait_candidate).run(
+        request(session_id, "unrecoverable-seed")
+    )
+    repo.connection.execute("DROP TRIGGER director_working_state_update_guard")
+    repo.connection.execute("DROP TRIGGER director_turns_update_guard")
+    repo.connection.execute(
+        "UPDATE director_working_state SET state_sha256 = ? WHERE session_id = ?",
+        ("0" * 64, session_id),
+    )
+    repo.connection.execute(
+        "UPDATE director_turns SET post_state_snapshot_json = ? WHERE session_id = ?",
+        ("{}", session_id),
+    )
+    repo.connection.commit()
+    before = snapshot(repo)
+    calls: list[int] = []
+
+    def builder(_context):
+        calls.append(1)
+        return wait_candidate(_context)
+
+    with pytest.raises(DirectorIntegrityError):
+        DirectorOrchestrator(repo, scope, builder).run(
+            request(session_id, "unrecoverable-next", expected_version=1)
+        )
+
+    assert calls == []
+    assert snapshot(repo) == before
+
+
+def test_same_client_id_with_different_normalized_request_conflicts_before_builder(repository) -> None:
+    repo, scope, session_id = repository
+    calls: list[int] = []
+
+    def builder(context):
+        calls.append(1)
+        return wait_candidate(context)
+
+    orchestrator = DirectorOrchestrator(repo, scope, builder)
+    orchestrator.run(request(session_id, "conflict-key", text="第一次原文。"))
+    before = snapshot(repo)
+
+    with pytest.raises(IdempotencyConflictError):
+        orchestrator.run(
+            request(session_id, "conflict-key", expected_version=1, text="第二次不同原文。")
+        )
+
+    assert calls == [1]
+    assert snapshot(repo) == before
+
+
+def test_turn_candidate_is_business_only_and_orchestrator_owns_persistence_boundary(
+    repository, monkeypatch
+) -> None:
+    repo, scope, session_id = repository
+    candidate_fields = {field.name for field in fields(TurnCandidate)}
+    assert candidate_fields == {
+        "director_message",
+        "execution_trace",
+        "post_state",
+        "final_run_control",
+        "target_stage",
+        "transition_reason_code",
+        "gate_outcome",
+        "review_root_cause",
+        "ready_content",
+    }
+    candidate = TurnCandidate(
+        director_message="回复",
+        execution_trace={},
+        post_state={},
+        final_run_control="WAIT_FOR_OWNER",
+        target_stage="EXPLORE",
+        transition_reason_code="OWNER_INPUT_REQUIRED",
+        gate_outcome=None,
+        review_root_cause=None,
+        ready_content=None,
+    )
+    with pytest.raises(TypeError):
+        replace(candidate, turn_id=uid())
+
+    generated_ids = iter(
+        UUID(value)
+        for value in (
+            "00000000-0000-4000-8000-000000000001",
+            "00000000-0000-4000-8000-000000000002",
+            "00000000-0000-4000-8000-000000000003",
+            "00000000-0000-4000-8000-000000000004",
+        )
+    )
+    import importlib
+
+    orchestrator_module = importlib.import_module("backend.app.director_core.orchestrator")
+    monkeypatch.setattr(orchestrator_module, "uuid4", lambda: next(generated_ids))
+    monkeypatch.setattr(orchestrator_module, "_utc_now", lambda: "2026-08-14T10:20:30.123Z")
+    owner_text = "  老板原文\r\n第二行  "
+
+    result = DirectorOrchestrator(repo, scope, wait_candidate).run(
+        request(session_id, "boundary-request", text=owner_text)
+    )
+    turn = repo.connection.execute(
+        "SELECT * FROM director_turns WHERE client_message_id = ?", ("boundary-request",)
+    ).fetchone()
+    owner_message = repo.connection.execute(
+        """SELECT * FROM director_messages
+           WHERE session_id = ? AND visible_role = 'OWNER'""",
+        (session_id,),
+    ).fetchone()
+
+    assert result.response["turn_id"] == "00000000-0000-4000-8000-000000000001"
+    assert turn["id"] == "00000000-0000-4000-8000-000000000001"
+    assert turn["session_id"] == session_id
+    assert turn["client_message_id"] == "boundary-request"
+    assert turn["request_format_version"] == 1
+    assert turn["normalized_request_json"] == '{"owner_text":"  老板原文\\n第二行  ","parameters":{}}'
+    assert turn["created_at"] == "2026-08-14T10:20:30.123Z"
+    assert owner_message["id"] == "00000000-0000-4000-8000-000000000002"
+    assert owner_message["content"] == owner_text
+    assert owner_message["created_at"] == "2026-08-14T10:20:30.123Z"
+
+
 def test_ready_session_replays_success_and_rejects_new_request(repository) -> None:
     repo, scope, session_id = repository
     calls: list[int] = []
@@ -327,7 +376,7 @@ def test_ready_session_replays_success_and_rejects_new_request(repository) -> No
             post_state=state,
             final_run_control="READY", target_stage="READY",
             transition_reason_code="REVIEW_PASSED", gate_outcome="PASSED",
-            review_root_cause=None, ready_content_id=uid(), ready_content=content,
+            review_root_cause=None, ready_content=content,
         )
 
     orchestrator = DirectorOrchestrator(repo, scope, builder)

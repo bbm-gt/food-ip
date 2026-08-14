@@ -4,6 +4,7 @@ from .concurrency import SessionLockManager, shared_session_lock_manager
 from .orchestrator import (
     DirectorOrchestrator,
     DirectorTurnRequest,
+    TurnCandidate,
     TurnCandidateBuilder,
     TurnOrchestrationContext,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "IdempotencyConflictError",
     "SessionLockManager",
     "SQLiteBusyError",
+    "TurnCandidate",
     "TurnCandidateBuilder",
     "TurnOrchestrationContext",
     "shared_session_lock_manager",

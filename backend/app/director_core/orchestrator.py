@@ -52,9 +52,6 @@ class TurnOrchestrationContext:
     prepared_request: PreparedIdempotencyRequest
     session: SessionRecord
     working_state: WorkingStateRecord
-    recent_turns: tuple[dict[str, Any], ...]
-    message_turns: tuple[dict[str, Any], ...]
-    checkpoint: dict[str, Any] | None
     turn_id: str
     owner_message_id: str
     director_message_id: str
@@ -70,15 +67,33 @@ class TurnOrchestrationContext:
         object.__setattr__(self, "working_state", replace(
             self.working_state, state_json=deepcopy(self.working_state.state_json)
         ))
-        object.__setattr__(self, "recent_turns", tuple(deepcopy(self.recent_turns)))
-        object.__setattr__(self, "message_turns", tuple(deepcopy(self.message_turns)))
-        object.__setattr__(self, "checkpoint", deepcopy(self.checkpoint))
+
+
+@dataclass(frozen=True)
+class TurnCandidate:
+    """Business-only output from the injected candidate construction boundary."""
+
+    director_message: str
+    execution_trace: dict[str, Any]
+    post_state: dict[str, Any]
+    final_run_control: str
+    target_stage: str
+    transition_reason_code: str
+    gate_outcome: str | None
+    review_root_cause: str | None
+    ready_content: dict[str, Any] | None
+
+    def __post_init__(self) -> None:
+        # Keep the frozen envelope detached from mutable builder-owned payloads.
+        object.__setattr__(self, "execution_trace", deepcopy(self.execution_trace))
+        object.__setattr__(self, "post_state", deepcopy(self.post_state))
+        object.__setattr__(self, "ready_content", deepcopy(self.ready_content))
 
 
 class TurnCandidateBuilder(Protocol):
     """Injected test/model boundary for producing business candidates only."""
 
-    def __call__(self, context: TurnOrchestrationContext) -> CommitSuccessfulTurnInput:
+    def __call__(self, context: TurnOrchestrationContext) -> TurnCandidate:
         ...
 
 
@@ -137,11 +152,6 @@ class DirectorOrchestrator:
             prepared_request=prepared_request,
             session=session,
             working_state=working_state,
-            recent_turns=self._read_recent_turns(request.session_id, working_state.state_version),
-            message_turns=tuple(
-                self.repository.get_complete_message_turns(self.scope, request.session_id)
-            ),
-            checkpoint=self.repository.get_latest_valid_checkpoint(self.scope, request.session_id),
             turn_id=turn_id,
             owner_message_id=owner_message_id,
             director_message_id=director_message_id,
@@ -172,17 +182,6 @@ class DirectorOrchestrator:
             # recovery path is re-entrant under the outer Session lock.
             return self.repository.recover_working_state(self.scope, session_id)
 
-    def _read_recent_turns(
-        self, session_id: str, state_version: int
-    ) -> tuple[dict[str, Any], ...]:
-        if state_version == 0:
-            return ()
-        return tuple(
-            self.repository.get_recent_successful_turns(
-                self.scope, session_id, limit=state_version
-            )
-        )
-
     @staticmethod
     def _validate_expected_state_version(value: Any) -> int:
         if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= SQLITE_INT_MAX:
@@ -193,18 +192,17 @@ class DirectorOrchestrator:
 
     @staticmethod
     def _bind_request_boundary(
-        candidate: CommitSuccessfulTurnInput,
+        candidate: TurnCandidate,
         context: TurnOrchestrationContext,
     ) -> CommitSuccessfulTurnInput:
-        if not isinstance(candidate, CommitSuccessfulTurnInput):
+        if not isinstance(candidate, TurnCandidate):
             raise DirectorExecutionValidationError(
-                "candidate builder must return CommitSuccessfulTurnInput"
+                "candidate builder must return TurnCandidate"
             )
         # Infrastructure identity comes from the lock-owned orchestrator, not
         # from the injected builder.  The builder supplies only business
         # output: visible reply, trace, post-state, and optional ReadyContent.
-        return replace(
-            candidate,
+        return CommitSuccessfulTurnInput(
             session_id=context.request.session_id,
             client_message_id=context.request.client_message_id,
             expected_state_version=context.request.expected_state_version,
@@ -214,9 +212,16 @@ class DirectorOrchestrator:
             director_message_id=context.director_message_id,
             owner_message=context.request.owner_text,
             normalized_parameters=deepcopy(context.request.parameters),
-            ready_content_id=(
-                context.ready_content_id if candidate.final_run_control == "READY" else None
-            ),
+            director_message=candidate.director_message,
+            execution_trace=deepcopy(candidate.execution_trace),
+            post_state=deepcopy(candidate.post_state),
+            final_run_control=candidate.final_run_control,
+            target_stage=candidate.target_stage,
+            transition_reason_code=candidate.transition_reason_code,
+            gate_outcome=candidate.gate_outcome,
+            review_root_cause=candidate.review_root_cause,
+            ready_content_id=(context.ready_content_id if candidate.final_run_control == "READY" else None),
+            ready_content=deepcopy(candidate.ready_content),
             created_at=_utc_now(),
         )
 
@@ -224,6 +229,7 @@ class DirectorOrchestrator:
 __all__ = [
     "DirectorOrchestrator",
     "DirectorTurnRequest",
+    "TurnCandidate",
     "TurnCandidateBuilder",
     "TurnOrchestrationContext",
 ]
