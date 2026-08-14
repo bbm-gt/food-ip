@@ -14,6 +14,7 @@ from .canonical import (
     canonical_text,
     is_blank_text,
     normalized_request,
+    parse_canonical_object,
     state_sha256,
     validate_normalized_request,
 )
@@ -69,10 +70,48 @@ class CommitSuccessfulTurnInput:
 
 @dataclass(frozen=True)
 class SuccessfulTurnResult:
-    """Minimal response shape for the later persistence executor."""
+    """A validated FirstResponse snapshot with no shared mutable response."""
 
-    response: dict[str, Any]
+    first_response_json: str
     replayed: bool
+
+    def __init__(
+        self,
+        first_response_json: str | None = None,
+        replayed: bool = False,
+        *,
+        response: dict[str, Any] | None = None,
+    ) -> None:
+        if type(replayed) is not bool:
+            raise DirectorExecutionValidationError("replayed must be a bool")
+        if first_response_json is None:
+            if response is None:
+                raise DirectorExecutionValidationError("first_response_json is required")
+            try:
+                first_response_json = canonical_text(response)
+            except (TypeError, ValueError) as exc:
+                raise DirectorExecutionValidationError("response is not Canonical JSON v1") from exc
+        elif response is not None:
+            raise DirectorExecutionValidationError("provide first_response_json or response, not both")
+        if not isinstance(first_response_json, str):
+            raise DirectorExecutionValidationError("first_response_json must be canonical JSON text")
+        try:
+            parsed = parse_canonical_object(first_response_json)
+            validated = FirstResponse.model_validate(parsed).model_dump(mode="json")
+            if canonical_text(validated) != first_response_json:
+                raise ValueError("FirstResponse JSON is not canonical")
+        except (TypeError, ValueError) as exc:
+            raise DirectorExecutionValidationError("first_response_json is not a valid FirstResponse") from exc
+        object.__setattr__(self, "first_response_json", first_response_json)
+        object.__setattr__(self, "replayed", replayed)
+
+    @property
+    def response(self) -> dict[str, Any]:
+        return parse_canonical_object(self.first_response_json)
+
+    @property
+    def first_response(self) -> dict[str, Any]:
+        return self.response
 
 
 @dataclass(frozen=True)
@@ -82,7 +121,6 @@ class PreparedSuccessfulTurn:
     session_id: str
     client_message_id: str
     request_format_version: int
-    normalized_request: dict[str, Any]
     normalized_request_json: str
     request_sha256: str
     turn_id: str
@@ -100,21 +138,45 @@ class PreparedSuccessfulTurn:
     gate_outcome: str | None
     review_root_cause: str | None
     execution_format_version: int
-    execution_trace: dict[str, Any]
     execution_trace_json: str
     response_format_version: int
-    first_response: dict[str, Any]
     first_response_json: str
     snapshot_format_version: int
-    post_state: dict[str, Any]
-    post_state_snapshot: dict[str, Any]
+    post_state_json: str
     post_state_snapshot_json: str
     post_state_sha256: str
     ready_content_id: str | None
     content_format_version: int | None
-    ready_content: dict[str, Any] | None
     final_content_json: str | None
     created_at: str
+
+    @staticmethod
+    def _object_view(value: str) -> dict[str, Any]:
+        return parse_canonical_object(value)
+
+    @property
+    def normalized_request(self) -> dict[str, Any]:
+        return self._object_view(self.normalized_request_json)
+
+    @property
+    def execution_trace(self) -> dict[str, Any]:
+        return self._object_view(self.execution_trace_json)
+
+    @property
+    def first_response(self) -> dict[str, Any]:
+        return self._object_view(self.first_response_json)
+
+    @property
+    def post_state(self) -> dict[str, Any]:
+        return self._object_view(self.post_state_json)
+
+    @property
+    def post_state_snapshot(self) -> dict[str, Any]:
+        return self._object_view(self.post_state_snapshot_json)
+
+    @property
+    def ready_content(self) -> dict[str, Any] | None:
+        return None if self.final_content_json is None else self._object_view(self.final_content_json)
 
     @property
     def validated_execution_trace(self) -> dict[str, Any]:
@@ -251,6 +313,16 @@ def prepare_successful_turn(
             raise DirectorExecutionValidationError("only request_format_version 1 is supported")
         if pre_state_version >= SQLITE_INT_MAX:
             raise DirectorExecutionValidationError("post_state_version exceeds SQLite signed 64-bit range")
+        if pre_state_version > SQLITE_INT_MAX // 2:
+            raise DirectorExecutionValidationError("current message sequence multiplication overflows SQLite range")
+        expected_current_max_message_seq = 2 * pre_state_version
+        if max_message_seq != expected_current_max_message_seq:
+            raise DirectorExecutionValidationError(
+                "current_max_message_seq does not match current_state_version"
+            )
+        post_state_version = pre_state_version + 1
+        if post_state_version > SQLITE_INT_MAX // 2:
+            raise DirectorExecutionValidationError("derived message sequence exceeds SQLite range")
         if max_message_seq > SQLITE_INT_MAX - 2:
             raise DirectorExecutionValidationError("message sequence exceeds SQLite signed 64-bit range")
         turn_id = _require_uuid(command.turn_id, "turn_id")
@@ -276,9 +348,8 @@ def prepare_successful_turn(
         validate_normalized_request(request)
         request, normalized_request_json = _canonical_payload(request, "normalized_request")
         request_hash = canonical_sha256(request)
-        post_state_version = pre_state_version + 1
-        owner_message_seq = max_message_seq + 1
-        director_message_seq = max_message_seq + 2
+        owner_message_seq = 2 * post_state_version - 1
+        director_message_seq = 2 * post_state_version
         trace_model = validate_turn_execution_trace(
             deepcopy(command.execution_trace),
             pre_stage=current_stage,
@@ -295,7 +366,7 @@ def prepare_successful_turn(
             state_version=post_state_version,
             source_ready_content_id=source_ready_content_id,
         )
-        post_state, _ = _canonical_payload(state_model.model_dump(mode="json"), "post_state")
+        post_state, post_state_json = _canonical_payload(state_model.model_dump(mode="json"), "post_state")
         ready_content: dict[str, Any] | None = None
         final_content_json: str | None = None
         content_format_version: int | None = None
@@ -335,7 +406,7 @@ def prepare_successful_turn(
         return PreparedSuccessfulTurn(
             session_id=session_id, client_message_id=client_message_id,
             request_format_version=command.request_format_version,
-            normalized_request=request, normalized_request_json=normalized_request_json,
+            normalized_request_json=normalized_request_json,
             request_sha256=request_hash, turn_id=turn_id,
             owner_message_id=owner_message_id, director_message_id=director_message_id,
             owner_message=owner_message, director_message=director_message,
@@ -344,13 +415,14 @@ def prepare_successful_turn(
             final_run_control=command.final_run_control, target_stage=target_stage,
             transition_reason_code=command.transition_reason_code,
             gate_outcome=command.gate_outcome, review_root_cause=command.review_root_cause,
-            execution_format_version=trace["format_version"], execution_trace=trace,
+            execution_format_version=trace["format_version"],
             execution_trace_json=execution_trace_json, response_format_version=1,
-            first_response=response, first_response_json=first_response_json,
-            snapshot_format_version=snapshot["snapshot_format_version"], post_state=post_state,
-            post_state_snapshot=snapshot, post_state_snapshot_json=post_state_snapshot_json,
+            first_response_json=first_response_json,
+            snapshot_format_version=snapshot["snapshot_format_version"],
+            post_state_json=post_state_json,
+            post_state_snapshot_json=post_state_snapshot_json,
             post_state_sha256=post_hash, ready_content_id=ready_content_id,
-            content_format_version=content_format_version, ready_content=ready_content,
+            content_format_version=content_format_version,
             final_content_json=final_content_json, created_at=command.created_at,
         )
     except DirectorExecutionError:

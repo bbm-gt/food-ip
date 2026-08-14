@@ -93,12 +93,14 @@ def prepare(
     command: CommitSuccessfulTurnInput,
     *,
     current_state_version: int | None = None,
-    current_max_message_seq: int = 8,
+    current_max_message_seq: int | None = None,
     current_stage: str = "EXPLORE",
 ) -> PreparedSuccessfulTurn:
+    current_state_version = command.expected_state_version if current_state_version is None else current_state_version
+    current_max_message_seq = 2 * current_state_version if current_max_message_seq is None else current_max_message_seq
     return prepare_successful_turn(
         command,
-        current_state_version=(command.expected_state_version if current_state_version is None else current_state_version),
+        current_state_version=current_state_version,
         current_max_message_seq=current_max_message_seq,
         current_stage=current_stage,
         source_ready_content_id=None,
@@ -139,8 +141,22 @@ def test_pre_state_version_comes_from_current_authority() -> None:
 
 
 def test_message_sequences_come_from_current_maximum() -> None:
-    prepared = prepare(valid_non_ready_command(), current_max_message_seq=41)
-    assert (prepared.owner_message_seq, prepared.director_message_seq) == (42, 43)
+    prepared = prepare(valid_non_ready_command(), current_max_message_seq=8)
+    assert (prepared.owner_message_seq, prepared.director_message_seq) == (9, 10)
+
+
+def test_inconsistent_current_max_message_seq_is_rejected() -> None:
+    with pytest.raises(DirectorExecutionValidationError):
+        prepare(valid_non_ready_command(), current_max_message_seq=41)
+
+
+@pytest.mark.parametrize("current_state_version, current_max_message_seq", [(0, 0), (4, 8)])
+def test_message_sequence_formula_is_version_derived(current_state_version: int, current_max_message_seq: int) -> None:
+    command = replace(valid_non_ready_command(), expected_state_version=current_state_version)
+    prepared = prepare(command, current_state_version=current_state_version, current_max_message_seq=current_max_message_seq)
+    assert prepared.post_state_version == current_state_version + 1
+    assert prepared.owner_message_seq == 2 * prepared.post_state_version - 1
+    assert prepared.director_message_seq == 2 * prepared.post_state_version
 
 
 @pytest.mark.parametrize("kwargs", [
@@ -255,6 +271,7 @@ def test_prepared_contains_complete_canonical_json_and_matching_hashes() -> None
     assert prepared.normalized_request_json == canonical_text(prepared.normalized_request)
     assert prepared.execution_trace_json == canonical_text(prepared.execution_trace)
     assert prepared.first_response_json == canonical_text(prepared.first_response)
+    assert prepared.post_state_json == canonical_text(prepared.post_state)
     assert prepared.post_state_snapshot_json == canonical_text(prepared.post_state_snapshot)
     assert prepared.request_sha256 == canonical_sha256(prepared.normalized_request)
     assert prepared.post_state_sha256 == state_sha256(
@@ -278,6 +295,32 @@ def test_prepared_does_not_share_mutable_input_references() -> None:
     assert prepared.post_state["draft"]["content"]["script_text"] != "mutation"
 
 
+def test_prepared_property_views_cannot_mutate_canonical_state() -> None:
+    prepared = prepare(valid_ready_command(), current_stage="REVIEW", current_max_message_seq=0)
+    request = prepared.normalized_request
+    trace = prepared.execution_trace
+    response = prepared.first_response
+    state = prepared.post_state
+    snapshot = prepared.post_state_snapshot
+    content = prepared.ready_content
+    request["owner_text"] = "mutation"
+    trace["steps"].clear()
+    response["stage"] = "READY"
+    state["draft"] = None
+    snapshot["state_version"] = 999
+    content["script_text"] = "mutation"
+    assert prepared.normalized_request["owner_text"] != "mutation"
+    assert len(prepared.execution_trace["steps"]) == 1
+    assert prepared.first_response["stage"] == "READY"
+    assert prepared.post_state["draft"] is not None
+    assert prepared.post_state_snapshot["state_version"] == 1
+    assert prepared.ready_content["script_text"] != "mutation"
+    assert prepared.post_state_json == canonical_text(prepared.post_state)
+    assert prepared.post_state_sha256 == state_sha256(
+        prepared.post_state_version, prepared.target_stage, prepared.post_state
+    )
+
+
 def test_same_input_produces_the_same_prepared_object() -> None:
     command = valid_non_ready_command()
     assert prepare(command) == prepare(command)
@@ -291,3 +334,19 @@ def test_only_three_execution_exception_types_are_exported() -> None:
         "DirectorExecutionError", "DirectorExecutionValidationError", "StaleStateVersionError",
     }
     assert issubclass(StaleStateVersionError, DirectorExecutionError)
+
+
+def test_successful_turn_result_validates_first_response_and_isolated_views() -> None:
+    from backend.app.director_core.execution import SuccessfulTurnResult
+
+    prepared = prepare(valid_non_ready_command())
+    result = SuccessfulTurnResult(first_response_json=prepared.first_response_json, replayed=False)
+    assert result.response == prepared.first_response
+    result.response["stage"] = "READY"
+    assert result.response["stage"] == "EXPLORE"
+    with pytest.raises(DirectorExecutionValidationError):
+        SuccessfulTurnResult(response={}, replayed=False)
+    with pytest.raises(DirectorExecutionValidationError):
+        SuccessfulTurnResult(first_response_json="{}", replayed=0)
+    with pytest.raises(DirectorExecutionValidationError):
+        SuccessfulTurnResult(first_response_json=prepared.first_response_json[:-1], replayed=False)
