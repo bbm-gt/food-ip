@@ -334,6 +334,8 @@ class ExecutionStep(StrictModel):
             raise ValueError("READY run control requires READY target stage")
         if self.run_control == "WAIT_FOR_OWNER" and self.target_stage != self.entered_stage:
             raise ValueError("WAIT_FOR_OWNER must remain in the entered stage")
+        if (self.review is not None) != (self.entered_stage == "REVIEW"):
+            raise ValueError("review is only allowed on REVIEW steps")
         if self.review is not None:
             expected = {
                 "WRITING_PROBLEM": "CREATE",
@@ -344,9 +346,14 @@ class ExecutionStep(StrictModel):
             if self.target_stage != expected:
                 raise ValueError("review root cause does not match target stage")
             if self.review.outcome == "PASSED" and (
-                self.run_control != "READY" or self.gate is None or self.gate.outcome != "PASSED"
+                self.run_control != "READY" or self.target_stage != "READY"
+                or self.transition_reason_code != "REVIEW_PASSED"
+                or self.gate is None or self.gate.outcome != "PASSED"
+                or self.gate.gate_code != "READINESS_PASSED"
             ):
                 raise ValueError("passed review requires a passed gate and READY control")
+            if self.review.outcome == "BLOCKED" and self.run_control != "CONTINUE":
+                raise ValueError("blocked review must continue to its repair stage")
         return self
 
 

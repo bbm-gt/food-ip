@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from backend.app.director_core.models import (
     ContextCheckpoint,
+    ExecutionStep,
     FirstResponse,
     TurnExecutionTrace,
     WorkingState,
@@ -166,3 +167,32 @@ def test_trace_closure_rejects_broken_chain_reason_and_top_level_mismatch() -> N
 def test_ready_stage_cannot_be_paired_with_wait_for_owner() -> None:
     with pytest.raises(ValidationError):
         FirstResponse.model_validate({"session_id": uid(), "turn_id": uid(), "owner_message_id": uid(), "director_message_id": uid(), "state_version": 1, "stage": "READY", "run_control": "WAIT_FOR_OWNER", "director_message": "reply", "ready_content_id": None})
+
+
+@pytest.mark.parametrize("entered_stage", ["DEEPEN", "CREATE"])
+def test_review_is_forbidden_outside_review_stage(entered_stage: str) -> None:
+    with pytest.raises(ValidationError):
+        ExecutionStep.model_validate({
+            "step_no": 1, "entered_stage": entered_stage, "run_control": "CONTINUE",
+            "target_stage": "CREATE" if entered_stage == "DEEPEN" else "REVIEW",
+            "transition_reason_code": "MATERIAL_SUFFICIENT" if entered_stage == "DEEPEN" else "DRAFT_CREATED",
+            "gate": None, "review": {"outcome": "BLOCKED", "root_cause": "WRITING_PROBLEM"},
+            "candidate_revision": 1,
+        })
+
+
+def test_review_blocked_route_and_review_passed_gate_are_closed() -> None:
+    blocked = {
+        "step_no": 1, "entered_stage": "REVIEW", "run_control": "CONTINUE", "target_stage": "DEEPEN",
+        "transition_reason_code": "MATERIAL_GAP", "gate": None,
+        "review": {"outcome": "BLOCKED", "root_cause": "WRITING_PROBLEM"}, "candidate_revision": 1,
+    }
+    with pytest.raises(ValidationError):
+        ExecutionStep.model_validate(blocked)
+    passed = {
+        "step_no": 1, "entered_stage": "REVIEW", "run_control": "READY", "target_stage": "READY",
+        "transition_reason_code": "REVIEW_PASSED", "gate": None,
+        "review": {"outcome": "PASSED", "root_cause": None}, "candidate_revision": 1,
+    }
+    with pytest.raises(ValidationError):
+        ExecutionStep.model_validate(passed)

@@ -25,7 +25,7 @@
 
 `AGENTS.md` 的治理约束始终有效，任何正式设计文档都不能授权违反它。Skill 不得覆盖 Architecture、Schema、Amendment 或 Execution Contract；若 Skill 与正式设计文档在设计语义上冲突，以正式设计文档为准；若无冲突则继续遵循 Skill 的执行辅助要求。本次不审核、不修改 Skill。
 
-文件路径按任务要求保留 `execution-contract-draft.md`；本文内容状态已为 FINAL PASS。
+正式文件名为 `food-ip-director-core-phase1-execution-contract-final.md`；本文内容状态为 FINAL PASS。
 
 本稿严格继承以下边界：
 

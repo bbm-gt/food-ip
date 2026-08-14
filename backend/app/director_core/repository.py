@@ -283,6 +283,53 @@ class DirectorRepository:
         if turn is None:
             raise DirectorIntegrityError("Working State latest Turn link is invalid")
 
+    def _validate_turn_ready_closure(
+        self, row: sqlite3.Row, response: dict[str, Any]
+    ) -> None:
+        session_row = self.connection.execute(
+            """SELECT s.lifecycle_status, ws.stage, ws.latest_successful_turn_id,
+                      ws.state_version
+               FROM director_sessions s
+               JOIN director_working_state ws ON ws.session_id = s.id
+               WHERE s.id = ?""",
+            (row["session_id"],),
+        ).fetchone()
+        if session_row is None:
+            raise DirectorIntegrityError("Turn Session or Working State is missing")
+        ready_content = self.connection.execute(
+            """SELECT id, session_id, created_by_turn_id
+               FROM director_ready_content
+               WHERE id = ?""",
+            (response.get("ready_content_id"),),
+        ).fetchone() if response.get("ready_content_id") is not None else None
+        if row["target_stage"] == "READY" or row["final_run_control"] == "READY":
+            if row["target_stage"] != "READY" or row["final_run_control"] != "READY":
+                raise DirectorIntegrityError("READY Turn top-level fields are inconsistent")
+            if response["stage"] != "READY" or response["ready_content_id"] is None:
+                raise DirectorIntegrityError("READY Turn response is incomplete")
+            if ready_content is None:
+                raise DirectorIntegrityError("READY Turn ReadyContent is missing")
+            if ready_content["session_id"] != row["session_id"] or ready_content["created_by_turn_id"] != row["id"]:
+                raise DirectorIntegrityError("READY Turn ReadyContent relationship is invalid")
+            if not (
+                session_row["lifecycle_status"] == "READY"
+                and session_row["stage"] == "READY"
+                and session_row["latest_successful_turn_id"] == row["id"]
+                and session_row["state_version"] == row["post_state_version"]
+            ):
+                raise DirectorIntegrityError("READY Turn lifecycle is not closed")
+        else:
+            if response["ready_content_id"] is not None:
+                raise DirectorIntegrityError("non-READY Turn cannot carry ReadyContent")
+            current_turn_ready = self.connection.execute(
+                "SELECT 1 FROM director_ready_content WHERE session_id = ? AND created_by_turn_id = ?",
+                (row["session_id"], row["id"]),
+            ).fetchone()
+            if current_turn_ready is not None:
+                raise DirectorIntegrityError("non-READY Turn cannot create ReadyContent")
+            if session_row["latest_successful_turn_id"] == row["id"] and session_row["stage"] == "READY":
+                raise DirectorIntegrityError("non-READY Turn cannot move its Working State to READY")
+
     def _validate_evidence_closure(
         self, session: SessionRecord, state: dict[str, Any]
     ) -> None:
@@ -301,8 +348,18 @@ class DirectorRepository:
             if inherited is not None:
                 if session.source_ready_content_id is None:
                     raise DirectorIntegrityError("ordinary Session cannot contain inherited objects")
-                if object_kind not in {"owner_facts", "owner_constraints", "direction"}:
+                if object_kind == "rejected_items":
+                    source_kind = {
+                        "OWNER_FACT": "owner_facts",
+                        "OWNER_CONSTRAINT": "owner_constraints",
+                        "DIRECTION": "direction",
+                    }.get(item.get("item_kind"))
+                    if source_kind is None:
+                        raise DirectorIntegrityError("only rejected inherited Owner Fact, Constraint, or Direction is allowed")
+                elif object_kind not in {"owner_facts", "owner_constraints", "direction"}:
                     raise DirectorIntegrityError("only active facts, constraints, and direction may be inherited")
+                else:
+                    source_kind = object_kind
                 if inherited["source_ready_content_id"] != session.source_ready_content_id:
                     raise DirectorIntegrityError("inherited object does not name the direct ReadyContent")
                 if source_state is None:
@@ -330,14 +387,23 @@ class DirectorRepository:
                         raise DirectorIntegrityError("direct source final Working State is invalid")
                 if inherited["source_session_id"] != source_session_id:
                     raise DirectorIntegrityError("inherited object does not name the producing Session")
-                source_items = [source_state[object_kind]] if object_kind == "direction" else source_state[object_kind]
-                candidate = deepcopy(item)
-                candidate.pop("inherited_from")
-                if not any(
-                    (lambda copy: (copy.pop("inherited_from", None), copy)[1])(deepcopy(source_item)) == candidate
-                    for source_item in source_items
-                ):
-                    raise DirectorIntegrityError("inherited object differs from its direct source state")
+                source_items = [source_state[source_kind]] if source_kind == "direction" else source_state[source_kind]
+                if object_kind == "rejected_items":
+                    if not any(
+                        source_item["item_id"] == item["item_id"]
+                        and source_item["statement"] == item["statement"]
+                        and source_item["evidence_refs"] == item["evidence_refs"]
+                        for source_item in source_items
+                    ):
+                        raise DirectorIntegrityError("inherited rejected item differs from its direct source state")
+                else:
+                    candidate = deepcopy(item)
+                    candidate.pop("inherited_from")
+                    if not any(
+                        (lambda copy: (copy.pop("inherited_from", None), copy)[1])(deepcopy(source_item)) == candidate
+                        for source_item in source_items
+                    ):
+                        raise DirectorIntegrityError("inherited object differs from its direct source state")
             for reference in refs:
                 target = self.connection.execute(
                     """
@@ -414,6 +480,7 @@ class DirectorRepository:
             response = FirstResponse.model_validate(
                 parse_canonical_object(row["first_response_json"])
             ).model_dump(mode="json")
+            self._validate_turn_ready_closure(row, response)
             snapshot = TurnPostStateSnapshot.model_validate(
                 parse_canonical_object(row["post_state_snapshot_json"])
             ).model_dump(mode="json")
