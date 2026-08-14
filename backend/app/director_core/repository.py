@@ -464,14 +464,22 @@ class DirectorRepository:
                 raise DirectorIntegrityError("recovery Turn request hash mismatch")
             trace_payload = parse_canonical_object(row["execution_trace_json"])
             trace_steps = trace_payload.get("steps") if isinstance(trace_payload, dict) else None
-            if not trace_steps:
+            if not isinstance(trace_steps, list) or not trace_steps or not isinstance(trace_steps[0], dict):
                 raise DirectorIntegrityError("recovery Turn trace is empty")
-            pre_stage = trace_steps[0].get("entered_stage")
-            if row["pre_state_version"] == 0 and pre_stage != "EXPLORE":
-                raise DirectorIntegrityError("version 0 recovery Turn must enter EXPLORE")
+            if row["pre_state_version"] == 0:
+                authoritative_pre_stage = "EXPLORE"
+            else:
+                previous = self.connection.execute(
+                    """SELECT target_stage FROM director_turns
+                       WHERE session_id = ? AND post_state_version = ?""",
+                    (row["session_id"], row["pre_state_version"]),
+                ).fetchone()
+                if previous is None:
+                    raise DirectorIntegrityError("recovery Turn direct predecessor is missing")
+                authoritative_pre_stage = previous["target_stage"]
             trace = validate_turn_execution_trace(
                 trace_payload,
-                pre_stage=pre_stage,
+                pre_stage=authoritative_pre_stage,
                 final_run_control=row["final_run_control"],
                 target_stage=row["target_stage"],
                 transition_reason_code=row["transition_reason_code"],
@@ -524,9 +532,9 @@ class DirectorRepository:
                 ).fetchone()
                 if ready is None or ready["session_id"] != row["session_id"] or ready["created_by_turn_id"] != row["id"]:
                     raise DirectorIntegrityError("recovery READY Content relationship is invalid")
-                content = ReadyContent.model_validate(
-                    parse_canonical_object(ready["final_content_json"])
-                ).model_dump(mode="json")
+                content = self._validated_ready_content_payload(
+                    ready, expected_session_id=row["session_id"]
+                )
                 draft = snapshot["state_json"].get("draft")
                 if not isinstance(draft, dict) or draft.get("content") != content:
                     raise DirectorIntegrityError("recovery ReadyContent differs from snapshot draft")
@@ -558,6 +566,29 @@ class DirectorRepository:
             post_state_snapshot_json=snapshot,
         )
         return result
+
+    def _validated_ready_content_payload(
+        self, row: sqlite3.Row, *, expected_session_id: str | None = None
+    ) -> dict[str, Any]:
+        """Validate the immutable ReadyContent row without reading Working State."""
+        if expected_session_id is not None and row["session_id"] != expected_session_id:
+            raise DirectorIntegrityError("ReadyContent Session mismatch")
+        try:
+            if row["content_format_version"] != 1:
+                raise DirectorIntegrityError("unsupported ReadyContent format version")
+            validate_uuid4(row["id"])
+            validate_uuid4(row["session_id"])
+            validate_uuid4(row["created_by_turn_id"])
+            validate_utc_millis(row["created_at"])
+            parsed = parse_canonical_object(row["final_content_json"])
+            payload = ReadyContent.model_validate(parsed).model_dump(mode="json")
+            if payload != parsed:
+                raise DirectorIntegrityError("ReadyContent model payload is not canonical")
+            return payload
+        except (ValueError, TypeError, KeyError) as exc:
+            if isinstance(exc, DirectorIntegrityError):
+                raise
+            raise DirectorIntegrityError("invalid ReadyContent") from exc
 
     def _validate_recovery_evidence_closure(
         self,
@@ -1071,17 +1102,10 @@ class DirectorRepository:
     def _validated_ready_content_row(
         self, row: sqlite3.Row, *, expected_session_id: str | None = None
     ) -> dict[str, Any]:
-        if expected_session_id is not None and row["session_id"] != expected_session_id:
-            raise DirectorIntegrityError("ReadyContent Session mismatch")
         try:
-            if row["content_format_version"] != 1:
-                raise DirectorIntegrityError("unsupported ReadyContent format version")
-            payload = ReadyContent.model_validate(
-                parse_canonical_object(row["final_content_json"])
-            ).model_dump(mode="json")
-            validate_uuid4(row["id"])
-            validate_uuid4(row["created_by_turn_id"])
-            validate_utc_millis(row["created_at"])
+            payload = self._validated_ready_content_payload(
+                row, expected_session_id=expected_session_id
+            )
             session_row = self.connection.execute(
                 """
                 SELECT s.lifecycle_status, s.ready_at, ws.stage, ws.state_version,

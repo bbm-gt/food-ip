@@ -564,9 +564,9 @@ ReadyContent v1 的跨表不变量：
    - 普通新创作 Session 确定性重建空的 Working State v1：空 Owner Facts/Constraints、direction null、material_state 初始 UNKNOWN、draft/review null、Stage EXPLORE。
    - 修改 Session 只读取直接来源 ReadyContent 和其生产 Session 的最终 Working State，按版本 0 初始化契约复制允许对象；不读取完整 Transcript，不递归扫描祖先。其 `draft_id` 保持 null，依靠来源 ReadyContent ID 与不可变内容确定性恢复。
    - 重算 state hash，并以受控维护路径写回同一版本 0，不产生 Turn、Message 或 READY 转移。
-2. 若存在成功 Turn：按 `post_state_version DESC` 取最大版本的最近成功 Turn，只校验该 Turn 自身的 snapshot 格式、post version、target stage、post hash、Working State v1 和 Evidence Reference。完整 snapshot 是独立恢复载荷，不要求更早 Turn 的 snapshot 也有效。
-3. 从有效 snapshot 提取 `{state_version, stage, state_json}`，重算 hash，并确认与该 Turn 的 `post_state_sha256` 一致；再确认 Session 当前生命周期与该状态一致。
-4. 以受控维护路径恢复 Working State 的同一版本、Stage、latest Turn 和 hash；恢复不能推进版本，不能插入可见 Message、Turn 或 ReadyContent。
+2. 若存在成功 Turn：按 `post_state_version DESC` 取最大版本的最近成功 Turn，只校验该 Turn 自身的 snapshot 格式、post version、target stage、post hash、Working State v1 和 Evidence Reference。恢复版本以该最大 Turn 为准，不信任损坏 Working State 的 OLD version。验证其 execution trace 时，`pre_state_version = 0` 固定使用 `EXPLORE`；否则只读取同 Session 直接前一 Turn 的 `target_stage` 作为 authoritative pre-stage。完整 snapshot 是独立恢复载荷，不要求更早 Turn 的 snapshot 健康，也不重放完整历史链。
+3. 从有效 snapshot 提取 `{state_version, stage, state_json}`，重算 hash，并确认与该 Turn 的 `post_state_sha256` 一致；再确认 Session 当前生命周期与该状态一致。若目标为 READY，还必须严格验证 ReadyContent v1 的版本、UUID、Session/Turn 归属、UTC 毫秒 `created_at`、canonical final content、模型结构、`first_response.ready_content_id`、snapshot draft 内容以及 `session.ready_at`。
+4. 以受控维护路径恢复 Working State 的权威目标版本、Stage、latest Turn 和 hash；恢复不能创造高于最大成功 Turn 的逻辑版本，不能插入可见 Message、Turn 或 ReadyContent。
 5. 恢复完成后，原请求仍按正常幂等预检和 `expected_state_version` 检查，再决定是否调用模型。
 
 若最大 post version 的最近成功 Turn snapshot 本身损坏，不能把更早 snapshot 降级写成当前版本，也不能跳过该 Turn 继续创作；应 fail closed，返回需要维护的恢复错误，允许在外部修复后使用原 `client_message_id` 重试。任何情况下不得重新调用模型来“猜回”状态。

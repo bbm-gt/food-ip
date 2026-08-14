@@ -109,6 +109,9 @@ def _insert_revision_turn(
     state: dict,
     *,
     owner_text: str = "老板纠正这条事实",
+    state_version: int = 1,
+    pre_stage: str = "EXPLORE",
+    target_stage: str = "EXPLORE",
 ) -> str:
     """Persist one complete non-READY Turn for revision-session evidence tests."""
     connection = repository.connection
@@ -122,38 +125,38 @@ def _insert_revision_turn(
     }
     request = {"owner_text": owner_text, "parameters": {}}
     trace = {"format_version": 1, "steps": [{
-        "step_no": 1, "entered_stage": "EXPLORE", "run_control": "WAIT_FOR_OWNER",
-        "target_stage": "EXPLORE", "transition_reason_code": "OWNER_INPUT_REQUIRED",
+        "step_no": 1, "entered_stage": pre_stage, "run_control": "WAIT_FOR_OWNER",
+        "target_stage": target_stage, "transition_reason_code": "OWNER_INPUT_REQUIRED",
         "gate": None, "review": None, "candidate_revision": 1,
     }]}
     response = {
         "session_id": session_id, "turn_id": turn_id, "owner_message_id": owner_id,
-        "director_message_id": director_id, "state_version": 1, "stage": "EXPLORE",
+        "director_message_id": director_id, "state_version": state_version, "stage": target_stage,
         "run_control": "WAIT_FOR_OWNER", "director_message": "已记录老板意见。", "ready_content_id": None,
     }
-    snapshot = {"snapshot_format_version": 1, "state_version": 1, "stage": "EXPLORE", "state_json": state}
-    digest = state_sha256(1, "EXPLORE", state)
-    created_at = "2026-01-02T00:00:00.000Z"
+    snapshot = {"snapshot_format_version": 1, "state_version": state_version, "stage": target_stage, "state_json": state}
+    digest = state_sha256(state_version, target_stage, state)
+    created_at = f"2026-01-02T00:00:{state_version:02d}.000Z"
     with connection:
         connection.execute(
             """INSERT INTO director_turns VALUES
-            (?, ?, ?, 1, ?, ?, 0, 1, 'WAIT_FOR_OWNER', 'EXPLORE', 'OWNER_INPUT_REQUIRED', NULL, NULL,
+            (?, ?, ?, 1, ?, ?, ?, ?, 'WAIT_FOR_OWNER', ?, 'OWNER_INPUT_REQUIRED', NULL, NULL,
              1, ?, 1, ?, 1, ?, ?, ?)""",
-            (turn_id, session_id, f"revision-{turn_id}", canonical_text(request), canonical_sha256(request),
+            (turn_id, session_id, f"revision-{turn_id}", canonical_text(request), canonical_sha256(request), state_version - 1, state_version, target_stage,
              canonical_text(trace), canonical_text(response), canonical_text(snapshot), digest, created_at),
         )
         connection.execute(
-            "INSERT INTO director_messages VALUES (?, ?, 1, 'OWNER', ?, ?, ?)",
-            (owner_id, session_id, owner_text, turn_id, created_at),
+            "INSERT INTO director_messages VALUES (?, ?, ?, 'OWNER', ?, ?, ?)",
+            (owner_id, session_id, 2 * state_version - 1, owner_text, turn_id, created_at),
         )
         connection.execute(
-            "INSERT INTO director_messages VALUES (?, ?, 2, 'DIRECTOR', '已记录老板意见。', ?, ?)",
-            (director_id, session_id, turn_id, created_at),
+            "INSERT INTO director_messages VALUES (?, ?, ?, 'DIRECTOR', '已记录老板意见。', ?, ?)",
+            (director_id, session_id, 2 * state_version, turn_id, created_at),
         )
         connection.execute(
-            """UPDATE director_working_state SET state_version = 1, stage = 'EXPLORE', state_json = ?,
+            """UPDATE director_working_state SET state_version = ?, stage = ?, state_json = ?,
                state_sha256 = ?, latest_successful_turn_id = ?, updated_at = ? WHERE session_id = ?""",
-            (canonical_text(state), digest, turn_id, created_at, session_id),
+            (state_version, target_stage, canonical_text(state), digest, turn_id, created_at, session_id),
         )
     return owner_id
 
@@ -681,3 +684,235 @@ def test_recovery_fails_closed_when_maximum_turn_snapshot_is_damaged(
     assert repository.connection.execute(
         "SELECT count(*) FROM director_working_state WHERE session_id = ?", (session_id,)
     ).fetchone()[0] == 0
+
+
+def _restore_working_state_triggers(repository: DirectorRepository) -> None:
+    apply_migrations(repository.connection)
+
+
+def _drop_working_state(repository: DirectorRepository, session_id: str) -> None:
+    repository.connection.execute("DROP TRIGGER director_working_state_delete_guard")
+    repository.connection.execute(
+        "DELETE FROM director_working_state WHERE session_id = ?", (session_id,)
+    )
+    repository.connection.commit()
+    _restore_working_state_triggers(repository)
+
+
+def test_recovery_ignores_damaged_old_versions_and_uses_maximum_turn(repository: DirectorRepository) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    _, ready_id, _ = _finish_source(repository, scope)
+    session = repository.create_revision_session(scope, ready_id)
+    for version in (1, 2, 3):
+        _insert_revision_turn(repository, session.id, repository.get_working_state(scope, session.id).state_json,
+                              state_version=version)
+    expected = repository.get_working_state(scope, session.id)
+    max_turn_id = expected.latest_successful_turn_id
+    stable_counts = tuple(
+        repository.connection.execute(f"SELECT count(*) FROM {table} WHERE session_id = ?", (session.id,)).fetchone()[0]
+        for table in ("director_turns", "director_messages", "director_ready_content")
+    )
+
+    for damaged_version in (0, 1, 5):
+        repository.connection.execute("DROP TRIGGER director_working_state_update_guard")
+        if damaged_version == 0:
+            repository.connection.execute(
+                """UPDATE director_working_state
+                   SET state_version = 0, stage = 'EXPLORE', state_json = ?, state_sha256 = ?,
+                       latest_successful_turn_id = NULL WHERE session_id = ?""",
+                (canonical_text(_empty_state_for_test()), state_sha256(0, "EXPLORE", _empty_state_for_test()), session.id),
+            )
+        else:
+            repository.connection.execute(
+                """UPDATE director_working_state
+                   SET state_version = ?, stage = 'EXPLORE', state_json = ?, state_sha256 = ?,
+                       latest_successful_turn_id = ? WHERE session_id = ?""",
+                (damaged_version, canonical_text(_empty_state_for_test()), "0" * 64, max_turn_id, session.id),
+            )
+        repository.connection.commit()
+        _restore_working_state_triggers(repository)
+        repaired = repository.recover_working_state(scope, session.id)
+        assert repaired.state_version == 3
+        assert repaired.state_json == expected.state_json
+        assert repository.get_working_state(scope, session.id).state_version == 3
+        assert tuple(
+            repository.connection.execute(f"SELECT count(*) FROM {table} WHERE session_id = ?", (session.id,)).fetchone()[0]
+            for table in ("director_turns", "director_messages", "director_ready_content")
+        ) == stable_counts
+
+
+def test_ready_recovery_ignores_damaged_old_version(repository: DirectorRepository) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    session_id, _, _ = _finish_source(repository, scope)
+    repository.connection.execute("DROP TRIGGER director_working_state_update_guard")
+    repository.connection.execute(
+        """UPDATE director_working_state SET state_version = 0, stage = 'EXPLORE',
+           state_json = ?, state_sha256 = ?, latest_successful_turn_id = NULL WHERE session_id = ?""",
+        (canonical_text(_empty_state_for_test()), state_sha256(0, "EXPLORE", _empty_state_for_test()), session_id),
+    )
+    repository.connection.commit()
+    _restore_working_state_triggers(repository)
+    recovered = repository.recover_working_state(scope, session_id)
+    assert recovered.state_version == 1
+    assert recovered.stage == "READY"
+    assert repository.get_working_state(scope, session_id).latest_successful_turn_id == recovered.latest_successful_turn_id
+
+
+def test_trigger_accepts_exact_max_snapshot_even_when_old_version_is_damaged(repository: DirectorRepository) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    _, ready_id, _ = _finish_source(repository, scope)
+    session = repository.create_revision_session(scope, ready_id)
+    _insert_revision_turn(repository, session.id, repository.get_working_state(scope, session.id).state_json, state_version=1)
+    _insert_revision_turn(repository, session.id, repository.get_working_state(scope, session.id).state_json, state_version=2)
+    expected = repository.get_working_state(scope, session.id)
+    connection = repository.connection
+    connection.execute("DROP TRIGGER director_working_state_update_guard")
+    connection.execute(
+        "UPDATE director_working_state SET state_version = 0, stage = 'EXPLORE', state_json = ?, state_sha256 = ?, latest_successful_turn_id = NULL WHERE session_id = ?",
+        (canonical_text(_empty_state_for_test()), state_sha256(0, "EXPLORE", _empty_state_for_test()), session.id),
+    )
+    connection.commit()
+    _restore_working_state_triggers(repository)
+    connection.execute(
+        """UPDATE director_working_state SET state_version = ?, stage = ?, state_json = ?, state_sha256 = ?,
+           latest_successful_turn_id = ? WHERE session_id = ?""",
+        (expected.state_version, expected.stage, canonical_text(expected.state_json), expected.state_sha256,
+         expected.latest_successful_turn_id, session.id),
+    )
+    assert repository.get_working_state(scope, session.id).state_version == 2
+
+
+def test_trigger_rejects_earlier_snapshot_as_recovery_target(repository: DirectorRepository) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    _, ready_id, _ = _finish_source(repository, scope)
+    session = repository.create_revision_session(scope, ready_id)
+    _insert_revision_turn(repository, session.id, repository.get_working_state(scope, session.id).state_json, state_version=1)
+    first = repository.get_working_state(scope, session.id)
+    _insert_revision_turn(repository, session.id, first.state_json, state_version=2)
+    connection = repository.connection
+    connection.execute("DROP TRIGGER director_working_state_update_guard")
+    connection.execute(
+        "UPDATE director_working_state SET state_version = 5, stage = 'EXPLORE', state_json = ?, state_sha256 = ?, latest_successful_turn_id = ? WHERE session_id = ?",
+        (canonical_text(_empty_state_for_test()), "0" * 64, first.latest_successful_turn_id, session.id),
+    )
+    connection.commit()
+    _restore_working_state_triggers(repository)
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            """UPDATE director_working_state SET state_version = ?, stage = ?, state_json = ?, state_sha256 = ?,
+               latest_successful_turn_id = ? WHERE session_id = ?""",
+            (first.state_version, first.stage, canonical_text(first.state_json), first.state_sha256,
+             first.latest_successful_turn_id, session.id),
+        )
+
+
+def test_no_turn_recovery_repairs_damaged_version_zero_baseline(repository: DirectorRepository) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    session = repository.create_session(scope)
+    connection = repository.connection
+    connection.execute("DROP TRIGGER director_working_state_update_guard")
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys = OFF")
+    connection.execute(
+        """UPDATE director_working_state SET state_version = 1, stage = 'EXPLORE',
+           state_json = ?, state_sha256 = ?, latest_successful_turn_id = ? WHERE session_id = ?""",
+        (canonical_text(_empty_state_for_test()), "0" * 64, uid(), session.id),
+    )
+    connection.commit()
+    connection.execute("PRAGMA foreign_keys = ON")
+    _restore_working_state_triggers(repository)
+    recovered = repository.recover_working_state(scope, session.id)
+    assert recovered.state_version == 0
+    assert recovered.stage == "EXPLORE"
+    assert recovered.latest_successful_turn_id is None
+    assert repository.get_working_state(scope, session.id).state_version == 0
+
+
+def test_recovery_uses_authoritative_pre_stage_and_direct_predecessor(repository: DirectorRepository) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    _, ready_id, _ = _finish_source(repository, scope)
+    session = repository.create_revision_session(scope, ready_id)
+
+    # A v1 trace that is internally valid from DEEPEN is not valid from the
+    # authoritative v0 EXPLORE stage.
+    _insert_revision_turn(repository, session.id, repository.get_working_state(scope, session.id).state_json,
+                          state_version=1, pre_stage="DEEPEN", target_stage="DEEPEN")
+    _drop_working_state(repository, session.id)
+    with pytest.raises(DirectorIntegrityError):
+        repository.recover_working_state(scope, session.id)
+
+    # v2 must use v1's target stage, not its own trace declaration.
+    session = repository.create_revision_session(scope, ready_id)
+    _insert_revision_turn(repository, session.id, repository.get_working_state(scope, session.id).state_json,
+                          state_version=1, target_stage="EXPLORE")
+    _insert_revision_turn(repository, session.id, repository.get_working_state(scope, session.id).state_json,
+                          state_version=2, pre_stage="DEEPEN", target_stage="DEEPEN")
+    _drop_working_state(repository, session.id)
+    with pytest.raises(DirectorIntegrityError):
+        repository.recover_working_state(scope, session.id)
+
+    # The direct predecessor's stage metadata is enough; its snapshot need not
+    # be healthy and recovery does not replay the historical snapshot chain.
+    session = repository.create_revision_session(scope, ready_id)
+    _insert_revision_turn(repository, session.id, repository.get_working_state(scope, session.id).state_json,
+                          state_version=1, target_stage="EXPLORE")
+    _insert_revision_turn(repository, session.id, repository.get_working_state(scope, session.id).state_json,
+                          state_version=2, pre_stage="EXPLORE", target_stage="EXPLORE")
+    first_turn_id = repository.connection.execute(
+        "SELECT id FROM director_turns WHERE session_id = ? AND post_state_version = 1", (session.id,)
+    ).fetchone()[0]
+    repository.connection.execute("DROP TRIGGER director_turns_update_guard")
+    repository.connection.execute(
+        "UPDATE director_turns SET post_state_sha256 = ? WHERE id = ?", ("0" * 64, first_turn_id)
+    )
+    _drop_working_state(repository, session.id)
+    assert repository.recover_working_state(scope, session.id).state_version == 2
+
+    # A missing direct predecessor is fail-closed; no recursive history replay
+    # or fallback to an earlier snapshot is attempted.
+    session = repository.create_revision_session(scope, ready_id)
+    _insert_revision_turn(repository, session.id, repository.get_working_state(scope, session.id).state_json,
+                          state_version=2, pre_stage="EXPLORE", target_stage="EXPLORE")
+    _drop_working_state(repository, session.id)
+    with pytest.raises(DirectorIntegrityError):
+        repository.recover_working_state(scope, session.id)
+
+
+@pytest.mark.parametrize("mutation", [
+    "format", "created_by_turn", "session_ready_at", "noncanonical", "response_id",
+])
+def test_ready_recovery_validates_ready_content_v1_closure(repository: DirectorRepository, mutation: str) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    session_id, ready_id, _ = _finish_source(repository, scope)
+    connection = repository.connection
+    turn_id = connection.execute(
+        "SELECT created_by_turn_id FROM director_ready_content WHERE id = ?", (ready_id,)
+    ).fetchone()[0]
+    connection.execute("DROP TRIGGER director_working_state_delete_guard")
+    connection.execute("DELETE FROM director_working_state WHERE session_id = ?", (session_id,))
+    if mutation == "format":
+        connection.execute("DROP TRIGGER director_ready_content_update_guard")
+        connection.execute("UPDATE director_ready_content SET content_format_version = 2 WHERE id = ?", (ready_id,))
+    elif mutation == "created_by_turn":
+        connection.execute("DROP TRIGGER director_ready_content_update_guard")
+        connection.commit()
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute("UPDATE director_ready_content SET created_by_turn_id = ? WHERE id = ?", (uid(), ready_id))
+        connection.commit()
+        connection.execute("PRAGMA foreign_keys = ON")
+    elif mutation == "session_ready_at":
+        connection.execute("DROP TRIGGER director_sessions_update_guard")
+        connection.execute("UPDATE director_sessions SET ready_at = '2026-01-01T00:00:01.000Z' WHERE id = ?", (session_id,))
+    elif mutation == "noncanonical":
+        connection.execute("DROP TRIGGER director_ready_content_update_guard")
+        content = connection.execute("SELECT final_content_json FROM director_ready_content WHERE id = ?", (ready_id,)).fetchone()[0]
+        connection.execute("UPDATE director_ready_content SET final_content_json = ? WHERE id = ?", (" " + content, ready_id))
+    else:
+        connection.execute("DROP TRIGGER director_turns_update_guard")
+        response = json.loads(connection.execute("SELECT first_response_json FROM director_turns WHERE id = ?", (turn_id,)).fetchone()[0])
+        response["ready_content_id"] = uid()
+        connection.execute("UPDATE director_turns SET first_response_json = ? WHERE id = ?", (canonical_text(response), turn_id))
+    connection.commit()
+    _restore_working_state_triggers(repository)
+    with pytest.raises(DirectorIntegrityError):
+        repository.recover_working_state(scope, session_id)
