@@ -6,7 +6,7 @@ import sqlite3
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from .canonical import (
@@ -18,7 +18,8 @@ from .canonical import (
     state_sha256,
     validate_normalized_request,
 )
-from .database import require_foreign_keys
+from .concurrency import SessionLockManager, shared_session_lock_manager
+from .database import enable_and_verify_foreign_keys, require_foreign_keys
 from .execution import (
     CommitSuccessfulTurnInput,
     DirectorExecutionValidationError,
@@ -49,6 +50,43 @@ class DirectorNotFoundError(LookupError):
 
 class DirectorIntegrityError(RuntimeError):
     """Persisted Director Core data failed canonical or contract validation."""
+
+
+class SQLiteBusyError(RuntimeError):
+    """A bounded SQLite BUSY/LOCKED wait ended without a committed Turn."""
+
+
+class CommitRolledBackError(RuntimeError):
+    """A failed commit was proven rolled back and is safe to retry."""
+
+
+class CommitOutcomeIndeterminateError(RuntimeError):
+    """A failed commit cannot be proven committed or rolled back."""
+
+
+def is_sqlite_lock_error(error: BaseException) -> bool:
+    """Recognize SQLite BUSY/LOCKED and their extended result codes only."""
+
+    if not isinstance(error, sqlite3.DatabaseError):
+        return False
+    code = getattr(error, "sqlite_errorcode", None)
+    if isinstance(code, int) and code & 0xFF in {
+        sqlite3.SQLITE_BUSY,
+        sqlite3.SQLITE_LOCKED,
+    }:
+        return True
+    name = getattr(error, "sqlite_errorname", "")
+    if isinstance(name, str) and (
+        name.startswith("SQLITE_BUSY") or name.startswith("SQLITE_LOCKED")
+    ):
+        return True
+    message = str(error).lower()
+    return message in {
+        "database is locked",
+        "database table is locked",
+        "database schema is locked",
+        "database is busy",
+    }
 
 
 @dataclass(frozen=True)
@@ -107,9 +145,22 @@ def _empty_state() -> dict[str, Any]:
 
 
 class DirectorRepository:
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        fresh_connection_factory: Callable[[], sqlite3.Connection] | None = None,
+        session_lock_manager: SessionLockManager | None = None,
+    ) -> None:
         self.connection = connection
         self.connection.row_factory = sqlite3.Row
+        self.fresh_connection_factory = fresh_connection_factory
+        self.session_lock_manager = session_lock_manager or shared_session_lock_manager
+
+    def session_lock(self, session_id: str):
+        """Lock the complete future Turn boundary for one Session."""
+
+        return self.session_lock_manager.lock(session_id)
 
     def _write_ready(self) -> None:
         require_foreign_keys(self.connection)
@@ -120,8 +171,14 @@ class DirectorRepository:
         """Replay a fully validated prior success, or report that none exists."""
         if not isinstance(request, PreparedIdempotencyRequest):
             raise DirectorExecutionValidationError("request must be PreparedIdempotencyRequest")
-        session = self.get_session(scope, request.session_id)
-        return self._precheck_successful_turn_for_session(session, request)
+        with self.session_lock(request.session_id):
+            try:
+                session = self.get_session(scope, request.session_id)
+                return self._precheck_successful_turn_for_session(session, request)
+            except BaseException as exc:
+                if is_sqlite_lock_error(exc):
+                    raise SQLiteBusyError("SQLite BUSY/LOCKED blocked idempotency precheck") from exc
+                raise
 
     def _precheck_successful_turn_for_session(
         self, session: SessionRecord, request: PreparedIdempotencyRequest
@@ -210,7 +267,175 @@ class DirectorRepository:
         except (AttributeError, TypeError, ValueError, KeyError) as exc:
             raise DirectorExecutionValidationError("Prepared successful Turn is invalid") from exc
 
+    @staticmethod
+    def _prepared_request(prepared: PreparedSuccessfulTurn) -> PreparedIdempotencyRequest:
+        return validate_prepared_idempotency_request(
+            PreparedIdempotencyRequest(
+                session_id=prepared.session_id,
+                client_message_id=prepared.client_message_id,
+                request_format_version=prepared.request_format_version,
+                normalized_request_json=prepared.normalized_request_json,
+                request_sha256=prepared.request_sha256,
+            )
+        )
+
+    def _reconcile_transaction_failure(
+        self,
+        scope: AuthorizationScope,
+        prepared: PreparedSuccessfulTurn,
+        error: BaseException,
+    ) -> SuccessfulTurnResult:
+        """After rollback, classify a failed non-COMMIT transaction from authority."""
+
+        request = self._prepared_request(prepared)
+        try:
+            session = self.get_session(scope, prepared.session_id)
+            replay = self._precheck_successful_turn_for_session(session, request)
+            if replay is not None:
+                return replay
+            state = self.get_working_state(scope, prepared.session_id)
+        except IdempotencyConflictError:
+            raise
+        except BaseException as read_error:
+            if is_sqlite_lock_error(read_error):
+                raise SQLiteBusyError(
+                    "SQLite lock prevented transaction outcome reconciliation"
+                ) from read_error
+            raise
+        if state.state_version != prepared.pre_state_version:
+            raise StaleStateVersionError(
+                "transaction failed after the authoritative Working State changed"
+            ) from error
+        if is_sqlite_lock_error(error):
+            raise SQLiteBusyError("SQLite BUSY/LOCKED wait ended before Turn commit") from error
+        raise error
+
+    def _discard_connection_after_uncertain_commit(self) -> sqlite3.Connection:
+        """Close the old connection before any fresh-connection lookup."""
+
+        old = self.connection
+        try:
+            if old.in_transaction:
+                old.rollback()
+            old.close()
+        except BaseException as exc:
+            raise CommitOutcomeIndeterminateError(
+                "could not close the connection after an uncertain COMMIT"
+            ) from exc
+        return old
+
+    def _rollback_current_connection(self) -> None:
+        try:
+            if self.connection.in_transaction:
+                self.connection.rollback()
+        except sqlite3.ProgrammingError:
+            # The connection was deliberately discarded by COMMIT outcome
+            # resolution; it must not be used again.
+            return
+
+    def _fresh_connection(self, old: sqlite3.Connection) -> sqlite3.Connection:
+        factory = self.fresh_connection_factory
+        if factory is None:
+            raise CommitOutcomeIndeterminateError(
+                "fresh connection factory is required for COMMIT disambiguation"
+            )
+        try:
+            fresh = factory()
+        except BaseException as exc:
+            raise CommitOutcomeIndeterminateError(
+                "fresh connection creation failed during COMMIT disambiguation"
+            ) from exc
+        if fresh is old:
+            raise CommitOutcomeIndeterminateError(
+                "fresh connection factory returned the original connection"
+            )
+        if not isinstance(fresh, sqlite3.Connection):
+            raise CommitOutcomeIndeterminateError(
+                "fresh connection factory did not return a SQLite connection"
+            )
+        try:
+            fresh.row_factory = sqlite3.Row
+            enable_and_verify_foreign_keys(fresh)
+        except BaseException as exc:
+            try:
+                fresh.close()
+            except BaseException:
+                pass
+            raise CommitOutcomeIndeterminateError(
+                "fresh connection foreign-key setup failed"
+            ) from exc
+        self.connection = fresh
+        return fresh
+
+    def resolve_commit_outcome(
+        self,
+        scope: AuthorizationScope,
+        request: PreparedIdempotencyRequest,
+        *,
+        expected_state_version: int | None = None,
+    ) -> SuccessfulTurnResult:
+        """Resolve an uncertain COMMIT using a brand-new SQLite connection."""
+
+        if not isinstance(request, PreparedIdempotencyRequest):
+            raise DirectorExecutionValidationError("request must be PreparedIdempotencyRequest")
+        request = validate_prepared_idempotency_request(request)
+        with self.session_lock(request.session_id):
+            old = self._discard_connection_after_uncertain_commit()
+            fresh = self._fresh_connection(old)
+            try:
+                row = fresh.execute(
+                    """SELECT * FROM director_turns
+                       WHERE session_id = ? AND client_message_id = ?""",
+                    (request.session_id, request.client_message_id),
+                ).fetchone()
+                session = self.get_session(scope, request.session_id)
+                if row is not None:
+                    if (
+                        row["request_format_version"] != request.request_format_version
+                        or row["request_sha256"] != request.request_sha256
+                        or row["normalized_request_json"].encode("utf-8")
+                        != request.normalized_request_json.encode("utf-8")
+                    ):
+                        raise IdempotencyConflictError(
+                            "client_message_id was committed with a different request"
+                        )
+                    self._validate_recovery_turn(session, row, require_current_lifecycle=False)
+                    return SuccessfulTurnResult(
+                        first_response_json=row["first_response_json"], replayed=True
+                    )
+                state = self.get_working_state(scope, request.session_id)
+                if (
+                    expected_state_version is not None
+                    and state.state_version != expected_state_version
+                ):
+                    raise StaleStateVersionError(
+                        "commit did not create a Turn and Working State is stale"
+                    )
+            except IdempotencyConflictError:
+                raise
+            except StaleStateVersionError:
+                raise
+            except BaseException as exc:
+                try:
+                    fresh.close()
+                except BaseException:
+                    pass
+                raise CommitOutcomeIndeterminateError(
+                    "fresh connection could not establish COMMIT outcome"
+                ) from exc
+            raise CommitRolledBackError(
+                "COMMIT failed and the original idempotency key was not found"
+            )
+
     def commit_successful_turn(
+        self, scope: AuthorizationScope, prepared: PreparedSuccessfulTurn
+    ) -> SuccessfulTurnResult:
+        if not isinstance(prepared, PreparedSuccessfulTurn):
+            raise DirectorExecutionValidationError("prepared must be PreparedSuccessfulTurn")
+        with self.session_lock(prepared.session_id):
+            return self._commit_successful_turn_locked(scope, prepared)
+
+    def _commit_successful_turn_locked(
         self, scope: AuthorizationScope, prepared: PreparedSuccessfulTurn
     ) -> SuccessfulTurnResult:
         """Atomically commit the complete authoritative result of one successful Turn."""
@@ -221,20 +446,19 @@ class DirectorRepository:
         prepared = self._validate_prepared_successful_turn(
             prepared, source_ready_content_id=session.source_ready_content_id
         )
-        self.connection.execute("BEGIN IMMEDIATE")
+        transaction_started = False
         try:
+            try:
+                self.connection.execute("BEGIN IMMEDIATE")
+                transaction_started = True
+            except BaseException as exc:
+                if is_sqlite_lock_error(exc):
+                    return self._reconcile_transaction_failure(scope, prepared, exc)
+                raise
             session = self.get_session(scope, prepared.session_id)
             replay = self._precheck_successful_turn_for_session(
                 session,
-                validate_prepared_idempotency_request(
-                    PreparedIdempotencyRequest(
-                        session_id=prepared.session_id,
-                        client_message_id=prepared.client_message_id,
-                        request_format_version=prepared.request_format_version,
-                        normalized_request_json=prepared.normalized_request_json,
-                        request_sha256=prepared.request_sha256,
-                    )
-                ),
+                self._prepared_request(prepared),
             )
             if replay is not None:
                 self.connection.commit()
@@ -352,11 +576,25 @@ class DirectorRepository:
                 ).fetchone() is not None
             ):
                 raise DirectorIntegrityError("non-READY successful Turn lifecycle is not closed")
-            self.connection.commit()
+            try:
+                self.connection.commit()
+            except BaseException as exc:
+                # The old connection is not usable for classification after a
+                # COMMIT exception.  The resolver closes it before creating a
+                # fresh connection and therefore never guesses the outcome.
+                return self.resolve_commit_outcome(
+                    scope,
+                    self._prepared_request(prepared),
+                    expected_state_version=prepared.pre_state_version,
+                )
             return SuccessfulTurnResult(first_response_json=prepared.first_response_json, replayed=False)
-        except Exception:
-            if self.connection.in_transaction:
-                self.connection.rollback()
+        except BaseException as exc:
+            self._rollback_current_connection()
+            if transaction_started and (
+                is_sqlite_lock_error(exc)
+                or isinstance(exc, (sqlite3.IntegrityError, StaleStateVersionError))
+            ):
+                return self._reconcile_transaction_failure(scope, prepared, exc)
             raise
 
     def create_session(self, scope: AuthorizationScope) -> SessionRecord:
@@ -519,6 +757,12 @@ class DirectorRepository:
     def recover_working_state(
         self, scope: AuthorizationScope, session_id: str
     ) -> WorkingStateRecord:
+        with self.session_lock(session_id):
+            return self._recover_working_state_locked(scope, session_id)
+
+    def _recover_working_state_locked(
+        self, scope: AuthorizationScope, session_id: str
+    ) -> WorkingStateRecord:
         """Rebuild the projection from the maximum complete Turn snapshot.
 
         Recovery is deliberately a short SQLite write transaction.  It never
@@ -529,7 +773,13 @@ class DirectorRepository:
         validate_uuid4(session_id)
         session = self.get_session(scope, session_id)
         self._write_ready()
-        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            self.connection.execute("BEGIN IMMEDIATE")
+        except BaseException as exc:
+            if is_sqlite_lock_error(exc):
+                self._rollback_current_connection()
+                raise SQLiteBusyError("SQLite BUSY/LOCKED blocked Working State recovery") from exc
+            raise
         try:
             session = self.get_session(scope, session_id)
             turn = self.connection.execute(
@@ -583,8 +833,7 @@ class DirectorRepository:
             self.connection.commit()
             return result
         except Exception:
-            if self.connection.in_transaction:
-                self.connection.rollback()
+            self._rollback_current_connection()
             raise
 
     def _working_state_from_row(
