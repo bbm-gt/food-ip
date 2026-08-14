@@ -61,6 +61,52 @@ class PreparedIdempotencyRequest:
         return parse_canonical_object(self.normalized_request_json)
 
 
+def validate_prepared_idempotency_request(
+    request: PreparedIdempotencyRequest,
+) -> PreparedIdempotencyRequest:
+    """Re-validate an idempotency value supplied across the repository boundary.
+
+    ``PreparedIdempotencyRequest`` is intentionally a frozen value object, but
+    callers can still construct one directly (or use ``dataclasses.replace``).
+    Never trust its persisted identity fields until the canonical request and
+    digest have been closed again here.
+    """
+    if not isinstance(request, PreparedIdempotencyRequest):
+        raise DirectorExecutionValidationError("request must be PreparedIdempotencyRequest")
+    try:
+        session_id = _require_uuid(request.session_id, "session_id")
+        client_message_id = _require_nonblank_text(request.client_message_id, "client_message_id")
+        if (
+            isinstance(request.request_format_version, bool)
+            or not isinstance(request.request_format_version, int)
+            or request.request_format_version != 1
+        ):
+            raise DirectorExecutionValidationError("only request_format_version 1 is supported")
+        if not isinstance(request.normalized_request_json, str):
+            raise DirectorExecutionValidationError("normalized_request_json must be canonical JSON text")
+        normalized = parse_canonical_object(request.normalized_request_json)
+        validate_normalized_request(normalized)
+        canonical_json = canonical_text(normalized)
+        if canonical_json != request.normalized_request_json:
+            raise DirectorExecutionValidationError("normalized_request_json is not canonical")
+        if not isinstance(request.request_sha256, str):
+            raise DirectorExecutionValidationError("request_sha256 must be a hexadecimal digest")
+        digest = canonical_sha256(normalized)
+        if digest != request.request_sha256:
+            raise DirectorExecutionValidationError("request_sha256 does not close normalized_request_json")
+        return PreparedIdempotencyRequest(
+            session_id=session_id,
+            client_message_id=client_message_id,
+            request_format_version=1,
+            normalized_request_json=canonical_json,
+            request_sha256=digest,
+        )
+    except DirectorExecutionError:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise DirectorExecutionValidationError("prepared idempotency request is invalid") from exc
+
+
 @dataclass(frozen=True)
 class CommitSuccessfulTurnInput:
     """Raw successful-Turn facts; all persistence values are derived internally."""
@@ -491,4 +537,5 @@ __all__ = [
     "SuccessfulTurnResult",
     "prepare_successful_turn",
     "prepare_idempotency_request",
+    "validate_prepared_idempotency_request",
 ]

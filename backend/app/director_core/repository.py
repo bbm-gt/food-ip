@@ -28,6 +28,7 @@ from .execution import (
     StaleStateVersionError,
     SuccessfulTurnResult,
     prepare_successful_turn,
+    validate_prepared_idempotency_request,
 )
 from .models import (
     ContextCheckpoint,
@@ -130,6 +131,17 @@ class DirectorRepository:
                WHERE session_id = ? AND client_message_id = ?""",
             (session.id, request.client_message_id),
         ).fetchone()
+        try:
+            request = validate_prepared_idempotency_request(request)
+        except DirectorExecutionValidationError as exc:
+            # Once this client ID exists, a well-formed but different identity
+            # is an idempotency conflict.  A missing row still fails closed by
+            # re-raising the validation error above the miss path.
+            if row is not None:
+                raise IdempotencyConflictError(
+                    "client_message_id was committed with a different request"
+                ) from exc
+            raise
         if row is None:
             return None
         self._validate_recovery_turn(session, row, require_current_lifecycle=False)
@@ -148,10 +160,16 @@ class DirectorRepository:
         if not isinstance(prepared, PreparedSuccessfulTurn):
             raise DirectorExecutionValidationError("prepared must be PreparedSuccessfulTurn")
         try:
-            request = parse_canonical_object(prepared.normalized_request_json)
-            validate_normalized_request(request)
-            if canonical_sha256(request) != prepared.request_sha256:
-                raise DirectorExecutionValidationError("Prepared request hash mismatch")
+            request_identity = validate_prepared_idempotency_request(
+                PreparedIdempotencyRequest(
+                    session_id=prepared.session_id,
+                    client_message_id=prepared.client_message_id,
+                    request_format_version=prepared.request_format_version,
+                    normalized_request_json=prepared.normalized_request_json,
+                    request_sha256=prepared.request_sha256,
+                )
+            )
+            request = request_identity.normalized_request
             trace = parse_canonical_object(prepared.execution_trace_json)
             if not isinstance(trace.get("steps"), list) or not trace["steps"]:
                 raise DirectorExecutionValidationError("Prepared execution trace is empty")
@@ -208,12 +226,14 @@ class DirectorRepository:
             session = self.get_session(scope, prepared.session_id)
             replay = self._precheck_successful_turn_for_session(
                 session,
-                PreparedIdempotencyRequest(
-                    session_id=prepared.session_id,
-                    client_message_id=prepared.client_message_id,
-                    request_format_version=prepared.request_format_version,
-                    normalized_request_json=prepared.normalized_request_json,
-                    request_sha256=prepared.request_sha256,
+                validate_prepared_idempotency_request(
+                    PreparedIdempotencyRequest(
+                        session_id=prepared.session_id,
+                        client_message_id=prepared.client_message_id,
+                        request_format_version=prepared.request_format_version,
+                        normalized_request_json=prepared.normalized_request_json,
+                        request_sha256=prepared.request_sha256,
+                    )
                 ),
             )
             if replay is not None:
