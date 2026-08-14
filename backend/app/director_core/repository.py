@@ -407,6 +407,19 @@ class DirectorRepository:
                         raise DirectorIntegrityError("inherited required confirmation differs from its direct source state")
                     if item["evidence_refs"] != source_item["evidence_refs"]:
                         raise DirectorIntegrityError("inherited required confirmation evidence differs from its direct source state")
+                    active_matches = [
+                        active_item
+                        for active_item in (
+                            list(state["owner_facts"])
+                            + list(state["owner_constraints"])
+                            + ([state["direction"]] if state["direction"] is not None else [])
+                        )
+                        if active_item["item_id"] == item["item_id"]
+                    ]
+                    if active_matches:
+                        raise DirectorIntegrityError(
+                            "inherited required confirmation must not remain a current effective object"
+                        )
                 else:
                     source_items = [source_state[source_kind]] if source_kind == "direction" else source_state[source_kind]
                     if object_kind == "rejected_items":
@@ -425,6 +438,19 @@ class DirectorRepository:
                         )
                     if not matches:
                         raise DirectorIntegrityError("inherited object differs from its direct source state")
+            active_matches = [
+                active_item
+                for active_item in (
+                    list(state["owner_facts"])
+                    + list(state["owner_constraints"])
+                    + ([state["direction"]] if state["direction"] is not None else [])
+                )
+                if active_item["item_id"] == item["item_id"]
+            ]
+            if object_kind == "required_confirmations" and len(active_matches) > 1:
+                raise DirectorIntegrityError(
+                    "required confirmation item_id matches multiple current effective objects"
+                )
             for reference in original_refs:
                 target = self._validate_evidence_reference(
                     session, reference, allow_cross_session=inherited is not None
@@ -479,7 +505,12 @@ class DirectorRepository:
             raise DirectorIntegrityError("Evidence Turn identity is invalid") from exc
         if turn["post_state_version"] != turn["pre_state_version"] + 1:
             raise DirectorIntegrityError("Evidence Turn version chain is invalid")
-        if turn["execution_format_version"] != 1 or turn["response_format_version"] != 1 or turn["snapshot_format_version"] != 1:
+        if (
+            turn["request_format_version"] != 1
+            or turn["execution_format_version"] != 1
+            or turn["response_format_version"] != 1
+            or turn["snapshot_format_version"] != 1
+        ):
             raise DirectorIntegrityError("Evidence Turn format version is invalid")
         try:
             normalized_request = parse_canonical_object(turn["normalized_request_json"])

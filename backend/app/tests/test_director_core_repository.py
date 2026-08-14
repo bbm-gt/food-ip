@@ -438,6 +438,10 @@ def test_inherited_owner_objects_can_be_required_confirmations(
     revision = repository.create_revision_session(scope, ready_id)
     state = repository.get_working_state(scope, revision.id).state_json
     source_item = state[source_kind][0] if source_kind != "direction" else state["direction"]
+    if source_kind == "direction":
+        state["direction"] = None
+    else:
+        state[source_kind] = [item for item in state[source_kind] if item["item_id"] != source_item["item_id"]]
     state["material_state"]["required_confirmations"] = [{
         "item_id": source_item["item_id"], "statement": source_item["statement"],
         "reason": "当前语境变化，需要老板重新确认。", "evidence_refs": source_item["evidence_refs"],
@@ -449,6 +453,28 @@ def test_inherited_owner_objects_can_be_required_confirmations(
     )
     confirmations = repository.get_working_state(scope, revision.id).state_json["material_state"]["required_confirmations"]
     assert confirmations[0]["item_id"] == source_item["item_id"]
+
+
+@pytest.mark.parametrize("source_kind", ["owner_facts", "owner_constraints", "direction"])
+def test_inherited_required_confirmation_cannot_remain_current_effective_object(
+    repository: DirectorRepository, source_kind: str
+) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    source_session_id, ready_id, _ = _finish_source(repository, scope)
+    revision = repository.create_revision_session(scope, ready_id)
+    state = repository.get_working_state(scope, revision.id).state_json
+    source_item = state[source_kind][0] if source_kind != "direction" else state["direction"]
+    state["material_state"]["required_confirmations"] = [{
+        "item_id": source_item["item_id"], "statement": source_item["statement"],
+        "reason": "需要重新确认。", "evidence_refs": source_item["evidence_refs"],
+        "inherited_from": {"source_ready_content_id": ready_id, "source_session_id": source_session_id},
+    }]
+    repository.connection.execute(
+        "UPDATE director_working_state SET state_json = ?, state_sha256 = ? WHERE session_id = ?",
+        (canonical_text(state), state_sha256(0, "EXPLORE", state), revision.id),
+    )
+    with pytest.raises(DirectorIntegrityError):
+        repository.get_working_state(scope, revision.id)
 
 
 def test_required_confirmation_inheritance_is_exact_and_direct(repository: DirectorRepository) -> None:
@@ -500,6 +526,24 @@ def test_ordinary_session_cannot_have_inherited_required_confirmation(repository
     )
     with pytest.raises(DirectorIntegrityError):
         repository.get_working_state(scope, session.id)
+
+
+def test_evidence_turn_request_format_version_must_be_one(repository: DirectorRepository) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    session_id, _, _ = _finish_source(repository, scope)
+    repository.connection.execute("DROP TRIGGER director_turns_update_guard")
+    repository.connection.execute(
+        "UPDATE director_turns SET request_format_version = 2 WHERE session_id = ?", (session_id,)
+    )
+    with pytest.raises(DirectorIntegrityError):
+        repository.get_working_state(scope, session_id)
+
+
+def test_complete_v1_turn_owner_message_remains_valid_evidence(repository: DirectorRepository) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    session_id, _, _ = _finish_source(repository, scope)
+    state = repository.get_working_state(scope, session_id)
+    assert state.state_json["owner_facts"][0]["evidence_refs"]
 
 
 @pytest.mark.parametrize("corruption", ["half_pair", "orphan_turn", "bad_sequence"])
