@@ -20,6 +20,56 @@ SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 Stage = Literal["EXPLORE", "DEEPEN", "CREATE", "REVIEW", "READY"]
 RunControl = Literal["CONTINUE", "WAIT_FOR_OWNER", "READY"]
 
+# One shared source of truth for the combinations exposed to a Stage handler
+# and accepted by the persisted ExecutionStep validator.  CREATE may wait for
+# owner input in the current execution contract; REVIEW only routes to a
+# repair stage or completes READY.
+STAGE_EXECUTION_COMBINATIONS: dict[Stage, tuple[tuple[RunControl, Stage], ...]] = {
+    "EXPLORE": (
+        ("WAIT_FOR_OWNER", "EXPLORE"),
+        ("CONTINUE", "DEEPEN"),
+    ),
+    "DEEPEN": (
+        ("WAIT_FOR_OWNER", "DEEPEN"),
+        ("CONTINUE", "DEEPEN"),
+        ("CONTINUE", "CREATE"),
+    ),
+    "CREATE": (
+        ("WAIT_FOR_OWNER", "CREATE"),
+        ("CONTINUE", "REVIEW"),
+    ),
+    "REVIEW": (
+        ("CONTINUE", "CREATE"),
+        ("CONTINUE", "DEEPEN"),
+        ("CONTINUE", "EXPLORE"),
+        ("READY", "READY"),
+    ),
+    "READY": (),
+}
+
+
+def stage_execution_contract(stage: Stage) -> dict[str, object]:
+    """Return the handler-visible legal control/target combinations."""
+
+    combinations = STAGE_EXECUTION_COMBINATIONS[stage]
+    contract: dict[str, object] = {
+        "stage": stage,
+        "allowed_combinations": [
+            {"run_control": run_control, "target_stage": target_stage}
+            for run_control, target_stage in combinations
+        ],
+        "run_controls": list(dict.fromkeys(run_control for run_control, _ in combinations)),
+        "legal_target_stages": list(dict.fromkeys(target_stage for _, target_stage in combinations)),
+    }
+    if stage == "REVIEW":
+        contract["review_routes"] = [
+            {"root_cause": "WRITING_PROBLEM", "run_control": "CONTINUE", "target_stage": "CREATE"},
+            {"root_cause": "MATERIAL_PROBLEM", "run_control": "CONTINUE", "target_stage": "DEEPEN"},
+            {"root_cause": "DIRECTION_PROBLEM", "run_control": "CONTINUE", "target_stage": "EXPLORE"},
+            {"outcome": "PASSED", "run_control": "READY", "target_stage": "READY"},
+        ]
+    return contract
+
 
 def validate_uuid4(value: str) -> str:
     if UUID4_PATTERN.fullmatch(value) is None:
@@ -321,19 +371,8 @@ class ExecutionStep(StrictModel):
 
     @model_validator(mode="after")
     def legal_transition_and_review_route(self) -> "ExecutionStep":
-        legal = {
-            "EXPLORE": {"EXPLORE", "DEEPEN"},
-            "DEEPEN": {"DEEPEN", "CREATE"},
-            "CREATE": {"REVIEW"},
-            "REVIEW": {"READY", "CREATE", "DEEPEN", "EXPLORE"},
-            "READY": set(),
-        }
-        if self.target_stage not in legal[self.entered_stage]:
+        if (self.run_control, self.target_stage) not in STAGE_EXECUTION_COMBINATIONS[self.entered_stage]:
             raise ValueError("illegal Director Core stage transition")
-        if self.run_control == "READY" and self.target_stage != "READY":
-            raise ValueError("READY run control requires READY target stage")
-        if self.run_control == "WAIT_FOR_OWNER" and self.target_stage != self.entered_stage:
-            raise ValueError("WAIT_FOR_OWNER must remain in the entered stage")
         if (self.review is not None) != (self.entered_stage == "REVIEW"):
             raise ValueError("review is only allowed on REVIEW steps")
         if self.review is not None:
@@ -401,7 +440,7 @@ def validate_turn_execution_trace(
         raise ValueError("Turn top-level fields do not close over the final trace step")
 
     reason_routes = {
-        "OWNER_INPUT_REQUIRED": {("EXPLORE", "EXPLORE"), ("DEEPEN", "DEEPEN"), ("CREATE", "CREATE"), ("REVIEW", "REVIEW")},
+        "OWNER_INPUT_REQUIRED": {("EXPLORE", "EXPLORE"), ("DEEPEN", "DEEPEN"), ("CREATE", "CREATE")},
         "DIRECTION_CONFIRMED": {("EXPLORE", "DEEPEN")},
         "DIRECTION_INVALID": {("REVIEW", "EXPLORE")},
         "MATERIAL_GAP": {("DEEPEN", "DEEPEN"), ("REVIEW", "DEEPEN")},

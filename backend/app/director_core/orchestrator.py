@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import uuid4
@@ -118,13 +118,11 @@ class StageExecutionContext:
     # accepted in StageExecutionResult.
     session_id: str
     owner_message_id: str
-    candidate_steps: tuple[dict[str, Any], ...] = ()
-    include_source_ready_content: bool = False
+    is_revision_session: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "working_state", deepcopy(self.working_state))
         object.__setattr__(self, "parameters", deepcopy(self.parameters))
-        object.__setattr__(self, "candidate_steps", deepcopy(self.candidate_steps))
 
 
 @dataclass(frozen=True)
@@ -163,6 +161,21 @@ class StageHandler(Protocol):
         ...
 
 
+class SourceReadyContentPolicy(Protocol):
+    """Provider-neutral, step-level decision for the direct source baseline."""
+
+    def should_include(self, context: StageExecutionContext) -> bool:
+        ...
+
+
+@dataclass(frozen=True)
+class DisabledSourceReadyContentPolicy:
+    """Conservative default: do not load unrelated source content."""
+
+    def should_include(self, context: StageExecutionContext) -> bool:
+        return False
+
+
 @dataclass(frozen=True)
 class DirectorStageExecutor:
     """Compose Context Assembly and one Stage Handler.
@@ -174,7 +187,9 @@ class DirectorStageExecutor:
 
     assembler: ModelContextAssembler
     handler: StageHandler
-    include_source_ready_content: bool = False
+    source_ready_content_policy: SourceReadyContentPolicy = field(
+        default_factory=DisabledSourceReadyContentPolicy
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.assembler, ModelContextAssembler):
@@ -183,15 +198,26 @@ class DirectorStageExecutor:
             )
         if self.handler is None or not callable(self.handler):
             raise DirectorExecutionValidationError("handler must be provided")
+        if self.source_ready_content_policy is None or not callable(
+            getattr(self.source_ready_content_policy, "should_include", None)
+        ):
+            raise DirectorExecutionValidationError(
+                "source_ready_content_policy must provide should_include(context)"
+            )
 
     def __call__(self, context: StageExecutionContext) -> StageExecutionResult:
         if not isinstance(context, StageExecutionContext):
             raise DirectorExecutionValidationError(
                 "DirectorStageExecutor requires StageExecutionContext"
             )
+        include_source = self.source_ready_content_policy.should_include(context)
+        if not isinstance(include_source, bool):
+            raise DirectorExecutionValidationError(
+                "source_ready_content_policy must return bool"
+            )
         assembled = self.assembler.assemble(
             context,
-            include_source_ready_content=self.include_source_ready_content,
+            include_source_ready_content=context.is_revision_session and include_source,
         )
         result = self.handler(assembled)
         if not isinstance(result, StageExecutionResult):
@@ -327,7 +353,7 @@ class DirectorOrchestrator:
                 candidate_revision=step_no - 1,
                 session_id=session.id,
                 owner_message_id=owner_message_id,
-                candidate_steps=tuple(deepcopy(trace_steps)),
+                is_revision_session=session.source_ready_content_id is not None,
             )
             result = executor(step_context)
             if not isinstance(result, StageExecutionResult):

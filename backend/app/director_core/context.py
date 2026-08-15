@@ -15,7 +15,7 @@ from types import MappingProxyType
 from typing import Any, Protocol
 
 from .canonical import is_blank_text
-from .models import EvidenceReference, Stage
+from .models import EvidenceReference, Stage, STAGE_EXECUTION_COMBINATIONS, stage_execution_contract
 from .repository import (
     AuthorizationScope,
     DirectorIntegrityError,
@@ -122,7 +122,6 @@ class ModelContext:
     checkpoint: Mapping[str, Any] | None
     history_turns: tuple[ContextTurn, ...]
     evidence_messages: tuple[ContextMessage, ...]
-    candidate_steps: tuple[Mapping[str, Any], ...]
     estimated_units: int
 
     def __post_init__(self) -> None:
@@ -133,7 +132,6 @@ class ModelContext:
         object.__setattr__(self, "checkpoint", _freeze(self.checkpoint))
         object.__setattr__(self, "history_turns", _freeze(self.history_turns))
         object.__setattr__(self, "evidence_messages", _freeze(self.evidence_messages))
-        object.__setattr__(self, "candidate_steps", _freeze(self.candidate_steps))
 
     @property
     def owner_message(self) -> str:
@@ -163,7 +161,6 @@ class ModelContext:
             "checkpoint": self.checkpoint,
             "history_turns": self.history_turns,
             "evidence_messages": self.evidence_messages,
-            "candidate_steps": self.candidate_steps,
             "estimated_units": self.estimated_units,
         })
 
@@ -178,15 +175,6 @@ _RULES = {
         "DIRECTION_PROBLEM": "EXPLORE",
     },
 }
-
-_LEGAL_TRANSITIONS = {
-    "EXPLORE": ["EXPLORE", "DEEPEN"],
-    "DEEPEN": ["DEEPEN", "CREATE"],
-    "CREATE": ["REVIEW"],
-    "REVIEW": ["READY", "CREATE", "DEEPEN", "EXPLORE"],
-    "READY": [],
-}
-
 
 def _message(row: Mapping[str, Any]) -> ContextMessage:
     return ContextMessage(
@@ -241,7 +229,6 @@ class ModelContextAssembler:
         working_state: dict[str, Any] | None = None,
         owner_message_id: str | None = None,
         owner_text: str | None = None,
-        candidate_steps: tuple[dict[str, Any], ...] = (),
         include_source_ready_content: bool = False,
     ) -> ModelContext:
         """Assemble from either a StageExecutionContext-like object or fields.
@@ -257,13 +244,9 @@ class ModelContextAssembler:
             working_state = deepcopy(context.working_state)
             owner_message_id = context.owner_message_id
             owner_text = context.owner_text
-            candidate_steps = tuple(deepcopy(getattr(context, "candidate_steps", ())))
-            include_source_ready_content = bool(
-                include_source_ready_content or getattr(context, "include_source_ready_content", False)
-            )
         if not isinstance(session_id, str) or not session_id:
             raise ContextAssemblyError("session_id is required for Context Assembly")
-        if stage not in _LEGAL_TRANSITIONS:
+        if stage not in STAGE_EXECUTION_COMBINATIONS:
             raise ContextAssemblyError("stage is invalid for Context Assembly")
         if not isinstance(working_state, dict):
             raise ContextAssemblyError("working_state must be an object")
@@ -306,11 +289,7 @@ class ModelContextAssembler:
         )
 
         rules = deepcopy(_RULES)
-        stage_contract = {
-            "stage": stage,
-            "legal_target_stages": list(_LEGAL_TRANSITIONS[stage]),
-            "run_controls": ["CONTINUE", "WAIT_FOR_OWNER", "READY"],
-        }
+        stage_contract = stage_execution_contract(stage)
         checkpoint_payload = None if checkpoint is None else {
             "covered_through_seq": checkpoint["covered_through_seq"],
             "format_version": checkpoint["format_version"],
@@ -325,7 +304,6 @@ class ModelContextAssembler:
             "source_ready_content": source,
             "checkpoint": checkpoint_payload,
             "evidence_messages": evidence_messages,
-            "candidate_steps": candidate_steps,
         }
         protected_units = sum(self.budget.estimate(value) for value in protected_sections.values())
         if protected_units > self.budget.max_units:
@@ -334,24 +312,14 @@ class ModelContextAssembler:
             )
 
         history_values = list(history)
-        selected_history: list[ContextTurn] = []
         available = self.budget.max_units - protected_units
-        for turn in reversed(history_values):
-            turn_units = self.budget.estimate(turn)
-            if turn_units <= available:
-                selected_history.insert(0, turn)
-                available -= turn_units
-            else:
-                break
+        all_history_units = sum(self.budget.estimate(turn) for turn in history_values)
+        if all_history_units > available:
+            raise CheckpointRebuildRequiredError(
+                "Checkpoint coverage is too old to fit all complete history after its boundary"
+            )
 
-        if checkpoint is None:
-            all_history_units = sum(self.budget.estimate(turn) for turn in history_values)
-            if all_history_units > self.budget.max_units - protected_units:
-                raise CheckpointRebuildRequiredError(
-                    "valid Checkpoint is required before history can fit the Context Assembly budget"
-                )
-
-        total_units = protected_units + sum(self.budget.estimate(turn) for turn in selected_history)
+        total_units = protected_units + all_history_units
         return ModelContext(
             rules=rules,
             stage_contract=stage_contract,
@@ -359,9 +327,8 @@ class ModelContextAssembler:
             current_owner_message=current_owner,
             source_ready_content=source,
             checkpoint=checkpoint_payload,
-            history_turns=tuple(selected_history),
+            history_turns=tuple(history_values),
             evidence_messages=tuple(evidence_messages),
-            candidate_steps=tuple(candidate_steps),
             estimated_units=total_units,
         )
 
@@ -375,6 +342,17 @@ class ModelContextAssembler:
         resolved: list[ContextMessage] = []
         seen: set[str] = set()
         session = self.repository.get_session(self.scope, session_id)
+        try:
+            self.repository.validate_context_evidence_closure(
+                self.scope,
+                session_id,
+                deepcopy(working_state),
+                inflight_owner_message_id=current_owner.id,
+            )
+        except (DirectorIntegrityError, LookupError, TypeError, ValueError) as exc:
+            raise EvidenceReferenceError(
+                f"Working State Evidence closure is invalid before Stage Handler execution: {exc}"
+            ) from exc
         for raw_reference, inherited_from in _references(working_state):
             target_id = raw_reference["target_id"]
             target_session_id = raw_reference["target_session_id"]
@@ -386,19 +364,11 @@ class ModelContextAssembler:
                     raise EvidenceReferenceError("current OWNER Evidence has the wrong Session")
                 continue
             if target_session_id != session_id:
-                # A revision may retain the original OWNER evidence of a
-                # directly inherited fact/constraint/direction. Arbitrary
-                # cross-Session references remain invalid.
-                if (
-                    inherited_from is None
-                    or session.source_ready_content_id is None
-                    or inherited_from.get("source_ready_content_id") != session.source_ready_content_id
-                    or inherited_from.get("source_session_id") != target_session_id
-                ):
-                    raise EvidenceReferenceError(
-                        "Evidence Reference crosses the current Session or authorization scope"
-                    )
                 try:
+                    if session.source_ready_content_id is None:
+                        raise EvidenceReferenceError(
+                            "Evidence Reference crosses the current Session or authorization scope"
+                        )
                     source_ready = self.repository.get_ready_content(
                         self.scope, session.source_ready_content_id
                     )

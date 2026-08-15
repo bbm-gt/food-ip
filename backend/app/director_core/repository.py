@@ -1169,7 +1169,12 @@ class DirectorRepository:
             raise DirectorIntegrityError("recovery Evidence Turn message roles are invalid")
 
     def _validate_evidence_closure(
-        self, session: SessionRecord, state: dict[str, Any], *, inflight_turn_id: str | None = None
+        self,
+        session: SessionRecord,
+        state: dict[str, Any],
+        *,
+        inflight_turn_id: str | None = None,
+        inflight_owner_message_id: str | None = None,
     ) -> None:
         objects: list[tuple[str, dict[str, Any]]] = []
         objects.extend(("owner_facts", item) for item in state["owner_facts"])
@@ -1290,6 +1295,13 @@ class DirectorRepository:
                     "required confirmation item_id matches multiple current effective objects"
                 )
             for reference in original_refs:
+                if (
+                    inflight_owner_message_id is not None
+                    and reference["target_id"] == inflight_owner_message_id
+                ):
+                    if reference["target_session_id"] != session.id:
+                        raise DirectorIntegrityError("inflight Evidence crosses Session")
+                    continue
                 target = self._validate_evidence_reference(
                     session, reference, allow_cross_session=inherited is not None,
                     inflight_turn_id=inflight_turn_id,
@@ -1297,6 +1309,13 @@ class DirectorRepository:
                 if inherited is None and target["session_id"] != session.id:
                     raise DirectorIntegrityError("non-inherited Evidence crosses Session")
             for reference in rejected_refs:
+                if (
+                    inflight_owner_message_id is not None
+                    and reference["target_id"] == inflight_owner_message_id
+                ):
+                    if reference["target_session_id"] != session.id:
+                        raise DirectorIntegrityError("inflight rejection Evidence crosses Session")
+                    continue
                 target = self._validate_evidence_reference(
                     session, reference, allow_cross_session=False, inflight_turn_id=inflight_turn_id,
                 )
@@ -1604,6 +1623,32 @@ class DirectorRepository:
             raise DirectorIntegrityError("Evidence Reference must target an OWNER Message")
         self._validate_evidence_turn_pair(row)
         return dict(row)
+
+    def validate_context_evidence_closure(
+        self,
+        scope: AuthorizationScope,
+        session_id: str,
+        state: dict[str, Any],
+        *,
+        inflight_owner_message_id: str | None = None,
+    ) -> None:
+        """Validate a candidate state's Evidence without opening a write path.
+
+        Context Assembly uses the same object-by-object inheritance closure as
+        the authoritative repository commit validation.  The optional
+        preallocated OWNER ID is the one deliberate exception for the current
+        in-memory request; it is checked for current-Session scope and remains
+        unresolved until the eventual atomic commit.
+        """
+
+        session = self.get_session(scope, session_id)
+        if not isinstance(state, dict):
+            raise DirectorIntegrityError("Working State must be an object")
+        self._validate_evidence_closure(
+            session,
+            deepcopy(state),
+            inflight_owner_message_id=inflight_owner_message_id,
+        )
 
     def get_latest_valid_checkpoint(
         self, scope: AuthorizationScope, session_id: str
