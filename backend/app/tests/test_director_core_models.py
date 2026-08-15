@@ -164,6 +164,20 @@ def test_trace_closure_rejects_broken_chain_reason_and_top_level_mismatch() -> N
         validate_turn_execution_trace(trace, pre_stage="EXPLORE", final_run_control="WAIT_FOR_OWNER", target_stage="CREATE", transition_reason_code="OWNER_INPUT_REQUIRED", gate_outcome=None, review_root_cause=None)
 
 
+def test_execution_step_rejects_create_wait_for_owner() -> None:
+    with pytest.raises(ValidationError):
+        ExecutionStep.model_validate({
+            "step_no": 1,
+            "entered_stage": "CREATE",
+            "run_control": "WAIT_FOR_OWNER",
+            "target_stage": "CREATE",
+            "transition_reason_code": "OWNER_INPUT_REQUIRED",
+            "gate": None,
+            "review": None,
+            "candidate_revision": 1,
+        })
+
+
 def test_ready_stage_cannot_be_paired_with_wait_for_owner() -> None:
     with pytest.raises(ValidationError):
         FirstResponse.model_validate({"session_id": uid(), "turn_id": uid(), "owner_message_id": uid(), "director_message_id": uid(), "state_version": 1, "stage": "READY", "run_control": "WAIT_FOR_OWNER", "director_message": "reply", "ready_content_id": None})

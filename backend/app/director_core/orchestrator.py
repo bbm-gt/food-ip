@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import uuid4
 
 from .canonical import SQLITE_INT_MAX, is_blank_text
+from .context import ModelContext, ModelContextAssembler
 from .execution import (
     CommitSuccessfulTurnInput,
     DirectorExecutionValidationError,
@@ -117,6 +118,7 @@ class StageExecutionContext:
     # accepted in StageExecutionResult.
     session_id: str
     owner_message_id: str
+    is_revision_session: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "working_state", deepcopy(self.working_state))
@@ -150,6 +152,79 @@ class StageExecutionResult:
         """Readable alias for callers that use the workflow vocabulary."""
 
         return deepcopy(self.post_state)
+
+
+class StageHandler(Protocol):
+    """Provider-neutral business handler for one assembled Stage context."""
+
+    def __call__(self, context: ModelContext) -> StageExecutionResult:
+        ...
+
+
+class SourceReadyContentPolicy(Protocol):
+    """Provider-neutral, step-level decision for the direct source baseline."""
+
+    def should_include(self, context: StageExecutionContext) -> bool:
+        ...
+
+
+@dataclass(frozen=True)
+class DisabledSourceReadyContentPolicy:
+    """Conservative default: do not load unrelated source content."""
+
+    def should_include(self, context: StageExecutionContext) -> bool:
+        return False
+
+
+@dataclass(frozen=True)
+class DirectorStageExecutor:
+    """Compose Context Assembly and one Stage Handler.
+
+    The handler receives no repository, transaction, prompt, provider client,
+    or whole-Turn submission object.  The Orchestrator remains the only owner
+    of transition validation and the atomic successful-Turn commit.
+    """
+
+    assembler: ModelContextAssembler
+    handler: StageHandler
+    source_ready_content_policy: SourceReadyContentPolicy = field(
+        default_factory=DisabledSourceReadyContentPolicy
+    )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.assembler, ModelContextAssembler):
+            raise DirectorExecutionValidationError(
+                "assembler must be a ModelContextAssembler"
+            )
+        if self.handler is None or not callable(self.handler):
+            raise DirectorExecutionValidationError("handler must be provided")
+        if self.source_ready_content_policy is None or not callable(
+            getattr(self.source_ready_content_policy, "should_include", None)
+        ):
+            raise DirectorExecutionValidationError(
+                "source_ready_content_policy must provide should_include(context)"
+            )
+
+    def __call__(self, context: StageExecutionContext) -> StageExecutionResult:
+        if not isinstance(context, StageExecutionContext):
+            raise DirectorExecutionValidationError(
+                "DirectorStageExecutor requires StageExecutionContext"
+            )
+        include_source = self.source_ready_content_policy.should_include(context)
+        if not isinstance(include_source, bool):
+            raise DirectorExecutionValidationError(
+                "source_ready_content_policy must return bool"
+            )
+        assembled = self.assembler.assemble(
+            context,
+            include_source_ready_content=context.is_revision_session and include_source,
+        )
+        result = self.handler(assembled)
+        if not isinstance(result, StageExecutionResult):
+            raise DirectorExecutionValidationError(
+                "Stage Handler must return StageExecutionResult"
+            )
+        return result
 
 
 class SingleStageExecutor(Protocol):
@@ -278,6 +353,7 @@ class DirectorOrchestrator:
                 candidate_revision=step_no - 1,
                 session_id=session.id,
                 owner_message_id=owner_message_id,
+                is_revision_session=session.source_ready_content_id is not None,
             )
             result = executor(step_context)
             if not isinstance(result, StageExecutionResult):
@@ -447,6 +523,8 @@ __all__ = [
     "TurnCandidate",
     "TurnOrchestrationContext",
     "SingleStageExecutor",
+    "StageHandler",
+    "DirectorStageExecutor",
     "StageExecutor",
     "StageExecutionContext",
     "StageExecutionResult",
