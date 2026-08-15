@@ -1,13 +1,29 @@
 """Independent Director Core persistence foundation."""
 
 from .concurrency import SessionLockManager, shared_session_lock_manager
+from .context import (
+    CheckpointRebuildRequiredError,
+    ContextAssemblyError,
+    ContextAssembler,
+    ContextBudget,
+    ContextBudgetExceededError,
+    ContextMessage,
+    ContextTurn,
+    ContextSizeEstimator,
+    DeterministicContextSizeCounter,
+    EvidenceReferenceError,
+    ModelContext,
+    ModelContextAssembler,
+)
 from .orchestrator import (
     DirectorOrchestrator,
     DirectorTurnRequest,
     SingleStageExecutor,
     StageExecutionContext,
     StageExecutionResult,
+    StageHandler,
     StageExecutor,
+    DirectorStageExecutor,
     TurnCandidate,
     TurnOrchestrationContext,
 )
@@ -22,14 +38,28 @@ from .repository import (
 
 __all__ = [
     "AuthorizationScope",
+    "CheckpointRebuildRequiredError",
     "CommitOutcomeIndeterminateError",
     "CommitRolledBackError",
+    "ContextAssemblyError",
+    "ContextAssembler",
+    "ContextBudget",
+    "ContextBudgetExceededError",
+    "ContextMessage",
+    "ContextTurn",
+    "ContextSizeEstimator",
+    "DeterministicContextSizeCounter",
     "DirectorRepository",
     "DirectorOrchestrator",
+    "DirectorStageExecutor",
     "DirectorTurnRequest",
+    "EvidenceReferenceError",
+    "ModelContext",
+    "ModelContextAssembler",
     "SingleStageExecutor",
     "StageExecutionContext",
     "StageExecutionResult",
+    "StageHandler",
     "StageExecutor",
     "IdempotencyConflictError",
     "SessionLockManager",

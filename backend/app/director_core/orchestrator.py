@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from .canonical import SQLITE_INT_MAX, is_blank_text
+from .context import ModelContext, ModelContextAssembler
 from .execution import (
     CommitSuccessfulTurnInput,
     DirectorExecutionValidationError,
@@ -117,10 +118,13 @@ class StageExecutionContext:
     # accepted in StageExecutionResult.
     session_id: str
     owner_message_id: str
+    candidate_steps: tuple[dict[str, Any], ...] = ()
+    include_source_ready_content: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "working_state", deepcopy(self.working_state))
         object.__setattr__(self, "parameters", deepcopy(self.parameters))
+        object.__setattr__(self, "candidate_steps", deepcopy(self.candidate_steps))
 
 
 @dataclass(frozen=True)
@@ -150,6 +154,51 @@ class StageExecutionResult:
         """Readable alias for callers that use the workflow vocabulary."""
 
         return deepcopy(self.post_state)
+
+
+class StageHandler(Protocol):
+    """Provider-neutral business handler for one assembled Stage context."""
+
+    def __call__(self, context: ModelContext) -> StageExecutionResult:
+        ...
+
+
+@dataclass(frozen=True)
+class DirectorStageExecutor:
+    """Compose Context Assembly and one Stage Handler.
+
+    The handler receives no repository, transaction, prompt, provider client,
+    or whole-Turn submission object.  The Orchestrator remains the only owner
+    of transition validation and the atomic successful-Turn commit.
+    """
+
+    assembler: ModelContextAssembler
+    handler: StageHandler
+    include_source_ready_content: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.assembler, ModelContextAssembler):
+            raise DirectorExecutionValidationError(
+                "assembler must be a ModelContextAssembler"
+            )
+        if self.handler is None or not callable(self.handler):
+            raise DirectorExecutionValidationError("handler must be provided")
+
+    def __call__(self, context: StageExecutionContext) -> StageExecutionResult:
+        if not isinstance(context, StageExecutionContext):
+            raise DirectorExecutionValidationError(
+                "DirectorStageExecutor requires StageExecutionContext"
+            )
+        assembled = self.assembler.assemble(
+            context,
+            include_source_ready_content=self.include_source_ready_content,
+        )
+        result = self.handler(assembled)
+        if not isinstance(result, StageExecutionResult):
+            raise DirectorExecutionValidationError(
+                "Stage Handler must return StageExecutionResult"
+            )
+        return result
 
 
 class SingleStageExecutor(Protocol):
@@ -278,6 +327,7 @@ class DirectorOrchestrator:
                 candidate_revision=step_no - 1,
                 session_id=session.id,
                 owner_message_id=owner_message_id,
+                candidate_steps=tuple(deepcopy(trace_steps)),
             )
             result = executor(step_context)
             if not isinstance(result, StageExecutionResult):
@@ -447,6 +497,8 @@ __all__ = [
     "TurnCandidate",
     "TurnOrchestrationContext",
     "SingleStageExecutor",
+    "StageHandler",
+    "DirectorStageExecutor",
     "StageExecutor",
     "StageExecutionContext",
     "StageExecutionResult",

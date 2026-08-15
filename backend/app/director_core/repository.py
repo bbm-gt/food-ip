@@ -1544,6 +1544,67 @@ class DirectorRepository:
             for index in range(0, len(messages), 2)
         ]
 
+    def get_complete_message_turns_after_seq(
+        self, scope: AuthorizationScope, session_id: str, *, after_seq: int
+    ) -> list[dict[str, Any]]:
+        """Load only complete committed Turns after a checkpoint boundary."""
+
+        self.get_session(scope, session_id)
+        if isinstance(after_seq, bool) or not isinstance(after_seq, int) or after_seq < 0:
+            raise ValueError("after_seq must be a non-negative integer")
+        if after_seq % 2:
+            raise DirectorIntegrityError("Context history boundary falls inside a Turn")
+        rows = self.connection.execute(
+            """
+            SELECT m.* FROM director_messages m
+            JOIN director_sessions s ON s.id = m.session_id
+            WHERE m.session_id = ? AND m.message_seq > ?
+              AND s.workspace_id = ? AND s.project_id = ?
+            ORDER BY m.message_seq
+            """,
+            (session_id, after_seq, scope.workspace_id, scope.project_id),
+        ).fetchall()
+        messages = [dict(row) for row in rows]
+        if len(messages) % 2:
+            raise DirectorIntegrityError("Context history contains a partial Turn")
+        expected_seq = after_seq + 1
+        result: list[dict[str, Any]] = []
+        for index in range(0, len(messages), 2):
+            owner, director = messages[index : index + 2]
+            if (
+                owner["message_seq"] != expected_seq
+                or director["message_seq"] != expected_seq + 1
+                or owner["visible_role"] != "OWNER"
+                or director["visible_role"] != "DIRECTOR"
+                or owner["turn_id"] != director["turn_id"]
+            ):
+                raise DirectorIntegrityError("Context history contains an incomplete Turn")
+            result.append({"owner": owner, "director": director})
+            expected_seq += 2
+        return result
+
+    def get_owner_message_for_context(
+        self, scope: AuthorizationScope, session_id: str, message_id: str
+    ) -> dict[str, Any]:
+        """Resolve one committed OWNER Message for Evidence context assembly."""
+
+        self.get_session(scope, session_id)
+        row = self.connection.execute(
+            """
+            SELECT m.* FROM director_messages m
+            JOIN director_sessions s ON s.id = m.session_id
+            WHERE m.id = ? AND m.session_id = ?
+              AND s.workspace_id = ? AND s.project_id = ?
+            """,
+            (message_id, session_id, scope.workspace_id, scope.project_id),
+        ).fetchone()
+        if row is None:
+            raise DirectorNotFoundError("Evidence Message is not visible in this scope")
+        if row["visible_role"] != "OWNER":
+            raise DirectorIntegrityError("Evidence Reference must target an OWNER Message")
+        self._validate_evidence_turn_pair(row)
+        return dict(row)
+
     def get_latest_valid_checkpoint(
         self, scope: AuthorizationScope, session_id: str
     ) -> dict[str, Any] | None:
