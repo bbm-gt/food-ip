@@ -21,9 +21,7 @@ Stage = Literal["EXPLORE", "DEEPEN", "CREATE", "REVIEW", "READY"]
 RunControl = Literal["CONTINUE", "WAIT_FOR_OWNER", "READY"]
 
 # One shared source of truth for the combinations exposed to a Stage handler
-# and accepted by the persisted ExecutionStep validator.  CREATE may wait for
-# owner input in the current execution contract; REVIEW only routes to a
-# repair stage or completes READY.
+# and accepted by the persisted ExecutionStep validator.
 STAGE_EXECUTION_COMBINATIONS: dict[Stage, tuple[tuple[RunControl, Stage], ...]] = {
     "EXPLORE": (
         ("WAIT_FOR_OWNER", "EXPLORE"),
@@ -35,7 +33,6 @@ STAGE_EXECUTION_COMBINATIONS: dict[Stage, tuple[tuple[RunControl, Stage], ...]] 
         ("CONTINUE", "CREATE"),
     ),
     "CREATE": (
-        ("WAIT_FOR_OWNER", "CREATE"),
         ("CONTINUE", "REVIEW"),
     ),
     "REVIEW": (
@@ -440,7 +437,7 @@ def validate_turn_execution_trace(
         raise ValueError("Turn top-level fields do not close over the final trace step")
 
     reason_routes = {
-        "OWNER_INPUT_REQUIRED": {("EXPLORE", "EXPLORE"), ("DEEPEN", "DEEPEN"), ("CREATE", "CREATE")},
+        "OWNER_INPUT_REQUIRED": {("EXPLORE", "EXPLORE"), ("DEEPEN", "DEEPEN")},
         "DIRECTION_CONFIRMED": {("EXPLORE", "DEEPEN")},
         "DIRECTION_INVALID": {("REVIEW", "EXPLORE")},
         "MATERIAL_GAP": {("DEEPEN", "DEEPEN"), ("REVIEW", "DEEPEN")},

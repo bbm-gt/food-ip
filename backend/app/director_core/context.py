@@ -28,7 +28,7 @@ class ContextAssemblyError(RuntimeError):
 
 
 class ContextBudgetExceededError(ContextAssemblyError):
-    """Protected context, or the selected context, exceeds the budget."""
+    """Irreplaceable context exceeds the budget."""
 
 
 class CheckpointRebuildRequiredError(ContextAssemblyError):
@@ -296,30 +296,37 @@ class ModelContextAssembler:
             "checkpoint": deepcopy(checkpoint["checkpoint_json"]),
         }
 
-        protected_sections = {
+        irreducible_sections = {
             "rules": rules,
             "stage_contract": stage_contract,
             "working_state": working_state,
             "current_owner_message": current_owner,
             "source_ready_content": source,
-            "checkpoint": checkpoint_payload,
             "evidence_messages": evidence_messages,
         }
-        protected_units = sum(self.budget.estimate(value) for value in protected_sections.values())
-        if protected_units > self.budget.max_units:
+        irreducible_units = sum(
+            self.budget.estimate(value) for value in irreducible_sections.values()
+        )
+        if irreducible_units > self.budget.max_units:
             raise ContextBudgetExceededError(
-                f"protected Context Assembly content exceeds budget: {protected_units} > {self.budget.max_units}"
+                "irreducible Context Assembly content exceeds budget: "
+                f"{irreducible_units} > {self.budget.max_units}"
             )
 
+        checkpoint_units = (
+            0 if checkpoint_payload is None else self.budget.estimate(checkpoint_payload)
+        )
         history_values = list(history)
-        available = self.budget.max_units - protected_units
+        available = self.budget.max_units - irreducible_units
         all_history_units = sum(self.budget.estimate(turn) for turn in history_values)
-        if all_history_units > available:
+        optional_units = checkpoint_units + all_history_units
+        if optional_units > available:
             raise CheckpointRebuildRequiredError(
-                "Checkpoint coverage is too old to fit all complete history after its boundary"
+                "Checkpoint and all complete history after its boundary cannot fit "
+                "the remaining Context Assembly budget"
             )
 
-        total_units = protected_units + all_history_units
+        total_units = irreducible_units + optional_units
         return ModelContext(
             rules=rules,
             stage_contract=stage_contract,

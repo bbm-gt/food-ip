@@ -17,6 +17,7 @@ from backend.app.director_core.context import (
     EvidenceReferenceError,
     ModelContextAssembler,
 )
+from backend.app.director_core.execution import DirectorExecutionValidationError
 from backend.app.director_core.orchestrator import (
     DisabledSourceReadyContentPolicy,
     DirectorOrchestrator,
@@ -296,7 +297,7 @@ def test_old_checkpoint_history_over_budget_requires_rebuild_before_handler(repo
         "director_context_checkpoints", "director_ready_content", "director_sessions",
     )
     before = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] for table in tables]
-    with pytest.raises(CheckpointRebuildRequiredError, match="too old"):
+    with pytest.raises(CheckpointRebuildRequiredError, match="Checkpoint and"):
         DirectorOrchestrator(
             repo, scope, DirectorStageExecutor(limited, handler), max_internal_steps=1
         ).run(make_request(session_id, "too-large", expected=3))
@@ -316,7 +317,7 @@ def test_missing_checkpoint_history_over_budget_has_explicit_rebuild_error(repos
     DirectorOrchestrator(
         repo, scope, lambda context: wait_result(context), max_internal_steps=1
     ).run(make_request(session_id, "history"))
-    limited = ModelContextAssembler(repo, scope, ContextBudget(16, UnitCounter()))
+    limited = ModelContextAssembler(repo, scope, ContextBudget(15, UnitCounter()))
     with pytest.raises(CheckpointRebuildRequiredError, match="Checkpoint"):
         limited.assemble(
             session_id=session_id,
@@ -327,21 +328,135 @@ def test_missing_checkpoint_history_over_budget_has_explicit_rebuild_error(repos
         )
 
 
+def test_missing_checkpoint_history_that_fits_is_loaded_completely(repository) -> None:
+    repo, scope, session_id = repository
+    orchestrator = DirectorOrchestrator(
+        repo, scope, lambda context: wait_result(context), max_internal_steps=1
+    )
+    orchestrator.run(make_request(session_id, "one"))
+    orchestrator.run(make_request(session_id, "two", expected=1))
+    model_context = ModelContextAssembler(
+        repo, scope, ContextBudget(26, UnitCounter())
+    ).assemble(
+        session_id=session_id,
+        stage="EXPLORE",
+        working_state=repo.get_working_state(scope, session_id).state_json,
+        owner_message_id=uid(),
+        owner_text="当前老板消息。",
+    )
+    assert model_context.checkpoint is None
+    assert [turn.owner.message_seq for turn in model_context.history_turns] == [1, 3]
+
+
 def test_protected_context_over_budget_fails_before_orchestrator_commit(repository) -> None:
     repo, scope, session_id = repository
-    limited = ModelContextAssembler(repo, scope, ContextBudget(6, UnitCounter()))
+    limited = ModelContextAssembler(repo, scope, ContextBudget(5, UnitCounter()))
 
     def handler(context):  # pragma: no cover - assembly must fail first
         raise AssertionError("handler must not run")
 
+    tables = (
+        "director_sessions", "director_messages", "director_working_state",
+        "director_turns", "director_context_checkpoints", "director_ready_content",
+    )
     before = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
-              for table in ("director_messages", "director_turns", "director_working_state")]
-    with pytest.raises(ContextBudgetExceededError, match="protected"):
+              for table in tables]
+    with pytest.raises(ContextBudgetExceededError, match="irreducible"):
         DirectorOrchestrator(
             repo, scope, DirectorStageExecutor(limited, handler), max_internal_steps=1
         ).run(make_request(session_id, "budget"))
     after = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
-             for table in ("director_messages", "director_turns", "director_working_state")]
+             for table in tables]
+    assert after == before
+
+
+def test_oversized_checkpoint_requires_rebuild_not_budget_failure(repository) -> None:
+    repo, scope, session_id = repository
+    DirectorOrchestrator(
+        repo, scope, lambda context: wait_result(context), max_internal_steps=1
+    ).run(make_request(session_id, "checkpoint-source"))
+    rows = repo.get_complete_message_turns(scope, session_id)
+    payload = {
+        "conversation_summary": "一个有效但过大的 Checkpoint。",
+        "confirmed_owner_positions": [{
+            "statement": "一条真实内容。",
+            "message_refs": [rows[0]["owner"]["id"]],
+        }],
+        "open_threads": [],
+        "abandoned_directions": [],
+    }
+    repo.connection.execute(
+        """INSERT INTO director_context_checkpoints
+           (id, session_id, covered_through_seq, format_version, checkpoint_json,
+            integrity_sha256, status, discarded_at, discard_reason_code, created_at)
+           VALUES (?, ?, ?, 1, ?, ?, 'VALID', NULL, NULL, ?)""",
+        (
+            uid(), session_id, 2, canonical_text(payload),
+            checkpoint_sha256(session_id, 2, payload, format_version=1),
+            "2026-01-01T00:00:00.000Z",
+        ),
+    )
+    repo.connection.commit()
+
+    @dataclass
+    class OversizedCheckpointCounter:
+        def estimate(self, value):
+            if isinstance(value, dict) and "covered_through_seq" in value:
+                return 100
+            return 1
+
+    limited = ModelContextAssembler(
+        repo, scope, ContextBudget(20, OversizedCheckpointCounter())
+    )
+    called = 0
+
+    def handler(context):
+        nonlocal called
+        called += 1
+        return wait_result(context)
+
+    tables = (
+        "director_sessions", "director_messages", "director_working_state",
+        "director_turns", "director_context_checkpoints", "director_ready_content",
+    )
+    before = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+              for table in tables]
+    with pytest.raises(CheckpointRebuildRequiredError, match="Checkpoint"):
+        DirectorOrchestrator(
+            repo, scope, DirectorStageExecutor(limited, handler), max_internal_steps=1
+        ).run(make_request(session_id, "oversized-checkpoint", expected=1))
+    after = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+             for table in tables]
+    assert called == 0
+    assert after == before
+
+
+def test_create_stage_cannot_wait_for_owner_and_failure_is_atomic(repository) -> None:
+    repo, scope, session_id = repository
+
+    def handler(context):
+        state = context.to_dict()["working_state"]
+        if context.stage_contract["stage"] == "EXPLORE":
+            return StageExecutionResult(None, state, "CONTINUE", "DEEPEN", "DIRECTION_CONFIRMED", None, None)
+        if context.stage_contract["stage"] == "DEEPEN":
+            return StageExecutionResult(None, state, "CONTINUE", "CREATE", "MATERIAL_SUFFICIENT", None, None)
+        return StageExecutionResult(
+            "不能在 CREATE 阶段直接向老板补问。", state, "WAIT_FOR_OWNER", "CREATE",
+            "OWNER_INPUT_REQUIRED", None, None,
+        )
+
+    tables = (
+        "director_sessions", "director_messages", "director_working_state",
+        "director_turns", "director_context_checkpoints", "director_ready_content",
+    )
+    before = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+              for table in tables]
+    with pytest.raises(DirectorExecutionValidationError):
+        DirectorOrchestrator(
+            repo, scope, DirectorStageExecutor(assembler(repo, scope), handler), max_internal_steps=3
+        ).run(make_request(session_id, "invalid-create-wait"))
+    after = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+             for table in tables]
     assert after == before
 
 
@@ -382,7 +497,7 @@ def test_invalid_cross_session_and_director_evidence_fail_explicitly(repository)
                 ("CONTINUE", "CREATE"),
             ],
         ),
-        ("CREATE", [("WAIT_FOR_OWNER", "CREATE"), ("CONTINUE", "REVIEW")]),
+        ("CREATE", [("CONTINUE", "REVIEW")]),
         (
             "REVIEW",
             [
