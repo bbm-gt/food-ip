@@ -16,6 +16,7 @@ completed:
 next:
   status: "design_required"
   objective: "Define the smallest post-Phase-1E Director Core phase needed to connect real model execution without weakening existing contracts."
+  instruction: "下一阶段必须先完成最小设计并取得用户确认。在获得用户确认前，不得直接开始下一阶段编码。"
   implementation_allowed: false
 
 deferred:

@@ -135,7 +135,16 @@ Knowledge-source tiers, admission rules, evidence standards, freshness governanc
 
 ## Authoritative Documentation
 
-For intended product and architecture direction, use sources in this order: confirmed user decisions; this file's durable rules; confirmed design and architecture documentation; and `docs/project-status.yaml` for dynamic implementation status and next-task intent. `docs/next-tasks.md` is generated from `docs/project-status.yaml` and is not hand-maintained. Code and tests establish implemented behavior. When these sources disagree, inspect and report the discrepancy rather than silently treating one source as authoritative for both intent and implementation.
+For intended product and architecture direction, use sources in this order:
+
+1. Latest explicitly confirmed user decisions.
+2. Director Core formal design documents. Their internal authority order remains: Core Architecture, Minimal SQLite Schema, Architecture Amendment 001, then Execution Contract.
+3. This file's durable engineering rules.
+4. `docs/project-status.yaml`, only for dynamic implementation status and next-task intent.
+5. `docs/next-tasks.md`, only as the generated result of `docs/project-status.yaml`.
+6. Skills, prompts, and temporary handoff content.
+
+Code and tests prove current implemented behavior; they do not automatically override confirmed target architecture. When target design and implementation differ, report the conflict rather than silently choosing either source.
 
 ---
 

@@ -58,6 +58,7 @@ def load_status() -> dict[str, Any]:
     next_step = require_mapping(status.get("next"), "next")
     require_string(next_step.get("status"), "next.status")
     require_string(next_step.get("objective"), "next.objective")
+    require_string(next_step.get("instruction"), "next.instruction")
     if not isinstance(next_step.get("implementation_allowed"), bool):
         raise ValueError("next.implementation_allowed must be a boolean")
 
@@ -77,11 +78,6 @@ def bullet_list(items: list[str]) -> str:
 def render(status: dict[str, Any]) -> str:
     current = status["current"]
     next_step = status["next"]
-    coding_instruction = (
-        "在获得用户确认前，不得直接开始下一阶段编码。"
-        if not next_step["implementation_allowed"]
-        else "可在既定范围内开始下一阶段实施。"
-    )
 
     return f"""<!-- 此文件由 docs/project-status.yaml 自动生成，请勿手工编辑。 -->
 
@@ -103,7 +99,7 @@ def render(status: dict[str, Any]) -> str:
 
 {next_step["objective"]}
 
-下一阶段必须先完成最小设计并取得用户确认。{coding_instruction}
+{next_step["instruction"]}
 
 ## Deferred
 
