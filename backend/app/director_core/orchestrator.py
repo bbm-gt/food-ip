@@ -32,7 +32,7 @@ from .repository import (
     SessionRecord,
     WorkingStateRecord,
 )
-from .stage_handler import StageModelOutputV1, validate_stage_model_output
+from .stage_handler import StageModelOutputV1, StageModelProposalV1, validate_stage_model_output
 
 
 def _utc_now() -> str:
@@ -158,7 +158,7 @@ class StageExecutionResult:
 class StageHandler(Protocol):
     """Provider-neutral business handler for one assembled Stage context."""
 
-    def __call__(self, context: ModelContext) -> dict[str, Any] | StageModelOutputV1:
+    def __call__(self, context: ModelContext) -> dict[str, Any] | StageModelProposalV1 | StageModelOutputV1:
         ...
 
 

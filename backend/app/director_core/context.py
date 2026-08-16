@@ -173,6 +173,11 @@ _RULES = {
     "workflow": ["EXPLORE", "DEEPEN", "CREATE", "REVIEW", "READY"],
     "owner_fact_boundary": "Only confirmed OWNER Message evidence establishes Owner Facts.",
     "checkpoint_boundary": "Checkpoint is a disposable history cache, never current state or evidence.",
+    "identity_boundary": [
+        "Existing objects must copy IDs from working_state.",
+        "New items use new:item:<local_key>; new drafts use new:draft:<local_key>; new reviews use new:review:<local_key>.",
+        "The model must never invent UUIDs.",
+    ],
     "review_routing": {
         "WRITING_PROBLEM": "CREATE",
         "MATERIAL_PROBLEM": "DEEPEN",

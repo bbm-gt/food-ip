@@ -37,6 +37,10 @@ def uid() -> str:
     return str(uuid4())
 
 
+def temp(namespace: str, key: str) -> str:
+    return f"new:{namespace}:{key}"
+
+
 def empty_state() -> dict:
     return {
         "format_version": 1,
@@ -155,7 +159,7 @@ def test_each_internal_step_reassembles_latest_candidate_and_handler_cannot_comm
         seen.append((context.stage_contract["stage"], state))
         if context.stage_contract["stage"] == "EXPLORE":
             state["direction"] = {
-                "item_id": uid(),
+                "item_id": temp("item", "direction_1"),
                 "statement": "从老板真实经历展开。",
                 "owner_confirmed": True,
                 "evidence_refs": [{
@@ -177,7 +181,7 @@ def test_each_internal_step_reassembles_latest_candidate_and_handler_cannot_comm
         state["material_state"] = {
             "status": "INSUFFICIENT",
             "required_confirmations": [{
-                "item_id": uid(), "statement": "补充关键细节", "reason": "素材不足",
+                "item_id": temp("item", "confirmation_1"), "statement": "补充关键细节", "reason": "素材不足",
                 "evidence_refs": [], "inherited_from": None,
             }],
         }
@@ -225,7 +229,7 @@ def test_historical_owner_evidence_is_loaded_even_when_not_current(repository) -
         state = context.to_dict()["working_state"]
         if context.stage_contract["stage"] == "EXPLORE":
             state["owner_facts"] = [{
-                "item_id": uid(),
+                "item_id": temp("item", "fact_1"),
                 "statement": "老板说过一条真实内容。",
                 "evidence_refs": [{
                     "evidence_type": "owner_message",
@@ -236,7 +240,7 @@ def test_historical_owner_evidence_is_loaded_even_when_not_current(repository) -
                 "inherited_from": None,
             }]
             state["direction"] = {
-                "item_id": uid(), "statement": "沿老板确认的真实内容展开", "owner_confirmed": True,
+                "item_id": temp("item", "direction_1"), "statement": "沿老板确认的真实内容展开", "owner_confirmed": True,
                 "evidence_refs": [{"evidence_type": "owner_message", "target_id": old_owner_id, "target_session_id": session_id}],
                 "inherited_from": None,
             }
@@ -254,7 +258,7 @@ def test_historical_owner_evidence_is_loaded_even_when_not_current(repository) -
         state["material_state"] = {
             "status": "INSUFFICIENT",
             "required_confirmations": [{
-                "item_id": uid(), "statement": "补充关键细节", "reason": "素材不足",
+                "item_id": temp("item", "confirmation_1"), "statement": "补充关键细节", "reason": "素材不足",
                 "evidence_refs": [], "inherited_from": None,
             }],
         }
@@ -507,7 +511,7 @@ def test_create_stage_cannot_wait_for_owner_and_failure_is_atomic(repository) ->
         state = context.to_dict()["working_state"]
         if context.stage_contract["stage"] == "EXPLORE":
             state["direction"] = {
-                "item_id": uid(), "statement": "老板确认的方向", "owner_confirmed": True,
+                "item_id": temp("item", "direction_1"), "statement": "老板确认的方向", "owner_confirmed": True,
                 "evidence_refs": [{"evidence_type": "owner_message", "target_id": context.current_owner_message.id, "target_session_id": session_id}],
                 "inherited_from": None,
             }
@@ -540,7 +544,7 @@ def test_invalid_cross_session_and_director_evidence_fail_explicitly(repository)
     other = repo.create_session(scope)
     state = empty_state()
     state["owner_facts"] = [{
-        "item_id": uid(),
+        "item_id": temp("item", "fact_1"),
         "statement": "不应通过。",
         "evidence_refs": [{
             "evidence_type": "owner_message",
@@ -713,7 +717,7 @@ def test_checkpoint_covered_owner_is_authorized_only_when_point_loaded_as_eviden
 
     post_state = context.to_dict()["working_state"]
     post_state["direction"] = {
-        "item_id": uid(),
+        "item_id": temp("item", "direction_1"),
         "statement": "沿早期真实内容展开。",
         "owner_confirmed": True,
         "evidence_refs": [evidence_ref],
@@ -748,7 +752,7 @@ def test_unloaded_historical_owner_reference_is_rejected(repository) -> None:
     )
     post_state = context.to_dict()["working_state"]
     post_state["direction"] = {
-        "item_id": uid(),
+        "item_id": temp("item", "direction_1"),
         "statement": "试图引用未加载历史。",
         "owner_confirmed": True,
         "evidence_refs": [{
@@ -818,7 +822,7 @@ def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) 
         stage = context.stage_contract["stage"]
         if stage == "EXPLORE":
             state["direction"] = {
-                "item_id": uid(),
+                "item_id": temp("item", "direction_1"),
                 "statement": "讲清这道菜的真实来历。",
                 "owner_confirmed": True,
                 "evidence_refs": [{
@@ -834,7 +838,7 @@ def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) 
             return StageExecutionResult(None, state, "CONTINUE", "CREATE", "MATERIAL_SUFFICIENT", None, None)
         if stage == "CREATE":
             state["draft"] = {
-                "draft_id": uid(),
+                "draft_id": temp("draft", "draft_1"),
                 "content": {
                     "title": "真实来历",
                     "script_text": "这是一段有真实依据的内容。",
@@ -846,7 +850,7 @@ def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) 
             return StageExecutionResult(None, state, "CONTINUE", "REVIEW", "DRAFT_CREATED", None, None)
         draft = state["draft"]
         state["review"] = {
-            "review_id": uid(),
+            "review_id": temp("review", "review_1"),
             "outcome": "PASSED",
             "root_cause": None,
             "against_draft_id": draft["draft_id"],
@@ -897,7 +901,7 @@ def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) 
         state["material_state"] = {
             "status": "INSUFFICIENT",
             "required_confirmations": [{
-                "item_id": uid(), "statement": "确认修改重点", "reason": "素材不足",
+                "item_id": temp("item", "confirmation_1"), "statement": "确认修改重点", "reason": "素材不足",
                 "evidence_refs": [], "inherited_from": None,
             }],
         }

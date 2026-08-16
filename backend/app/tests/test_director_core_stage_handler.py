@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -15,16 +15,30 @@ from backend.app.director_core.orchestrator import (
 )
 from backend.app.director_core.repository import AuthorizationScope, DirectorRepository
 from backend.app.director_core.stage_handler import (
+    ContentIdentityError,
+    DraftIdentityError,
+    ExistingObjectMutationError,
+    ForgedUUIDError,
+    ReviewIdentityError,
     StageContractViolationError,
     StageModelOutputSchemaError,
     StageModelOutputTypeError,
     StageModelOutputV1,
+    TemporaryReferenceForbiddenError,
+    TemporaryReferenceNamespaceError,
+    UndefinedTemporaryReferenceError,
+    DuplicateTemporaryDefinitionError,
+    resolve_stage_model_proposal,
     validate_stage_model_output,
 )
 
 
 def uid() -> str:
     return str(uuid4())
+
+
+def temp(namespace: str, key: str) -> str:
+    return f"new:{namespace}:{key}"
 
 
 def empty_state() -> dict:
@@ -64,7 +78,7 @@ def context(stage: str, state: dict | None = None):
 
 def direction(ctx) -> dict:
     return {
-        "item_id": uid(),
+        "item_id": temp("item", "direction_1"),
         "statement": "讲清这道菜的真实来历",
         "owner_confirmed": True,
         "evidence_refs": [{
@@ -78,14 +92,14 @@ def direction(ctx) -> dict:
 
 def confirmation() -> dict:
     return {
-        "item_id": uid(), "statement": "补充关键细节", "reason": "核心表达需要",
+        "item_id": temp("item", "confirmation_1"), "statement": "补充关键细节", "reason": "核心表达需要",
         "evidence_refs": [], "inherited_from": None,
     }
 
 
 def draft() -> dict:
     return {
-        "draft_id": uid(),
+        "draft_id": temp("draft", "draft_1"),
         "content": {"title": None, "script_text": "这是完整、真实、可以拍摄的内容。", "shooting_notes": []},
         "content_status": "FINAL_CANDIDATE",
         "based_on_ready_content_id": None,
@@ -116,7 +130,7 @@ def review_state(ctx, root: str | None, *, material: str = "SUFFICIENT", keep_di
     }
     state["draft"] = draft()
     state["review"] = {
-        "review_id": uid(),
+        "review_id": temp("review", "review_1"),
         "outcome": "PASSED" if root is None else "BLOCKED",
         "root_cause": root,
         "against_draft_id": state["draft"]["draft_id"],
@@ -273,7 +287,7 @@ def test_each_non_explore_outcome_rejects_an_illegal_target(case_index: int) -> 
 def test_ai_judgment_alone_cannot_confirm_direction() -> None:
     ctx = context("EXPLORE")
     state = empty_state()
-    state["ai_judgments"] = [{"item_id": uid(), "judgment_kind": "DIRECTION_CANDIDATE", "statement": "候选方向"}]
+    state["ai_judgments"] = [{"item_id": temp("item", "judgment_1"), "judgment_kind": "DIRECTION_CANDIDATE", "statement": "候选方向"}]
     payload = output(run_control="CONTINUE", target_stage="DEEPEN", transition_reason_code="DIRECTION_CONFIRMED", director_message=None, gate=None, post_state=state)
     with pytest.raises(StageContractViolationError):
         validate_stage_model_output(payload, context=ctx)
@@ -370,7 +384,7 @@ def test_review_failures_leave_all_six_tables_unchanged(
             "target_session_id" if failure_kind == "wrong_session" else "target_id"
         ] = uid()
         state["direction"] = {
-            "item_id": uid(),
+            "item_id": temp("item", "bad_direction"),
             "statement": "未经授权的方向。",
             "owner_confirmed": True,
             "evidence_refs": [reference],
@@ -417,14 +431,23 @@ def test_real_model_context_unchanged_deepen_material_gap_is_atomic(tmp_path) ->
         stage = model_context.stage_contract["stage"]
         if stage == "EXPLORE":
             state["direction"] = {
-                "item_id": uid(), "statement": "老板确认方向", "owner_confirmed": True,
+                "item_id": temp("item", "direction_1"), "statement": "老板确认方向", "owner_confirmed": True,
                 "evidence_refs": [{"evidence_type": "owner_message", "target_id": model_context.current_owner_message.id, "target_session_id": session.id}],
                 "inherited_from": None,
             }
             return output(run_control="CONTINUE", target_stage="DEEPEN", transition_reason_code="DIRECTION_CONFIRMED", director_message=None, gate=None, post_state=state)
         state["material_state"] = {
             "status": "INSUFFICIENT",
-            "required_confirmations": [deepcopy(gap_confirmation)],
+            "required_confirmations": [
+                {
+                    **deepcopy(gap_confirmation),
+                    "item_id": (
+                        state["material_state"]["required_confirmations"][0]["item_id"]
+                        if state["material_state"]["required_confirmations"]
+                        else gap_confirmation["item_id"]
+                    ),
+                }
+            ],
         }
         return output(run_control="CONTINUE", target_stage="DEEPEN", transition_reason_code="MATERIAL_GAP", director_message=None, gate={"outcome": "BLOCKED", "gate_code": "MATERIAL_INSUFFICIENT", "explanation": "内部投影素材缺口。"}, post_state=state)
 
@@ -436,3 +459,191 @@ def test_real_model_context_unchanged_deepen_material_gap_is_atomic(tmp_path) ->
         DirectorOrchestrator(repo, scope, executor, 5).run(request)
     after = {table: tuple(map(tuple, connection.execute(f"SELECT * FROM {table}").fetchall())) for table in tables}
     assert after == before
+
+
+def _owner_reference(ctx) -> dict[str, str]:
+    return {
+        "evidence_type": "owner_message",
+        "target_id": ctx.current_owner_message.id,
+        "target_session_id": ctx.session_id,
+    }
+
+
+def _confirmed_direction(ctx, item_id: str) -> dict:
+    return {
+        "item_id": item_id,
+        "statement": "讲清一道菜的真实来历",
+        "owner_confirmed": True,
+        "evidence_refs": [_owner_reference(ctx)],
+        "inherited_from": None,
+    }
+
+
+def _owner_fact(ctx, item_id: str, statement: str = "老板确认的一条真实事实。") -> dict:
+    return {
+        "item_id": item_id,
+        "statement": statement,
+        "evidence_refs": [_owner_reference(ctx)],
+        "supersedes_item_ids": [],
+        "inherited_from": None,
+    }
+
+
+def _draft(item_id: str | None, text: str = "这是完整、真实、可以拍摄的内容。") -> dict:
+    return {
+        "draft_id": item_id,
+        "content": {"title": None, "script_text": text, "shooting_notes": []},
+        "content_status": "FINAL_CANDIDATE",
+        "based_on_ready_content_id": None,
+    }
+
+
+def test_phase1e_new_item_reference_is_application_allocated_uuid4() -> None:
+    ctx = context("EXPLORE")
+    state = empty_state()
+    state["direction"] = _confirmed_direction(ctx, "new:item:direction_1")
+    resolved = resolve_stage_model_proposal(output(post_state=state), context=ctx)
+    value = resolved.post_state.direction.item_id
+    assert UUID(value).version == 4
+
+
+def test_phase1e_same_item_reference_binds_definition_and_rejection_reference() -> None:
+    old_id = uid()
+    ctx = context("EXPLORE", {**empty_state(), "owner_facts": [_owner_fact(context("EXPLORE"), old_id)]})
+    # Rebuild the fact with the actual Context evidence boundary.
+    old_fact = _owner_fact(ctx, old_id)
+    ctx.working_state["owner_facts"] = [old_fact]
+    state = deepcopy(ctx.working_state)
+    state["owner_facts"] = [_owner_fact(ctx, "new:item:replacement", "老板确认的新事实。")]
+    state["rejected_items"] = [{
+        "item_id": old_id,
+        "item_kind": "OWNER_FACT",
+        "statement": old_fact["statement"],
+        "rejection_code": "OWNER_CORRECTED",
+        "evidence_refs": deepcopy(old_fact["evidence_refs"]),
+        "rejected_by_evidence_refs": [_owner_reference(ctx)],
+        "superseded_by_item_id": "new:item:replacement",
+        "inherited_from": None,
+    }]
+    resolved = resolve_stage_model_proposal(output(post_state=state), context=ctx)
+    assert resolved.post_state.owner_facts[0].item_id == resolved.post_state.rejected_items[0].superseded_by_item_id
+
+
+def test_phase1e_new_draft_and_review_cross_bind_to_resolved_draft_uuid() -> None:
+    ctx = context("REVIEW")
+    state = empty_state()
+    state["direction"] = _confirmed_direction(ctx, "new:item:direction_1")
+    state["material_state"] = {"status": "SUFFICIENT", "required_confirmations": []}
+    state["draft"] = _draft("new:draft:draft_1")
+    state["review"] = {
+        "review_id": "new:review:review_1",
+        "outcome": "PASSED",
+        "root_cause": None,
+        "against_draft_id": "new:draft:draft_1",
+        "against_content": deepcopy(state["draft"]["content"]),
+    }
+    resolved = resolve_stage_model_proposal(output(post_state=state), context=ctx)
+    assert resolved.post_state.review.against_draft_id == resolved.post_state.draft.draft_id
+    assert UUID(resolved.post_state.draft.draft_id).version == 4
+    assert UUID(resolved.post_state.review.review_id).version == 4
+
+
+def test_phase1e_unknown_real_uuid_is_rejected_as_model_forgery() -> None:
+    ctx = context("EXPLORE")
+    state = empty_state()
+    state["direction"] = _confirmed_direction(ctx, uid())
+    with pytest.raises(ForgedUUIDError):
+        validate_stage_model_output(
+            output(
+                run_control="CONTINUE", target_stage="DEEPEN",
+                transition_reason_code="DIRECTION_CONFIRMED", director_message=None,
+                gate=None, post_state=state,
+            ),
+            context=ctx,
+        )
+
+
+def test_phase1e_undefined_and_mixed_namespace_references_are_rejected() -> None:
+    ctx = context("EXPLORE")
+    undefined = empty_state()
+    undefined["owner_facts"] = [{**_owner_fact(ctx, "new:item:fact_1"), "supersedes_item_ids": ["new:item:missing"]}]
+    with pytest.raises(UndefinedTemporaryReferenceError):
+        resolve_stage_model_proposal(output(post_state=undefined), context=ctx)
+
+    mixed = empty_state()
+    mixed["direction"] = _confirmed_direction(ctx, "new:draft:wrong_namespace")
+    with pytest.raises(TemporaryReferenceNamespaceError):
+        resolve_stage_model_proposal(output(post_state=mixed), context=ctx)
+
+
+def test_phase1e_duplicate_definition_and_forbidden_evidence_reference_are_rejected() -> None:
+    ctx = context("EXPLORE")
+    duplicate = empty_state()
+    duplicate["ai_judgments"] = [
+        {"item_id": "new:item:same", "judgment_kind": "STRUCTURE", "statement": "结构一"},
+        {"item_id": "new:item:same", "judgment_kind": "EXPRESSION", "statement": "表达二"},
+    ]
+    with pytest.raises(DuplicateTemporaryDefinitionError):
+        resolve_stage_model_proposal(output(post_state=duplicate), context=ctx)
+
+    forbidden = empty_state()
+    forbidden["direction"] = _confirmed_direction(ctx, "new:item:direction_1")
+    forbidden["direction"]["evidence_refs"][0]["target_id"] = "new:item:message_1"
+    with pytest.raises(TemporaryReferenceForbiddenError):
+        resolve_stage_model_proposal(output(post_state=forbidden), context=ctx)
+
+
+def test_phase1e_existing_object_mutation_and_unchanged_new_id_are_rejected() -> None:
+    item_id = uid()
+    ctx = context("EXPLORE")
+    ctx.working_state["owner_facts"] = [_owner_fact(ctx, item_id)]
+    mutated = deepcopy(ctx.working_state)
+    mutated["owner_facts"][0]["statement"] = "偷偷改变的语义。"
+    with pytest.raises(ExistingObjectMutationError):
+        resolve_stage_model_proposal(output(post_state=mutated), context=ctx)
+
+    new_id = deepcopy(ctx.working_state)
+    new_id["owner_facts"][0]["item_id"] = "new:item:fact_2"
+    with pytest.raises(ContentIdentityError):
+        resolve_stage_model_proposal(output(post_state=new_id), context=ctx)
+
+
+def test_phase1e_draft_content_identity_and_review_reuse_are_rejected() -> None:
+    draft_id = uid()
+    ctx = context("REVIEW")
+    state = empty_state()
+    state["direction"] = _confirmed_direction(ctx, uid())
+    state["material_state"] = {"status": "SUFFICIENT", "required_confirmations": []}
+    state["draft"] = _draft(draft_id)
+    review_id = uid()
+    state["review"] = {
+        "review_id": review_id, "outcome": "PASSED", "root_cause": None,
+        "against_draft_id": draft_id, "against_content": deepcopy(state["draft"]["content"]),
+    }
+    ctx.working_state = deepcopy(state)
+
+    changed_draft = deepcopy(state)
+    changed_draft["draft"]["content"]["script_text"] = "改写后的内容。"
+    with pytest.raises(DraftIdentityError):
+        resolve_stage_model_proposal(output(post_state=changed_draft), context=ctx)
+
+    unchanged_new_draft = deepcopy(state)
+    unchanged_new_draft["draft"]["draft_id"] = "new:draft:draft_2"
+    with pytest.raises(DraftIdentityError):
+        resolve_stage_model_proposal(output(post_state=unchanged_new_draft), context=ctx)
+
+    reused_review = deepcopy(state)
+    with pytest.raises(ReviewIdentityError):
+        resolve_stage_model_proposal(output(post_state=reused_review), context=ctx)
+
+
+def test_phase1e_ai_judgment_upgrade_requires_a_new_item_id() -> None:
+    judgment_id = uid()
+    ctx = context("EXPLORE")
+    ctx.working_state["ai_judgments"] = [{
+        "item_id": judgment_id, "judgment_kind": "DIRECTION_CANDIDATE", "statement": "候选方向",
+    }]
+    state = deepcopy(ctx.working_state)
+    state["direction"] = _confirmed_direction(ctx, judgment_id)
+    with pytest.raises(ExistingObjectMutationError):
+        resolve_stage_model_proposal(output(post_state=state), context=ctx)
