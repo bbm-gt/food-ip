@@ -255,12 +255,15 @@ class WorkingState(StrictModel):
 
     @model_validator(mode="after")
     def identities_and_review(self) -> "WorkingState":
-        for name in ("owner_facts", "ai_judgments", "unconfirmed_inferences", "rejected_items", "owner_constraints"):
-            _require_unique([item.item_id for item in getattr(self, name)], name)
-        if self.direction is not None and any(
-            item.item_id == self.direction.item_id for item in self.ai_judgments
-        ):
-            raise ValueError("current direction cannot also exist as an AI Judgment copy")
+        item_ids: list[str] = []
+        for name in ("owner_facts", "owner_constraints", "ai_judgments", "unconfirmed_inferences", "rejected_items"):
+            values = [item.item_id for item in getattr(self, name)]
+            _require_unique(values, name)
+            item_ids.extend(values)
+        if self.direction is not None:
+            item_ids.append(self.direction.item_id)
+        item_ids.extend(item.item_id for item in self.material_state.required_confirmations)
+        _require_unique(item_ids, "Working State item_id")
         if self.review is not None:
             if self.draft is None or self.draft.draft_id is None:
                 raise ValueError("review requires a non-null draft_id")

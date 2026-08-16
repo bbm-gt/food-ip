@@ -90,6 +90,14 @@ class ReviewIdentityError(IdentityResolutionError):
     """A REVIEW reused an existing review identity."""
 
 
+class RejectedItemIdentityError(IdentityResolutionError):
+    """A rejected item does not close over one pre-state effective object."""
+
+
+class DuplicateItemIdentityError(IdentityResolutionError):
+    """One item identity appeared in more than one Working State location."""
+
+
 class StageModelProposalV1(StrictModel):
     """Strict raw model result; ``post_state`` is resolved by the application."""
 
@@ -275,24 +283,129 @@ def _walk_identity_values(value: Any) -> list[tuple[tuple[Any, ...], str, str, b
     return occurrences
 
 
-def _pre_identity_index(state: dict[str, Any]) -> tuple[set[str], dict[str, set[str]]]:
-    all_ids: set[str] = set()
+def _pre_identity_index(state: dict[str, Any]) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    existing_ids_by_namespace: dict[str, set[str]] = {
+        "item": set(),
+        "draft": set(),
+        "review": set(),
+    }
     by_kind: dict[str, set[str]] = {kind: set() for kind in _IDENTITY_OBJECT_KINDS}
     for kind in ("owner_facts", "owner_constraints", "ai_judgments", "unconfirmed_inferences", "rejected_items"):
         for item in state[kind]:
-            all_ids.add(item["item_id"])
+            existing_ids_by_namespace["item"].add(item["item_id"])
             by_kind[kind].add(item["item_id"])
     if state["direction"] is not None:
-        all_ids.add(state["direction"]["item_id"])
+        existing_ids_by_namespace["item"].add(state["direction"]["item_id"])
         by_kind["direction"].add(state["direction"]["item_id"])
     for item in state["material_state"]["required_confirmations"]:
-        all_ids.add(item["item_id"])
+        existing_ids_by_namespace["item"].add(item["item_id"])
         by_kind["required_confirmations"].add(item["item_id"])
     if state["draft"] is not None and state["draft"]["draft_id"] is not None:
-        all_ids.add(state["draft"]["draft_id"])
+        existing_ids_by_namespace["draft"].add(state["draft"]["draft_id"])
     if state["review"] is not None:
-        all_ids.add(state["review"]["review_id"])
-    return all_ids, by_kind
+        existing_ids_by_namespace["review"].add(state["review"]["review_id"])
+    return existing_ids_by_namespace, by_kind
+
+
+def _working_state_item_occurrences(state: dict[str, Any]) -> list[tuple[str, str]]:
+    occurrences: list[tuple[str, str]] = []
+    for kind in ("owner_facts", "owner_constraints", "ai_judgments", "unconfirmed_inferences", "rejected_items"):
+        occurrences.extend((kind, item["item_id"]) for item in state[kind])
+    if state["direction"] is not None:
+        occurrences.append(("direction", state["direction"]["item_id"]))
+    occurrences.extend(
+        ("required_confirmations", item["item_id"])
+        for item in state["material_state"]["required_confirmations"]
+    )
+    return occurrences
+
+
+def _validate_global_item_uniqueness(state: dict[str, Any]) -> None:
+    seen: dict[str, str] = {}
+    for kind, item_id in _working_state_item_occurrences(state):
+        previous_kind = seen.get(item_id)
+        if previous_kind is not None:
+            raise DuplicateItemIdentityError(
+                f"item_id {item_id} appears in both {previous_kind} and {kind}"
+            )
+        seen[item_id] = kind
+
+
+_REJECTED_SOURCE_KINDS = {
+    "OWNER_FACT": "owner_facts",
+    "OWNER_CONSTRAINT": "owner_constraints",
+    "DIRECTION": "direction",
+    "AI_JUDGMENT": "ai_judgments",
+    "UNCONFIRMED_INFERENCE": "unconfirmed_inferences",
+}
+
+
+def _source_items(state: dict[str, Any], kind: str) -> list[dict[str, Any]]:
+    if kind == "direction":
+        return [] if state["direction"] is None else [state["direction"]]
+    return state[kind]
+
+
+def _rejected_source_payload(source: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "item_id": source["item_id"],
+        "statement": source["statement"],
+        "evidence_refs": deepcopy(source.get("evidence_refs", [])),
+        "inherited_from": deepcopy(source.get("inherited_from")),
+    }
+
+
+def _validate_rejected_item_closure(pre_state: dict[str, Any], post_state: dict[str, Any]) -> None:
+    pre_rejected = {item["item_id"]: item for item in pre_state["rejected_items"]}
+    pre_active: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    for kind in ("owner_facts", "owner_constraints", "direction", "ai_judgments", "unconfirmed_inferences"):
+        for item in _source_items(pre_state, kind):
+            pre_active.setdefault(item["item_id"], []).append((kind, item))
+
+    for rejected in post_state["rejected_items"]:
+        item_id = rejected["item_id"]
+        if item_id in pre_rejected:
+            if rejected != pre_rejected[item_id]:
+                raise RejectedItemIdentityError(
+                    f"existing rejected item {item_id} changed after rejection"
+                )
+            continue
+        matches = pre_active.get(item_id, [])
+        if len(matches) != 1:
+            raise RejectedItemIdentityError(
+                f"rejected item {item_id} must correspond to exactly one pre-state effective object"
+            )
+        source_kind, source = matches[0]
+        expected_item_kind = next(
+            item_kind for item_kind, mapped_kind in _REJECTED_SOURCE_KINDS.items()
+            if mapped_kind == source_kind
+        )
+        if rejected["item_kind"] != expected_item_kind:
+            raise RejectedItemIdentityError(
+                f"rejected item {item_id} has item_kind {rejected['item_kind']!r}, expected {expected_item_kind!r}"
+            )
+        expected_payload = _rejected_source_payload(source)
+        actual_payload = {
+            "item_id": rejected["item_id"],
+            "statement": rejected["statement"],
+            "evidence_refs": rejected["evidence_refs"],
+            "inherited_from": rejected["inherited_from"],
+        }
+        if actual_payload != expected_payload:
+            raise RejectedItemIdentityError(
+                f"rejected item {item_id} must retain the source identity, statement, evidence, and inheritance"
+            )
+        if any(
+            active_item["item_id"] == item_id
+            for kind in ("owner_facts", "owner_constraints", "ai_judgments", "unconfirmed_inferences")
+            for active_item in post_state[kind]
+        ) or (
+            post_state["direction"] is not None
+            and post_state["direction"]["item_id"] == item_id
+        ):
+            raise RejectedItemIdentityError(
+                f"rejected item {item_id} must be removed from its effective location"
+            )
 
 
 def _resolve_identity_references(proposal_state: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -316,17 +429,29 @@ def _resolve_identity_references(proposal_state: dict[str, Any], context: Any) -
                 f"temporary reference is not defined in this model output: {reference}"
             )
 
-    existing_ids, ids_by_kind = _pre_identity_index(pre_state)
-    used_ids = set(existing_ids)
+    entered_stage = getattr(context, "stage", None)
+    if entered_stage is None:
+        entered_stage = context.stage_contract["stage"]
+    if entered_stage != "REVIEW" and any(
+        reference.split(":", 2)[1] == "review" and is_definition
+        for _path, reference, _local_key, is_definition in occurrences
+    ):
+        raise ReviewIdentityError("only the REVIEW stage may create a new review")
+
+    existing_ids_by_namespace, ids_by_kind = _pre_identity_index(pre_state)
+    used_ids = set().union(*existing_ids_by_namespace.values())
     generated: dict[str, str] = {}
+    generated_by_namespace: dict[str, set[str]] = {"item": set(), "draft": set(), "review": set()}
     for _path, reference, _local_key, is_definition in occurrences:
         if not is_definition or reference in generated:
             continue
+        namespace = reference.split(":", 2)[1]
         while True:
             candidate = str(uuid4())
             if candidate not in used_ids:
                 break
         generated[reference] = candidate
+        generated_by_namespace[namespace].add(candidate)
         used_ids.add(candidate)
 
     def replace(current: Any, path: tuple[Any, ...]) -> Any:
@@ -361,41 +486,40 @@ def _resolve_identity_references(proposal_state: dict[str, Any], context: Any) -
                 raise IdentityResolutionError(
                     f"invalid {expected} identity at {'.'.join(map(str, path))}"
                 ) from exc
-            if expected == "item" and value not in existing_ids and value not in generated.values():
+            if value in existing_ids_by_namespace[expected] or value in generated_by_namespace[expected]:
+                return
+            if expected == "item":
                 raise ForgedUUIDError(
                     f"model supplied an item UUID not present in the current Working State: {value}"
                 )
             if expected == "draft":
-                pre_draft = pre_state.get("draft")
-                allowed = (
-                    pre_draft is not None and pre_draft.get("draft_id") == value
-                ) or value in generated.values()
-                if not allowed:
-                    raise ForgedUUIDError(
-                        f"model supplied a draft UUID not present in the current Working State: {value}"
-                    )
+                raise ForgedUUIDError(
+                    f"model supplied a draft UUID not present in the current Working State: {value}"
+                )
             if expected == "review":
-                pre_review = pre_state.get("review")
-                allowed = (
-                    pre_review is not None and pre_review.get("review_id") == value
-                ) or value in generated.values()
-                if not allowed:
-                    raise ForgedUUIDError(
-                        f"model supplied a review UUID not present in the current Working State: {value}"
-                    )
+                raise ForgedUUIDError(
+                    f"model supplied a review UUID not present in the current Working State: {value}"
+                )
 
     check_real_identity(resolved, ())
-    _validate_identity_stability(pre_state, resolved, context, ids_by_kind)
+    _validate_identity_stability(
+        pre_state, resolved, context, ids_by_kind, generated_by_namespace
+    )
+    _validate_global_item_uniqueness(resolved)
+    _validate_rejected_item_closure(pre_state, resolved)
     return resolved
 
 
 def _validate_identity_stability(
-    pre_state: dict[str, Any], post_state: dict[str, Any], context: Any, ids_by_kind: dict[str, set[str]]
+    pre_state: dict[str, Any],
+    post_state: dict[str, Any],
+    context: Any,
+    ids_by_kind: dict[str, set[str]],
+    generated_by_namespace: dict[str, set[str]],
 ) -> None:
     kind_fields = (
         ("owner_facts", "item_id"), ("owner_constraints", "item_id"),
         ("ai_judgments", "item_id"), ("unconfirmed_inferences", "item_id"),
-        ("rejected_items", "item_id"),
     )
     for kind, identity_field in kind_fields:
         before = {item[identity_field]: item for item in pre_state[kind]}
@@ -406,11 +530,6 @@ def _validate_identity_stability(
             }
             if item_id in before:
                 prior_kinds.discard(kind)
-            if kind == "rejected_items":
-                # Moving an existing effective object into rejected_items keeps
-                # its original identity; repository evidence/rejection closure
-                # remains the authority for the move's semantic details.
-                prior_kinds.clear()
             if prior_kinds:
                 raise ExistingObjectMutationError(
                     f"{kind} object {item_id} changes object type; upgraded objects require a new item ID"
@@ -475,21 +594,24 @@ def _validate_identity_stability(
         if before_content == after_content:
             if before_id != after_id:
                 raise DraftIdentityError("unchanged Draft content must retain its draft_id")
-        elif before_id is not None and before_id == after_id:
-            raise DraftIdentityError("changed Draft content must receive a new draft_id")
+        else:
+            if after_id is None:
+                raise DraftIdentityError("changed Draft content must receive a new draft_id")
+            if before_id is not None and before_id == after_id:
+                raise DraftIdentityError("changed Draft content must receive a new draft_id")
 
     entered_stage = getattr(context, "stage", None)
     if entered_stage is None:
         entered_stage = context.stage_contract["stage"]
     if entered_stage == "REVIEW":
-        before_review = pre_state.get("review")
         after_review = post_state.get("review")
-        if (
-            after_review is not None
-            and before_review is not None
-            and after_review.get("review_id") == before_review.get("review_id")
-        ):
+        if after_review is not None and after_review.get("review_id") not in generated_by_namespace["review"]:
             raise ReviewIdentityError("each REVIEW must generate a new review_id")
+    elif pre_state.get("review") is not None and post_state.get("review") is not None:
+        if post_state["review"] != pre_state["review"]:
+            raise ReviewIdentityError(
+                "a non-REVIEW stage may only preserve an existing Review unchanged"
+            )
 
 
 
@@ -678,6 +800,7 @@ def validate_stage_model_output(
 
 __all__ = [
     "ContentIdentityError",
+    "DuplicateItemIdentityError",
     "DuplicateTemporaryDefinitionError",
     "DraftIdentityError",
     "ExistingObjectMutationError",
@@ -685,6 +808,7 @@ __all__ = [
     "IdentityResolutionError",
     "InvalidTemporaryReferenceError",
     "ReviewIdentityError",
+    "RejectedItemIdentityError",
     "StageContractViolationError",
     "StageModelOutputError",
     "StageModelOutputSchemaError",

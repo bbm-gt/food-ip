@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 import json
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -816,6 +816,7 @@ def test_checkpoint_keeps_long_history_bindings_bounded_and_bindings_use_budget(
 
 def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) -> None:
     repo, scope, source_session_id = repository
+    review_draft_ids: list[str] = []
 
     def ready_handler(context):
         state = context.to_dict()["working_state"]
@@ -849,6 +850,7 @@ def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) 
             }
             return StageExecutionResult(None, state, "CONTINUE", "REVIEW", "DRAFT_CREATED", None, None)
         draft = state["draft"]
+        review_draft_ids.append(draft["draft_id"])
         state["review"] = {
             "review_id": temp("review", "review_1"),
             "outcome": "PASSED",
@@ -866,8 +868,42 @@ def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) 
         repo, scope, DirectorStageExecutor(assembler(repo, scope), model_handler(ready_handler)), max_internal_steps=4
     ).run(make_request(source_session_id, "make-ready"))
     ready_id = ready_outcome.response["ready_content_id"]
+    assert len(review_draft_ids) == 1
+    assert UUID(review_draft_ids[0]).version == 4
+    assert review_draft_ids[0] == repo.get_working_state(scope, source_session_id).state_json["draft"]["draft_id"]
     revision = repo.create_revision_session(scope, ready_id)
     revision_state = repo.get_working_state(scope, revision.id).state_json
+
+    def rewrite_handler(context):
+        state = context.to_dict()["working_state"]
+        state["draft"]["content"]["script_text"] = "第一次改写后的真实内容。"
+        state["draft"]["draft_id"] = temp("draft", "first_rewrite")
+        return {
+            "output_format_version": 1,
+            "run_control": "WAIT_FOR_OWNER",
+            "target_stage": "EXPLORE",
+            "transition_reason_code": "OWNER_INPUT_REQUIRED",
+            "director_message": "请继续确认第一次改写。",
+            "gate": {
+                "outcome": "BLOCKED",
+                "gate_code": "DIRECTION_NOT_CONFIRMED",
+                "explanation": "改写仍需老板确认。",
+            },
+            "review": None,
+            "post_state": state,
+        }
+
+    rewritten = DirectorOrchestrator(
+        repo,
+        scope,
+        DirectorStageExecutor(assembler(repo, scope), rewrite_handler),
+        max_internal_steps=1,
+    ).run(make_request(revision.id, "first-revision-rewrite"))
+    assert rewritten.replayed is False
+    rewritten_state = repo.get_working_state(scope, revision.id).state_json
+    assert rewritten_state["draft"]["draft_id"] is not None
+    assert rewritten_state["draft"]["draft_id"] != revision_state["draft"]["draft_id"]
+    assert rewritten_state["draft"]["content"]["script_text"] == "第一次改写后的真实内容。"
     inherited_context = assembler(repo, scope).assemble(
         session_id=revision.id,
         stage="EXPLORE",

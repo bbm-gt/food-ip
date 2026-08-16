@@ -68,6 +68,21 @@ def test_constraint_kind_is_closed_six_value_enum() -> None:
         WorkingState.model_validate(state)
 
 
+def test_working_state_item_ids_are_unique_across_all_item_collections() -> None:
+    item_id = uid()
+    state = empty_state()
+    state["owner_facts"] = [{
+        "item_id": item_id, "statement": "同一个事实。", "evidence_refs": [evidence()],
+        "supersedes_item_ids": [], "inherited_from": None,
+    }]
+    state["owner_constraints"] = [{
+        "item_id": item_id, "statement": "同一个约束。", "evidence_refs": [evidence()],
+        "constraint_kind": "PROHIBITION", "inherited_from": None,
+    }]
+    with pytest.raises(ValidationError):
+        WorkingState.model_validate(state)
+
+
 def test_rejected_item_evidence_conditions_are_enforced() -> None:
     state = empty_state()
     state["rejected_items"] = [{

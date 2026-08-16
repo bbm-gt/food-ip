@@ -16,10 +16,12 @@ from backend.app.director_core.orchestrator import (
 from backend.app.director_core.repository import AuthorizationScope, DirectorRepository
 from backend.app.director_core.stage_handler import (
     ContentIdentityError,
+    DuplicateItemIdentityError,
     DraftIdentityError,
     ExistingObjectMutationError,
     ForgedUUIDError,
     ReviewIdentityError,
+    RejectedItemIdentityError,
     StageContractViolationError,
     StageModelOutputSchemaError,
     StageModelOutputTypeError,
@@ -489,6 +491,21 @@ def _owner_fact(ctx, item_id: str, statement: str = "老板确认的一条真实
     }
 
 
+def _rejected(source: dict, item_kind: str, *, item_id: str | None = None, **changes) -> dict:
+    value = {
+        "item_id": source["item_id"] if item_id is None else item_id,
+        "item_kind": item_kind,
+        "statement": source["statement"],
+        "rejection_code": "NO_LONGER_USED",
+        "evidence_refs": deepcopy(source.get("evidence_refs", [])),
+        "rejected_by_evidence_refs": [],
+        "superseded_by_item_id": None,
+        "inherited_from": deepcopy(source.get("inherited_from")),
+    }
+    value.update(changes)
+    return value
+
+
 def _draft(item_id: str | None, text: str = "这是完整、真实、可以拍摄的内容。") -> dict:
     return {
         "draft_id": item_id,
@@ -647,3 +664,207 @@ def test_phase1e_ai_judgment_upgrade_requires_a_new_item_id() -> None:
     state["direction"] = _confirmed_direction(ctx, judgment_id)
     with pytest.raises(ExistingObjectMutationError):
         resolve_stage_model_proposal(output(post_state=state), context=ctx)
+
+
+def test_rejected_item_cannot_define_a_new_item_identity() -> None:
+    ctx = context("EXPLORE")
+    state = empty_state()
+    state["rejected_items"] = [{
+        "item_id": temp("item", "rejected_1"),
+        "item_kind": "AI_JUDGMENT",
+        "statement": "凭空制造的旧判断。",
+        "rejection_code": "NO_LONGER_USED",
+        "evidence_refs": [],
+        "rejected_by_evidence_refs": [],
+        "superseded_by_item_id": None,
+        "inherited_from": None,
+    }]
+    with pytest.raises(RejectedItemIdentityError):
+        resolve_stage_model_proposal(output(post_state=state), context=ctx)
+
+
+def test_rejected_item_must_reference_a_known_pre_state_item() -> None:
+    ctx = context("EXPLORE")
+    source = _owner_fact(ctx, uid())
+    state = empty_state()
+    state["rejected_items"] = [_rejected(source, "OWNER_FACT")]
+    with pytest.raises(ForgedUUIDError):
+        resolve_stage_model_proposal(output(post_state=state), context=ctx)
+
+
+@pytest.mark.parametrize("change", [
+    {"statement": "被篡改的旧事实。"},
+    {"evidence_refs": []},
+])
+def test_rejected_item_closure_preserves_source_statement_and_evidence(change) -> None:
+    ctx = context("EXPLORE")
+    source = _owner_fact(ctx, uid())
+    ctx.working_state["owner_facts"] = [source]
+    state = deepcopy(ctx.working_state)
+    state["owner_facts"] = []
+    rejected = _rejected(source, "OWNER_FACT")
+    rejected.update(change)
+    state["rejected_items"] = [rejected]
+    with pytest.raises(RejectedItemIdentityError):
+        resolve_stage_model_proposal(output(post_state=state), context=ctx)
+
+
+def test_rejected_item_cannot_leave_the_source_object_effective() -> None:
+    ctx = context("EXPLORE")
+    source = _owner_fact(ctx, uid())
+    ctx.working_state["owner_facts"] = [source]
+    state = deepcopy(ctx.working_state)
+    state["rejected_items"] = [_rejected(source, "OWNER_FACT")]
+    with pytest.raises(DuplicateItemIdentityError):
+        resolve_stage_model_proposal(output(post_state=state), context=ctx)
+
+
+def test_rejected_item_kind_must_match_the_pre_state_source_kind() -> None:
+    ctx = context("EXPLORE")
+    source = _owner_fact(ctx, uid())
+    ctx.working_state["owner_facts"] = [source]
+    state = deepcopy(ctx.working_state)
+    state["owner_facts"] = []
+    state["rejected_items"] = [_rejected(source, "OWNER_CONSTRAINT")]
+    with pytest.raises(RejectedItemIdentityError):
+        resolve_stage_model_proposal(output(post_state=state), context=ctx)
+
+
+def test_working_state_rejects_item_ids_repeated_across_collections() -> None:
+    ctx = context("EXPLORE")
+    source = _owner_fact(ctx, uid())
+    ctx.working_state["owner_facts"] = [source]
+    state = deepcopy(ctx.working_state)
+    state["rejected_items"] = [_rejected(source, "OWNER_FACT")]
+    with pytest.raises(DuplicateItemIdentityError):
+        resolve_stage_model_proposal(output(post_state=state), context=ctx)
+
+
+def _revision_null_draft_context(text: str = "来源内容"):
+    state = empty_state()
+    state["draft"] = _draft(None, text)
+    state["draft"]["based_on_ready_content_id"] = uid()
+    return context("EXPLORE", state)
+
+
+def test_revision_null_draft_rewrite_requires_a_new_draft_identity() -> None:
+    ctx = _revision_null_draft_context()
+    state = deepcopy(ctx.working_state)
+    state["draft"]["content"]["script_text"] = "第一次改写后的内容。"
+    with pytest.raises(DraftIdentityError):
+        resolve_stage_model_proposal(output(post_state=state), context=ctx)
+
+
+def test_revision_null_draft_rewrite_allocates_a_uuid4_draft_identity() -> None:
+    ctx = _revision_null_draft_context()
+    state = deepcopy(ctx.working_state)
+    state["draft"]["content"]["script_text"] = "第一次改写后的内容。"
+    state["draft"]["draft_id"] = temp("draft", "first_rewrite")
+    resolved = resolve_stage_model_proposal(output(post_state=state), context=ctx)
+    assert UUID(resolved.post_state.draft.draft_id).version == 4
+
+
+def test_revision_null_draft_can_be_inherited_unchanged() -> None:
+    ctx = _revision_null_draft_context()
+    resolved = resolve_stage_model_proposal(output(post_state=deepcopy(ctx.working_state)), context=ctx)
+    assert resolved.post_state.draft.draft_id is None
+
+
+def test_item_reference_cannot_use_a_draft_uuid() -> None:
+    draft_id = uid()
+    ctx = context("EXPLORE")
+    ctx.working_state["draft"] = _draft(draft_id)
+    state = empty_state()
+    state["owner_facts"] = [{**_owner_fact(ctx, temp("item", "fact_1")), "supersedes_item_ids": [draft_id]}]
+    with pytest.raises(ForgedUUIDError):
+        resolve_stage_model_proposal(output(post_state=state), context=ctx)
+
+
+def test_item_reference_cannot_use_a_review_uuid() -> None:
+    draft_id = uid()
+    review_id = uid()
+    ctx = context("EXPLORE")
+    ctx.working_state["owner_facts"] = [_owner_fact(ctx, uid())]
+    ctx.working_state["draft"] = _draft(draft_id)
+    ctx.working_state["review"] = {
+        "review_id": review_id, "outcome": "PASSED", "root_cause": None,
+        "against_draft_id": draft_id, "against_content": deepcopy(ctx.working_state["draft"]["content"]),
+    }
+    source = ctx.working_state["owner_facts"][0]
+    state = deepcopy(ctx.working_state)
+    state["owner_facts"] = []
+    state["rejected_items"] = [_rejected(source, "OWNER_FACT", superseded_by_item_id=review_id)]
+    with pytest.raises(ForgedUUIDError):
+        resolve_stage_model_proposal(output(post_state=state), context=ctx)
+
+
+def test_draft_reference_cannot_use_an_item_uuid() -> None:
+    draft_id = uid()
+    item_id = uid()
+    ctx = context("REVIEW")
+    ctx.working_state["direction"] = _confirmed_direction(ctx, item_id)
+    ctx.working_state["draft"] = _draft(draft_id)
+    state = deepcopy(ctx.working_state)
+    state["review"] = {
+        "review_id": temp("review", "review_1"), "outcome": "PASSED", "root_cause": None,
+        "against_draft_id": item_id, "against_content": deepcopy(state["draft"]["content"]),
+    }
+    with pytest.raises(ForgedUUIDError):
+        resolve_stage_model_proposal(output(post_state=state), context=ctx)
+
+
+@pytest.mark.parametrize("stage", ["EXPLORE", "DEEPEN", "CREATE"])
+def test_only_review_stage_can_create_a_new_review(stage: str) -> None:
+    ctx = context(stage)
+    state = empty_state()
+    state["review"] = {
+        "review_id": temp("review", "forbidden"), "outcome": "PASSED", "root_cause": None,
+        "against_draft_id": temp("draft", "draft_1"),
+        "against_content": _draft(None)["content"],
+    }
+    state["draft"] = _draft("new:draft:draft_1")
+    with pytest.raises(ReviewIdentityError):
+        resolve_stage_model_proposal(output(post_state=state), context=ctx)
+
+
+def test_non_review_stage_cannot_modify_an_existing_review() -> None:
+    draft_id = uid()
+    ctx = context("EXPLORE")
+    ctx.working_state["draft"] = _draft(draft_id)
+    ctx.working_state["review"] = {
+        "review_id": uid(), "outcome": "PASSED", "root_cause": None,
+        "against_draft_id": draft_id, "against_content": deepcopy(ctx.working_state["draft"]["content"]),
+    }
+    state = deepcopy(ctx.working_state)
+    state["review"]["outcome"] = "BLOCKED"
+    state["review"]["root_cause"] = "WRITING_PROBLEM"
+    with pytest.raises(ReviewIdentityError):
+        resolve_stage_model_proposal(output(post_state=state), context=ctx)
+
+
+def test_review_stage_must_generate_a_new_review_and_bind_current_draft() -> None:
+    draft_id = uid()
+    ctx = context("REVIEW")
+    ctx.working_state["draft"] = _draft(draft_id)
+    ctx.working_state["review"] = {
+        "review_id": uid(), "outcome": "PASSED", "root_cause": None,
+        "against_draft_id": draft_id, "against_content": deepcopy(ctx.working_state["draft"]["content"]),
+    }
+    state = deepcopy(ctx.working_state)
+    state["review"]["review_id"] = temp("review", "replacement")
+    resolved = resolve_stage_model_proposal(output(post_state=state), context=ctx)
+    assert UUID(resolved.post_state.review.review_id).version == 4
+    assert resolved.post_state.review.against_draft_id == draft_id
+
+
+def test_review_stage_rejects_reusing_the_previous_review_id() -> None:
+    draft_id = uid()
+    review_id = uid()
+    ctx = context("REVIEW")
+    ctx.working_state["draft"] = _draft(draft_id)
+    ctx.working_state["review"] = {
+        "review_id": review_id, "outcome": "PASSED", "root_cause": None,
+        "against_draft_id": draft_id, "against_content": deepcopy(ctx.working_state["draft"]["content"]),
+    }
+    with pytest.raises(ReviewIdentityError):
+        resolve_stage_model_proposal(output(post_state=deepcopy(ctx.working_state)), context=ctx)
