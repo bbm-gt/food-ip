@@ -30,6 +30,7 @@ export interface DirectorLocalState {
   status: DirectorStatus
   messages: DirectorMessage[]
   ready_content: ReadyContent | null
+  previous_ready_content: ReadyContent | null
   source_ready_content_id: string | null
   pending_request: PendingRequest | null
   updated_at: string

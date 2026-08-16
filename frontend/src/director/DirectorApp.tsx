@@ -9,10 +9,18 @@ import {
 } from './directorApi'
 import {
   clearDirectorState,
-  emptyDirectorState,
   loadDirectorState,
   saveDirectorState,
 } from './directorStorage'
+import {
+  applyRevisionSession,
+  applyFailedTurn,
+  applySuccessfulTurn,
+  classifySubmitError,
+  clearDirectorStateIfConfirmed,
+  hasDirectorData,
+  pendingForRetry,
+} from './directorLogic'
 import type {
   DirectorLocalState,
   DirectorMessage,
@@ -108,6 +116,15 @@ export default function DirectorApp() {
     endOfMessagesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }, [state.messages.length, busy])
 
+  useEffect(() => {
+    if (!state.pending_request) return
+    setNotice({
+      kind: 'info',
+      text: '上次请求结果未知，可使用原消息重新尝试。',
+      retryable: state.status !== 'blocked' && state.status !== 'ready',
+    })
+  }, [])
+
   async function submitPending(pending: PendingRequest): Promise<void> {
     if (busy) return
     setBusy(true)
@@ -140,25 +157,7 @@ export default function DirectorApp() {
       }
 
       const response = await submitDirectorMessage(projectId, sessionId, pending)
-      commit((latest) => {
-        const nextMessages = updateMessage(latest.messages, pending.client_message_id, 'sent')
-        if (!nextMessages.some((message) => message.id === response.message.id)) {
-          nextMessages.push({
-            id: response.message.id,
-            role: 'DIRECTOR',
-            content: response.message.content,
-            delivery: 'sent',
-          })
-        }
-        return {
-          ...latest,
-          state_version: response.state_version,
-          status: response.status === 'READY' ? 'ready' : 'active',
-          messages: nextMessages,
-          ready_content: response.ready_content ?? latest.ready_content,
-          pending_request: null,
-        }
-      })
+      commit((latest) => applySuccessfulTurn(latest, pending.client_message_id, response))
       setNotice(response.status === 'READY'
         ? { kind: 'success', text: '这段内容已经准备好了。' }
         : null)
@@ -174,40 +173,14 @@ export default function DirectorApp() {
     if (!pending) return
 
     const isApiError = reason instanceof DirectorApiError
-    const status = isApiError ? reason.status : null
-    const code = isApiError ? reason.code : null
-    const apiMessage = isApiError ? reason.message : '请求未完成，请稍后重试。'
-    const markFailed = (current: DirectorLocalState) => ({
-      ...current,
-      messages: updateMessage(current.messages, pending.client_message_id, 'failed'),
-    })
-
-    if (code === 'idempotency_conflict') {
-      commit((current) => ({ ...markFailed(current), pending_request: null }))
-      setNotice({ kind: 'error', text: '该消息请求发生冲突，请重新发送。' })
-      return
-    }
-    if (code === 'state_version_conflict') {
-      commit((current) => ({ ...markFailed(current), status: 'blocked' }))
-      setNotice({ kind: 'error', text: '该对话可能已在其他页面更新，请新建对话后继续。' })
-      return
-    }
-    if (code === 'session_ready') {
-      commit((current) => ({ ...markFailed(current), status: 'ready' }))
-      setNotice({ kind: 'info', text: '该对话已经完成，不能继续发送。' })
-      return
-    }
-
-    commit(markFailed)
-    if (status === 502) {
-      setNotice({ kind: 'error', text: '模型输出暂时不可用。', retryable: true })
-    } else if (status === 503) {
-      setNotice({ kind: 'error', text: '服务暂时不可用。', retryable: true })
-    } else if (!isApiError) {
-      setNotice({ kind: 'error', text: '网络连接中断，结果可能未知。', retryable: true })
-    } else {
-      setNotice({ kind: 'error', text: apiMessage, retryable: true })
-    }
+    const outcome = classifySubmitError({
+      status: isApiError ? reason.status : null,
+      code: isApiError ? reason.code : null,
+      message: isApiError ? reason.message : '请求未完成，请稍后重试。',
+      network: !isApiError,
+    }, Boolean(stateRef.current.ready_content))
+    commit((current) => applyFailedTurn(current, pending.client_message_id, outcome))
+    setNotice({ kind: outcome.status === 'ready' ? 'info' : 'error', text: outcome.message, retryable: outcome.retryable })
   }
 
   function handleSend(event: FormEvent<HTMLFormElement>): void {
@@ -238,15 +211,17 @@ export default function DirectorApp() {
   }
 
   function retryPending(): void {
-    const pending = stateRef.current.pending_request
-    if (!pending || busy || stateRef.current.status === 'blocked' || stateRef.current.status === 'ready') return
+    const pending = pendingForRetry(stateRef.current)
+    if (!pending || busy) return
     void submitPending(pending)
   }
 
   function startNewConversation(): void {
     if (busy) return
+    const current = stateRef.current
+    if (hasDirectorData(current) && !window.confirm('新建对话后，当前聊天记录将无法恢复。确定继续吗？')) return
     clearDirectorState()
-    const next = emptyDirectorState()
+    const next = clearDirectorStateIfConfirmed(current, true)
     stateRef.current = next
     setState(next)
     setDraft('')
@@ -273,15 +248,7 @@ export default function DirectorApp() {
     setNotice(null)
     try {
       const session = await createDirectorSession(current.project_id, sourceId)
-      commit((latest) => ({
-        ...latest,
-        session_id: session.session_id,
-        state_version: 0,
-        status: 'active',
-        messages: [],
-        pending_request: null,
-        source_ready_content_id: session.source_ready_content_id,
-      }))
+      commit((latest) => applyRevisionSession(latest, session))
       setNotice({ kind: 'info', text: '正在基于上一版继续修改，请告诉我你想改什么。' })
     } catch (reason) {
       setNotice({ kind: 'error', text: reason instanceof DirectorApiError ? reason.message : '网络连接中断，请稍后重试。', retryable: true })
@@ -292,8 +259,6 @@ export default function DirectorApp() {
 
   const canCompose = !busy && state.status !== 'ready' && state.status !== 'blocked' && !state.pending_request
   const pending = state.pending_request
-  const showPreviousSummary = state.status !== 'ready' && state.ready_content
-
   return (
     <div className="director-app">
       <header className="director-header">
@@ -308,9 +273,9 @@ export default function DirectorApp() {
       </header>
 
       <main className="director-main">
-        {showPreviousSummary && state.ready_content && <ReadyCard content={state.ready_content} summary busy={busy} onCopy={() => void copyReadyContent()} onRevise={() => void continueRevision()} />}
+        {state.previous_ready_content && <ReadyCard content={state.previous_ready_content} summary busy={busy} onCopy={() => void copyReadyContent()} onRevise={() => void continueRevision()} />}
 
-        <section className="chat-panel" aria-label="Director 聊天记录">
+        <section className="chat-panel" aria-label="聊天记录">
           {state.messages.length === 0 ? (
             <div className="director-empty-state">
               <span className="empty-mark">✦</span>
@@ -320,7 +285,7 @@ export default function DirectorApp() {
             <div className="message-list">
               {state.messages.map((message) => (
                 <article key={message.id} className={`chat-message ${message.role.toLowerCase()}`}>
-                  <span className="message-role">{message.role}</span>
+                  <span className="message-role">{message.role === 'OWNER' ? '你' : 'AI 编导'}</span>
                   <div className="message-bubble">
                     <p>{message.content}</p>
                     {message.delivery === 'failed' && <small>发送未完成</small>}
