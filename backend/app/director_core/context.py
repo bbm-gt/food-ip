@@ -15,7 +15,8 @@ from types import MappingProxyType
 from typing import Any, Protocol
 
 from .canonical import is_blank_text
-from .models import EvidenceReference, Stage, STAGE_EXECUTION_COMBINATIONS, stage_execution_contract
+from .models import EvidenceReference, Stage
+from .stage_contract import STAGE_EXECUTION_COMBINATIONS, stage_execution_contract
 from .repository import (
     AuthorizationScope,
     DirectorIntegrityError,

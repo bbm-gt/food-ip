@@ -27,6 +27,7 @@ from backend.app.director_core.orchestrator import (
     StageExecutionResult,
 )
 from backend.app.director_core.repository import AuthorizationScope, DirectorRepository
+from backend.app.director_core.stage_handler import StageModelOutputError
 
 
 def uid() -> str:
@@ -60,15 +61,48 @@ def make_request(session_id: str, client_id: str, expected: int = 0) -> Director
 
 
 def wait_result(context: StageExecutionContext) -> StageExecutionResult:
+    state = deepcopy(context.working_state)
+    if context.stage == "DEEPEN":
+        state["material_state"] = {
+            "status": "INSUFFICIENT",
+            "required_confirmations": [{
+                "item_id": uid(), "statement": "补充关键真实素材", "reason": "素材不足",
+                "evidence_refs": [], "inherited_from": None,
+            }],
+        }
+        gate = {"outcome": "BLOCKED", "gate_code": "MATERIAL_INSUFFICIENT", "explanation": "仍缺关键素材。"}
+    else:
+        gate = {"outcome": "BLOCKED", "gate_code": "DIRECTION_NOT_CONFIRMED", "explanation": "方向尚未确认。"}
     return StageExecutionResult(
         director_message="请继续补充真实内容。",
-        post_state=deepcopy(context.working_state),
+        post_state=state,
         run_control="WAIT_FOR_OWNER",
         target_stage=context.stage,
         transition_reason_code="OWNER_INPUT_REQUIRED",
-        gate=None,
+        gate=gate,
         review=None,
     )
+
+
+def model_handler(handler):
+    """Adapt an internal test DTO into the explicit StageModelOutputV1 shape."""
+
+    def wrapped(context):
+        result = handler(context)
+        if not isinstance(result, StageExecutionResult):
+            return result
+        return {
+            "output_format_version": 1,
+            "run_control": result.run_control,
+            "target_stage": result.target_stage,
+            "transition_reason_code": result.transition_reason_code,
+            "director_message": result.director_message,
+            "gate": deepcopy(result.gate),
+            "review": deepcopy(result.review),
+            "post_state": deepcopy(result.post_state),
+        }
+
+    return wrapped
 
 
 @pytest.fixture
@@ -117,11 +151,17 @@ def test_each_internal_step_reassembles_latest_candidate_and_handler_cannot_comm
         state = context.to_dict()["working_state"]
         seen.append((context.stage_contract["stage"], state))
         if context.stage_contract["stage"] == "EXPLORE":
-            state["ai_judgments"].append({
+            state["direction"] = {
                 "item_id": uid(),
-                "judgment_kind": "DIRECTION_CANDIDATE",
                 "statement": "从老板真实经历展开。",
-            })
+                "owner_confirmed": True,
+                "evidence_refs": [{
+                    "evidence_type": "owner_message",
+                    "target_id": context.current_owner_message.id,
+                    "target_session_id": session_id,
+                }],
+                "inherited_from": None,
+            }
             return StageExecutionResult(
                 director_message=None,
                 post_state=state,
@@ -131,23 +171,30 @@ def test_each_internal_step_reassembles_latest_candidate_and_handler_cannot_comm
                 gate=None,
                 review=None,
             )
+        state["material_state"] = {
+            "status": "INSUFFICIENT",
+            "required_confirmations": [{
+                "item_id": uid(), "statement": "补充关键细节", "reason": "素材不足",
+                "evidence_refs": [], "inherited_from": None,
+            }],
+        }
         return StageExecutionResult(
             director_message="请补充最关键的真实细节。",
             post_state=state,
             run_control="WAIT_FOR_OWNER",
             target_stage="DEEPEN",
             transition_reason_code="OWNER_INPUT_REQUIRED",
-            gate=None,
+            gate={"outcome": "BLOCKED", "gate_code": "MATERIAL_INSUFFICIENT", "explanation": "仍缺关键素材。"},
             review=None,
         )
 
-    wrapped = DirectorStageExecutor(assembler(repo, scope), handler)
+    wrapped = DirectorStageExecutor(assembler(repo, scope), model_handler(handler))
     outcome = DirectorOrchestrator(repo, scope, wrapped, max_internal_steps=3).run(
         make_request(session_id, "reassemble")
     )
 
     assert [stage for stage, _ in seen] == ["EXPLORE", "DEEPEN"]
-    assert seen[1][1]["ai_judgments"]
+    assert seen[1][1]["direction"]["owner_confirmed"] is True
     assembled = assembler(repo, scope).assemble(
         session_id=session_id,
         stage="DEEPEN",
@@ -184,6 +231,11 @@ def test_historical_owner_evidence_is_loaded_even_when_not_current(repository) -
                 "supersedes_item_ids": [],
                 "inherited_from": None,
             }]
+            state["direction"] = {
+                "item_id": uid(), "statement": "沿老板确认的真实内容展开", "owner_confirmed": True,
+                "evidence_refs": [{"evidence_type": "owner_message", "target_id": old_owner_id, "target_session_id": session_id}],
+                "inherited_from": None,
+            }
             return StageExecutionResult(
                 director_message=None,
                 post_state=state,
@@ -194,18 +246,25 @@ def test_historical_owner_evidence_is_loaded_even_when_not_current(repository) -
                 review=None,
             )
         seen.extend((message.id, message.content) for message in context.evidence_messages)
+        state["material_state"] = {
+            "status": "INSUFFICIENT",
+            "required_confirmations": [{
+                "item_id": uid(), "statement": "补充关键细节", "reason": "素材不足",
+                "evidence_refs": [], "inherited_from": None,
+            }],
+        }
         return StageExecutionResult(
             director_message="已记录这条真实内容。",
             post_state=state,
             run_control="WAIT_FOR_OWNER",
             target_stage="DEEPEN",
             transition_reason_code="OWNER_INPUT_REQUIRED",
-            gate=None,
+            gate={"outcome": "BLOCKED", "gate_code": "MATERIAL_INSUFFICIENT", "explanation": "仍缺关键素材。"},
             review=None,
         )
 
     DirectorOrchestrator(
-        repo, scope, DirectorStageExecutor(assembler(repo, scope), handler), max_internal_steps=2
+        repo, scope, DirectorStageExecutor(assembler(repo, scope), model_handler(handler)), max_internal_steps=2
     ).run(make_request(session_id, "evidence", expected=1))
     assert seen == [(old_owner_id, "老板说了一条可追溯的真实内容。")]
 
@@ -299,7 +358,7 @@ def test_old_checkpoint_history_over_budget_requires_rebuild_before_handler(repo
     before = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] for table in tables]
     with pytest.raises(CheckpointRebuildRequiredError, match="Checkpoint and"):
         DirectorOrchestrator(
-            repo, scope, DirectorStageExecutor(limited, handler), max_internal_steps=1
+            repo, scope, DirectorStageExecutor(limited, model_handler(handler)), max_internal_steps=1
         ).run(make_request(session_id, "too-large", expected=3))
     after = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] for table in tables]
     assert called == 0
@@ -363,7 +422,7 @@ def test_protected_context_over_budget_fails_before_orchestrator_commit(reposito
               for table in tables]
     with pytest.raises(ContextBudgetExceededError, match="irreducible"):
         DirectorOrchestrator(
-            repo, scope, DirectorStageExecutor(limited, handler), max_internal_steps=1
+            repo, scope, DirectorStageExecutor(limited, model_handler(handler)), max_internal_steps=1
         ).run(make_request(session_id, "budget"))
     after = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
              for table in tables]
@@ -423,7 +482,7 @@ def test_oversized_checkpoint_requires_rebuild_not_budget_failure(repository) ->
               for table in tables]
     with pytest.raises(CheckpointRebuildRequiredError, match="Checkpoint"):
         DirectorOrchestrator(
-            repo, scope, DirectorStageExecutor(limited, handler), max_internal_steps=1
+            repo, scope, DirectorStageExecutor(limited, model_handler(handler)), max_internal_steps=1
         ).run(make_request(session_id, "oversized-checkpoint", expected=1))
     after = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
              for table in tables]
@@ -437,8 +496,14 @@ def test_create_stage_cannot_wait_for_owner_and_failure_is_atomic(repository) ->
     def handler(context):
         state = context.to_dict()["working_state"]
         if context.stage_contract["stage"] == "EXPLORE":
+            state["direction"] = {
+                "item_id": uid(), "statement": "老板确认的方向", "owner_confirmed": True,
+                "evidence_refs": [{"evidence_type": "owner_message", "target_id": context.current_owner_message.id, "target_session_id": session_id}],
+                "inherited_from": None,
+            }
             return StageExecutionResult(None, state, "CONTINUE", "DEEPEN", "DIRECTION_CONFIRMED", None, None)
         if context.stage_contract["stage"] == "DEEPEN":
+            state["material_state"] = {"status": "SUFFICIENT", "required_confirmations": []}
             return StageExecutionResult(None, state, "CONTINUE", "CREATE", "MATERIAL_SUFFICIENT", None, None)
         return StageExecutionResult(
             "不能在 CREATE 阶段直接向老板补问。", state, "WAIT_FOR_OWNER", "CREATE",
@@ -451,9 +516,9 @@ def test_create_stage_cannot_wait_for_owner_and_failure_is_atomic(repository) ->
     )
     before = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
               for table in tables]
-    with pytest.raises(DirectorExecutionValidationError):
+    with pytest.raises(StageModelOutputError):
         DirectorOrchestrator(
-            repo, scope, DirectorStageExecutor(assembler(repo, scope), handler), max_internal_steps=3
+            repo, scope, DirectorStageExecutor(assembler(repo, scope), model_handler(handler)), max_internal_steps=3
         ).run(make_request(session_id, "invalid-create-wait"))
     after = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
              for table in tables]
@@ -490,11 +555,11 @@ def test_invalid_cross_session_and_director_evidence_fail_explicitly(repository)
     [
         ("EXPLORE", [("WAIT_FOR_OWNER", "EXPLORE"), ("CONTINUE", "DEEPEN")]),
         (
-            "DEEPEN",
-            [
-                ("WAIT_FOR_OWNER", "DEEPEN"),
-                ("CONTINUE", "DEEPEN"),
-                ("CONTINUE", "CREATE"),
+                "DEEPEN",
+                [
+                    ("CONTINUE", "DEEPEN"),
+                    ("WAIT_FOR_OWNER", "DEEPEN"),
+                    ("CONTINUE", "CREATE"),
             ],
         ),
         ("CREATE", [("CONTINUE", "REVIEW")]),
@@ -578,7 +643,7 @@ def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) 
         )
 
     ready_outcome = DirectorOrchestrator(
-        repo, scope, DirectorStageExecutor(assembler(repo, scope), ready_handler), max_internal_steps=4
+        repo, scope, DirectorStageExecutor(assembler(repo, scope), model_handler(ready_handler)), max_internal_steps=4
     ).run(make_request(source_session_id, "make-ready"))
     ready_id = ready_outcome.response["ready_content_id"]
     revision = repo.create_revision_session(scope, ready_id)
@@ -602,12 +667,21 @@ def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) 
         loaded.append((stage, context.source_ready_content is not None))
         if stage == "EXPLORE":
             return StageExecutionResult(None, state, "CONTINUE", "DEEPEN", "DIRECTION_CONFIRMED", None, None)
+        state["material_state"] = {
+            "status": "INSUFFICIENT",
+            "required_confirmations": [{
+                "item_id": uid(), "statement": "确认修改重点", "reason": "素材不足",
+                "evidence_refs": [], "inherited_from": None,
+            }],
+        }
         return StageExecutionResult(
             "请继续补充修改内容。", state, "WAIT_FOR_OWNER", "DEEPEN",
-            "OWNER_INPUT_REQUIRED", None, None,
+            "OWNER_INPUT_REQUIRED",
+            {"outcome": "BLOCKED", "gate_code": "MATERIAL_INSUFFICIENT", "explanation": "仍缺修改素材。"},
+            None,
         )
 
-    executor = DirectorStageExecutor(assembler(repo, scope), revision_handler, policy)
+    executor = DirectorStageExecutor(assembler(repo, scope), model_handler(revision_handler), policy)
     first = executor(StageExecutionContext(
         stage="EXPLORE",
         working_state=revision_state,
@@ -643,14 +717,14 @@ def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) 
             "请继续补充真实内容。",
             context.to_dict()["working_state"],
             "WAIT_FOR_OWNER",
-            "EXPLORE",
-            "OWNER_INPUT_REQUIRED",
-            None,
-            None,
+                "EXPLORE",
+                "OWNER_INPUT_REQUIRED",
+                {"outcome": "BLOCKED", "gate_code": "DIRECTION_NOT_CONFIRMED", "explanation": "方向尚未确认。"},
+                None,
         )
 
     DirectorStageExecutor(
-        assembler(repo, scope), ordinary_handler, AlwaysInclude()
+        assembler(repo, scope), model_handler(ordinary_handler), AlwaysInclude()
     )(StageExecutionContext(
         stage="EXPLORE",
         working_state=repo.get_working_state(scope, source_session_id).state_json,
@@ -703,7 +777,7 @@ def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) 
 
         with pytest.raises(EvidenceReferenceError, match="closure"):
             DirectorStageExecutor(
-                assembler(repo, scope), invalid_handler, DisabledSourceReadyContentPolicy()
+                assembler(repo, scope), model_handler(invalid_handler), DisabledSourceReadyContentPolicy()
             )(StageExecutionContext(
                 stage="EXPLORE",
                 working_state=bad_state,

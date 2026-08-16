@@ -37,6 +37,13 @@ from .repository import (
     IdempotencyConflictError,
     SQLiteBusyError,
 )
+from .stage_handler import (
+    StageContractViolationError,
+    StageModelOutputError,
+    StageModelOutputSchemaError,
+    StageModelOutputTypeError,
+    StageModelOutputV1,
+)
 
 __all__ = [
     "AuthorizationScope",
@@ -64,6 +71,11 @@ __all__ = [
     "StageExecutionContext",
     "StageExecutionResult",
     "StageHandler",
+    "StageContractViolationError",
+    "StageModelOutputError",
+    "StageModelOutputSchemaError",
+    "StageModelOutputTypeError",
+    "StageModelOutputV1",
     "StageExecutor",
     "IdempotencyConflictError",
     "SessionLockManager",

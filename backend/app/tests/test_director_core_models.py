@@ -114,7 +114,8 @@ def test_trace_checkpoint_and_first_response_are_strict() -> None:
         "steps": [{
             "step_no": 1, "entered_stage": "EXPLORE", "run_control": "WAIT_FOR_OWNER",
             "target_stage": "EXPLORE", "transition_reason_code": "OWNER_INPUT_REQUIRED",
-            "gate": None, "review": None, "candidate_revision": 1,
+            "gate": {"outcome": "BLOCKED", "gate_code": "DIRECTION_NOT_CONFIRMED", "explanation": "方向尚未确认。"},
+            "review": None, "candidate_revision": 1,
         }],
     }
     TurnExecutionTrace.model_validate(trace)

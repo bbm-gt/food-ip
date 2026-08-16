@@ -124,10 +124,15 @@ def _insert_revision_turn(
         "based_on_ready_content_id": state["draft"]["based_on_ready_content_id"],
     }
     request = {"owner_text": owner_text, "parameters": {}}
+    gate = (
+        {"outcome": "BLOCKED", "gate_code": "MATERIAL_INSUFFICIENT", "explanation": "素材不足。"}
+        if target_stage == "DEEPEN"
+        else {"outcome": "BLOCKED", "gate_code": "DIRECTION_NOT_CONFIRMED", "explanation": "方向尚未确认。"}
+    )
     trace = {"format_version": 1, "steps": [{
         "step_no": 1, "entered_stage": pre_stage, "run_control": "WAIT_FOR_OWNER",
         "target_stage": target_stage, "transition_reason_code": "OWNER_INPUT_REQUIRED",
-        "gate": None, "review": None, "candidate_revision": 1,
+        "gate": gate, "review": None, "candidate_revision": 1,
     }]}
     response = {
         "session_id": session_id, "turn_id": turn_id, "owner_message_id": owner_id,
@@ -140,7 +145,7 @@ def _insert_revision_turn(
     with connection:
         connection.execute(
             """INSERT INTO director_turns VALUES
-            (?, ?, ?, 1, ?, ?, ?, ?, 'WAIT_FOR_OWNER', ?, 'OWNER_INPUT_REQUIRED', NULL, NULL,
+            (?, ?, ?, 1, ?, ?, ?, ?, 'WAIT_FOR_OWNER', ?, 'OWNER_INPUT_REQUIRED', 'BLOCKED', NULL,
              1, ?, 1, ?, 1, ?, ?, ?)""",
             (turn_id, session_id, f"revision-{turn_id}", canonical_text(request), canonical_sha256(request), state_version - 1, state_version, target_stage,
              canonical_text(trace), canonical_text(response), canonical_text(snapshot), digest, created_at),
