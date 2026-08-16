@@ -5,8 +5,8 @@
 ## 当前状态
 
 - 范围：Director Core
-- 里程碑：Phase 1G — Minimal Director API
-- 状态：completed
+- 里程碑：Phase 1H — Minimal Director Chat Frontend
+- 状态：PASS / CLOSED
 
 ## 已完成
 
@@ -17,18 +17,18 @@
 - Phase 1E — Stage Handler Contract
 - Phase 1F — DeepSeek real-model vertical slice
 - Phase 1G — Minimal Director API
+- Phase 1H — Minimal Director Chat Frontend
 
 ## 下一步
 
 当前状态：`awaiting_approved_scope`。
 
-No post-Phase-1G Director Core implementation scope is currently approved.
+Phase 1I — 待确定
 
-在新的产品或架构范围获得确认前，不得自行扩展 Director Core。
+在下一阶段范围获得明确确认前，不得自行开始 Phase 1I。
 
 ## Deferred
 
-- Director Core frontend integration
 - Complex Memory
 - Knowledge Retrieval
 - Checkpoint builder

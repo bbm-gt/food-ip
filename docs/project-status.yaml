@@ -3,8 +3,8 @@ updated_at: "2026-08-16"
 
 current:
   area: "Director Core"
-  milestone: "Phase 1G — Minimal Director API"
-  status: "completed"
+  milestone: "Phase 1H — Minimal Director Chat Frontend"
+  status: "PASS / CLOSED"
 
 completed:
   - "Phase 1A — Persistence foundation"
@@ -14,20 +14,23 @@ completed:
   - "Phase 1E — Stage Handler Contract"
   - "Phase 1F — DeepSeek real-model vertical slice"
   - "Phase 1G — Minimal Director API"
+  - "Phase 1H — Minimal Director Chat Frontend"
 
 test_baseline:
-  ref: "1fd011d17187ad149cab16762d14bd3ecc4562d8"
+  ref: "2e1fd1dbd166ed6961e3256bca2a7e795d36c474"
+  frontend_ci: "passed: Frontend test and build"
+  frontend_tests: "passed: 6 tests"
+  frontend_build: "passed"
   backend_ci: "passed: 522 tests, 2 opt-in live tests skipped"
   coverage: "backend/app/tests; opt-in paid DeepSeek live tests remain skipped unless explicitly enabled"
 
 next:
   status: "awaiting_approved_scope"
-  objective: "No post-Phase-1G Director Core implementation scope is currently approved."
-  instruction: "在新的产品或架构范围获得确认前，不得自行扩展 Director Core。"
+  objective: "Phase 1I — 待确定"
+  instruction: "在下一阶段范围获得明确确认前，不得自行开始 Phase 1I。"
   implementation_allowed: false
 
 deferred:
-  - "Director Core frontend integration"
   - "Complex Memory"
   - "Knowledge Retrieval"
   - "Checkpoint builder"
