@@ -333,7 +333,7 @@ def test_execution_exception_types_are_exported() -> None:
     exported_errors = {name for name in execution.__all__ if name.endswith("Error")}
     assert exported_errors == {
         "DirectorExecutionError", "DirectorExecutionValidationError", "IdempotencyConflictError",
-        "StaleStateVersionError",
+        "SessionReadyError", "StaleStateVersionError",
     }
     assert issubclass(StaleStateVersionError, DirectorExecutionError)
 

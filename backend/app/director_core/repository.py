@@ -26,6 +26,7 @@ from .execution import (
     IdempotencyConflictError,
     PreparedIdempotencyRequest,
     PreparedSuccessfulTurn,
+    SessionReadyError,
     StaleStateVersionError,
     SuccessfulTurnResult,
     prepare_successful_turn,
@@ -475,7 +476,7 @@ class DirectorRepository:
                 self.connection.rollback()
                 return replay
             if session.lifecycle_status != "ACTIVE":
-                raise DirectorExecutionValidationError("READY Session cannot accept a new successful Turn")
+                raise SessionReadyError("READY Session cannot accept a new successful Turn")
             state_row = self.connection.execute(
                 "SELECT * FROM director_working_state WHERE session_id = ?", (session.id,)
             ).fetchone()

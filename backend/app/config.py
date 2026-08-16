@@ -13,6 +13,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = REPOSITORY_ROOT / ".env"
 DEFAULT_CODEX_BIN = shutil.which("codex") or "codex"
 DEFAULT_PROJECTS_ROOT = REPOSITORY_ROOT / "runtime" / "projects"
+DEFAULT_DIRECTOR_DB_PATH = REPOSITORY_ROOT / "runtime" / "director" / "director.sqlite3"
 DEFAULT_FRONTEND_DIST = REPOSITORY_ROOT / "frontend" / "dist"
 DEFAULT_CORS_ORIGINS = "http://localhost:5173"
 DEFAULT_AI_SCRIPT_BASE_URL = "https://api.deepseek.com"
@@ -55,6 +56,13 @@ _load_env_file(ENV_FILE)
 
 CODEX_BIN = os.environ.get("CODEX_BIN", DEFAULT_CODEX_BIN)
 PROJECTS_ROOT = str(_path_setting("PROJECTS_ROOT", DEFAULT_PROJECTS_ROOT))
+DIRECTOR_DB_PATH = _path_setting("DIRECTOR_DB_PATH", DEFAULT_DIRECTOR_DB_PATH)
+DIRECTOR_CONTEXT_MAX_UNITS = int(
+    os.environ.get("DIRECTOR_CONTEXT_MAX_UNITS", "100000")
+)
+DIRECTOR_MAX_INTERNAL_STEPS = int(
+    os.environ.get("DIRECTOR_MAX_INTERNAL_STEPS", "8")
+)
 FRONTEND_DIST = _path_setting("FRONTEND_DIST", DEFAULT_FRONTEND_DIST)
 CORS_ORIGINS = [
     origin.strip()

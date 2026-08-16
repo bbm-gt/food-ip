@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from .api import (
     audio_router,
     creative_router,
+    director_router,
     edits_router,
     materials_router,
     polish_router,
@@ -30,6 +31,7 @@ from .core.store import (
     InvalidProjectIdError,
     ProjectNotFoundError,
 )
+from .director_runtime import initialize_director_database
 
 
 app = FastAPI(title="food-ip")
@@ -43,12 +45,18 @@ app.add_middleware(
 app.include_router(projects_router, prefix="/api")
 app.include_router(script_router, prefix="/api")
 app.include_router(creative_router, prefix="/api")
+app.include_router(director_router, prefix="/api")
 app.include_router(audio_router, prefix="/api")
 app.include_router(materials_router, prefix="/api")
 app.include_router(edits_router, prefix="/api")
 app.include_router(render_router, prefix="/api")
 app.include_router(jobs_router, prefix="/api")
 app.include_router(polish_router, prefix="/api")
+
+
+@app.on_event("startup")
+def initialize_director_core() -> None:
+    initialize_director_database()
 
 
 @app.exception_handler(HTTPException)

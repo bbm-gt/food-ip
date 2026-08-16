@@ -14,6 +14,7 @@ from .execution import (
     CommitSuccessfulTurnInput,
     DirectorExecutionValidationError,
     PreparedIdempotencyRequest,
+    SessionReadyError,
     StaleStateVersionError,
     SuccessfulTurnResult,
     prepare_idempotency_request,
@@ -288,7 +289,7 @@ class DirectorOrchestrator:
 
         session = self.repository.get_session(self.scope, request.session_id)
         if session.lifecycle_status != "ACTIVE":
-            raise DirectorExecutionValidationError(
+            raise SessionReadyError(
                 "READY Session cannot accept a new successful Turn"
             )
         working_state = self._read_or_recover_working_state(request.session_id)

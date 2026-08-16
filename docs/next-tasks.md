@@ -5,7 +5,7 @@
 ## 当前状态
 
 - 范围：Director Core
-- 里程碑：Phase 1E — Stage Handler Contract
+- 里程碑：Phase 1G — Minimal Director API
 - 状态：completed
 
 ## 已完成
@@ -15,21 +15,20 @@
 - Phase 1C — Internal multi-stage loop
 - Phase 1D — Provider-neutral Model Context Assembly
 - Phase 1E — Stage Handler Contract
+- Phase 1F — DeepSeek real-model vertical slice
+- Phase 1G — Minimal Director API
 
 ## 下一步
 
-当前状态：`design_required`。
+当前状态：`awaiting_approved_scope`。
 
-Define the smallest post-Phase-1E Director Core phase needed to connect real model execution without weakening existing contracts.
+No post-Phase-1G Director Core implementation scope is currently approved.
 
-下一阶段必须先完成最小设计并取得用户确认。在获得用户确认前，不得直接开始下一阶段编码。
+在新的产品或架构范围获得确认前，不得自行扩展 Director Core。
 
 ## Deferred
 
-- Production model/provider selection and integration
-- Production prompts
-- Provider parser and retry policy
-- Director Core public API and frontend integration
+- Director Core frontend integration
 - Complex Memory
 - Knowledge Retrieval
 - Checkpoint builder

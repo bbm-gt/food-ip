@@ -38,6 +38,10 @@ class DirectorExecutionValidationError(DirectorExecutionError):
     """A pure input, trace, state, or successful-Turn closure violation."""
 
 
+class SessionReadyError(DirectorExecutionValidationError):
+    """A new owner request targeted a Session that has already reached READY."""
+
+
 class StaleStateVersionError(DirectorExecutionError):
     """The request's expected state version is not the current authority."""
 
@@ -533,6 +537,7 @@ __all__ = [
     "IdempotencyConflictError",
     "PreparedIdempotencyRequest",
     "PreparedSuccessfulTurn",
+    "SessionReadyError",
     "StaleStateVersionError",
     "SuccessfulTurnResult",
     "prepare_successful_turn",

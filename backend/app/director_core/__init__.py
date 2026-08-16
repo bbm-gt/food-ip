@@ -37,6 +37,7 @@ from .repository import (
     IdempotencyConflictError,
     SQLiteBusyError,
 )
+from .execution import SessionReadyError
 from .stage_handler import (
     AuthoritativeObjectDeletionError,
     ContentIdentityError,
@@ -117,6 +118,7 @@ __all__ = [
     "StageExecutor",
     "IdempotencyConflictError",
     "SessionLockManager",
+    "SessionReadyError",
     "SQLiteBusyError",
     "TurnCandidate",
     "TurnOrchestrationContext",
