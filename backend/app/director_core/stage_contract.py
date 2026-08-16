@@ -113,7 +113,11 @@ def validate_outcome_envelope(
     if spec["gate_outcome"] is None:
         if gate is not None:
             raise ValueError("this Stage outcome forbids gate")
-    elif gate is None and allow_legacy_null_gate:
+    elif (
+        gate is None
+        and allow_legacy_null_gate
+        and transition_reason_code != "REVIEW_PASSED"
+    ):
         pass
     elif (
         gate is None

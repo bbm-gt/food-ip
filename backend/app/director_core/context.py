@@ -282,7 +282,7 @@ class ModelContextAssembler:
             message_seq=2 * (self.repository.get_working_state(self.scope, session_id).state_version + 1) - 1,
             turn_id="CURRENT_TURN",
         )
-        evidence_messages = self._resolve_evidence(
+        evidence_messages, loaded_evidence_references = self._resolve_evidence(
             session_id,
             working_state,
             current_owner=current_owner,
@@ -291,7 +291,6 @@ class ModelContextAssembler:
             ContextTurn(owner=_message(pair["owner"]), director=_message(pair["director"]))
             for pair in history_rows
         )
-        all_history_rows = self.repository.get_complete_message_turns(self.scope, session_id)
         owner_evidence_references: list[dict[str, str]] = [{
             "evidence_type": "owner_message",
             "target_id": current_owner.id,
@@ -299,12 +298,10 @@ class ModelContextAssembler:
         }]
         owner_evidence_references.extend({
             "evidence_type": "owner_message",
-            "target_id": pair["owner"]["id"],
+            "target_id": turn.owner.id,
             "target_session_id": session_id,
-        } for pair in all_history_rows)
-        owner_evidence_references.extend(
-            reference for reference, _inherited_from in _references(working_state)
-        )
+        } for turn in history)
+        owner_evidence_references.extend(loaded_evidence_references)
         owner_evidence_references = list({
             (reference["evidence_type"], reference["target_id"], reference["target_session_id"]): reference
             for reference in owner_evidence_references
@@ -371,9 +368,10 @@ class ModelContextAssembler:
         working_state: dict[str, Any],
         *,
         current_owner: ContextMessage,
-    ) -> list[ContextMessage]:
+    ) -> tuple[list[ContextMessage], list[dict[str, Any]]]:
         resolved: list[ContextMessage] = []
-        seen: set[str] = set()
+        resolved_references: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
         session = self.repository.get_session(self.scope, session_id)
         try:
             self.repository.validate_context_evidence_closure(
@@ -389,9 +387,12 @@ class ModelContextAssembler:
         for raw_reference, inherited_from in _references(working_state):
             target_id = raw_reference["target_id"]
             target_session_id = raw_reference["target_session_id"]
-            if target_id in seen:
+            reference_key = (
+                raw_reference["evidence_type"], target_id, target_session_id
+            )
+            if reference_key in seen:
                 continue
-            seen.add(target_id)
+            seen.add(reference_key)
             if target_id == current_owner.id:
                 if target_session_id != session_id:
                     raise EvidenceReferenceError("current OWNER Evidence has the wrong Session")
@@ -415,6 +416,7 @@ class ModelContextAssembler:
                 if source_ready["session_id"] != target_session_id:
                     raise EvidenceReferenceError("inherited Evidence source Session does not match")
                 resolved.append(_message(row))
+                resolved_references.append(raw_reference)
                 continue
             try:
                 row = self.repository.get_owner_message_for_context(
@@ -425,7 +427,8 @@ class ModelContextAssembler:
                     f"Evidence Reference does not resolve to a committed OWNER Message: {target_id}"
                 ) from exc
             resolved.append(_message(row))
-        return resolved
+            resolved_references.append(raw_reference)
+        return resolved, resolved_references
 
 
 # Short discoverable aliases preserve the single assembler/budget boundary.

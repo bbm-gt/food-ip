@@ -209,15 +209,43 @@ def test_review_blocked_route_and_review_passed_gate_are_closed() -> None:
         "transition_reason_code": "REVIEW_PASSED", "gate": None,
         "review": {"outcome": "PASSED", "root_cause": None}, "candidate_revision": 1,
     }
-    assert ExecutionStep.model_validate(passed).gate is None
+    with pytest.raises(ValidationError):
+        ExecutionStep.model_validate(passed)
 
 
-def test_historical_trace_v1_accepts_legal_null_gate_without_version_change() -> None:
+def test_historical_review_passed_rejects_wrong_gate_and_accepts_readiness_gate() -> None:
+    step = {
+        "step_no": 1, "entered_stage": "REVIEW", "run_control": "READY",
+        "target_stage": "READY", "transition_reason_code": "REVIEW_PASSED",
+        "gate": {
+            "outcome": "BLOCKED", "gate_code": "CONTENT_INCOMPLETE",
+            "explanation": "错误 Gate。",
+        },
+        "review": {"outcome": "PASSED", "root_cause": None}, "candidate_revision": 1,
+    }
+    with pytest.raises(ValidationError):
+        ExecutionStep.model_validate(step)
+
+    step["gate"] = {
+        "outcome": "PASSED", "gate_code": "READINESS_PASSED", "explanation": "内容可拍。",
+    }
+    validated = ExecutionStep.model_validate(step)
+    assert validated.gate is not None
+    assert validated.gate.gate_code == "READINESS_PASSED"
+
+
+@pytest.mark.parametrize(("entered_stage", "target_stage"), [
+    ("EXPLORE", "EXPLORE"),
+    ("DEEPEN", "DEEPEN"),
+])
+def test_historical_trace_v1_accepts_legal_wait_null_gate_without_version_change(
+    entered_stage: str, target_stage: str
+) -> None:
     trace = {"format_version": 1, "steps": [{
         "step_no": 1,
-        "entered_stage": "EXPLORE",
+        "entered_stage": entered_stage,
         "run_control": "WAIT_FOR_OWNER",
-        "target_stage": "EXPLORE",
+        "target_stage": target_stage,
         "transition_reason_code": "OWNER_INPUT_REQUIRED",
         "gate": None,
         "review": None,
@@ -225,9 +253,9 @@ def test_historical_trace_v1_accepts_legal_null_gate_without_version_change() ->
     }]}
     validated = validate_turn_execution_trace(
         trace,
-        pre_stage="EXPLORE",
+        pre_stage=entered_stage,
         final_run_control="WAIT_FOR_OWNER",
-        target_stage="EXPLORE",
+        target_stage=target_stage,
         transition_reason_code="OWNER_INPUT_REQUIRED",
         gate_outcome=None,
         review_root_cause=None,

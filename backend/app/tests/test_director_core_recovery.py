@@ -252,6 +252,65 @@ def test_successful_recovery_changes_only_working_state(repository: DirectorRepo
     assert after["director_context_checkpoints"] == before["director_context_checkpoints"]
 
 
+def test_recovery_accepts_historical_explore_wait_with_null_gate(repository: DirectorRepository) -> None:
+    scope = AuthorizationScope("workspace-a", "project-a")
+    _, ready_id, _ = _finish_source(repository, scope)
+    session = repository.create_revision_session(scope, ready_id)
+    _insert_revision_turn(
+        repository, session.id, repository.get_working_state(scope, session.id).state_json
+    )
+    row = repository.connection.execute(
+        "SELECT id, execution_trace_json FROM director_turns WHERE session_id = ?",
+        (session.id,),
+    ).fetchone()
+    trace = json.loads(row["execution_trace_json"])
+    trace["steps"][0]["gate"] = None
+    repository.connection.execute("DROP TRIGGER director_turns_update_guard")
+    repository.connection.execute(
+        "UPDATE director_turns SET execution_trace_json = ?, gate_outcome = NULL WHERE id = ?",
+        (canonical_text(trace), row["id"]),
+    )
+    repository.connection.commit()
+    apply_migrations(repository.connection)
+    _drop_working_state(repository, session.id)
+
+    recovered = repository.recover_working_state(scope, session.id)
+    assert recovered.stage == "EXPLORE"
+    assert recovered.state_version == 1
+
+
+@pytest.mark.parametrize("gate", [
+    None,
+    {"outcome": "PASSED", "gate_code": "CONTENT_INCOMPLETE", "explanation": "错误 Gate。"},
+])
+def test_recovery_rejects_review_passed_without_exact_readiness_gate(
+    repository: DirectorRepository, gate: dict | None
+) -> None:
+    scope, session_id, _ready_id = _ready_recovery_fixture(repository)
+    row = repository.connection.execute(
+        "SELECT id, execution_trace_json FROM director_turns WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    trace = json.loads(row["execution_trace_json"])
+    trace["steps"][-1]["gate"] = gate
+    repository.connection.execute("DROP TRIGGER director_turns_update_guard")
+    repository.connection.execute(
+        "UPDATE director_turns SET execution_trace_json = ? WHERE id = ?",
+        (canonical_text(trace), row["id"]),
+    )
+    repository.connection.commit()
+    apply_migrations(repository.connection)
+
+    with pytest.raises(DirectorIntegrityError):
+        repository.recover_working_state(scope, session_id)
+
+
+def test_recovery_accepts_review_passed_with_exact_readiness_gate(repository: DirectorRepository) -> None:
+    scope, session_id, _ready_id = _ready_recovery_fixture(repository)
+    recovered = repository.recover_working_state(scope, session_id)
+    assert recovered.stage == "READY"
+
+
 def test_revision_v0_recovery_restores_exact_direct_baseline(repository: DirectorRepository) -> None:
     scope = AuthorizationScope("workspace-a", "project-a")
     _, ready_id, _ = _finish_source(repository, scope)

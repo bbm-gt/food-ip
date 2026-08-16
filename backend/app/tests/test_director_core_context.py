@@ -27,7 +27,10 @@ from backend.app.director_core.orchestrator import (
     StageExecutionResult,
 )
 from backend.app.director_core.repository import AuthorizationScope, DirectorRepository
-from backend.app.director_core.stage_handler import StageModelOutputError
+from backend.app.director_core.stage_handler import (
+    StageModelOutputError,
+    validate_stage_model_output,
+)
 
 
 def uid() -> str:
@@ -612,6 +615,27 @@ def test_stage_contract_exposes_only_shared_legal_combinations(repository, stage
         }
 
 
+def insert_checkpoint(repo: DirectorRepository, session_id: str, covered_through_seq: int) -> None:
+    payload = {
+        "conversation_summary": "",
+        "confirmed_owner_positions": [],
+        "open_threads": [],
+        "abandoned_directions": [],
+    }
+    repo.connection.execute(
+        """INSERT INTO director_context_checkpoints
+           (id, session_id, covered_through_seq, format_version, checkpoint_json,
+            integrity_sha256, status, discarded_at, discard_reason_code, created_at)
+           VALUES (?, ?, ?, 1, ?, ?, 'VALID', NULL, NULL, ?)""",
+        (
+            uid(), session_id, covered_through_seq, canonical_text(payload),
+            checkpoint_sha256(session_id, covered_through_seq, payload, format_version=1),
+            "2026-01-01T00:00:00.000Z",
+        ),
+    )
+    repo.connection.commit()
+
+
 def test_model_context_exposes_copyable_current_owner_evidence_reference(repository) -> None:
     repo, scope, session_id = repository
     owner_message_id = uid()
@@ -627,6 +651,163 @@ def test_model_context_exposes_copyable_current_owner_evidence_reference(reposit
         "target_id": owner_message_id,
         "target_session_id": session_id,
     }]
+
+
+def test_checkpoint_covered_unrelated_owner_is_not_authorized_but_loaded_history_is(repository) -> None:
+    repo, scope, session_id = repository
+    orchestrator = DirectorOrchestrator(
+        repo, scope, lambda context: wait_result(context), max_internal_steps=1
+    )
+    orchestrator.run(make_request(session_id, "covered"))
+    orchestrator.run(make_request(session_id, "loaded", expected=1))
+    rows = repo.get_complete_message_turns(scope, session_id)
+    covered_owner_id = rows[0]["owner"]["id"]
+    loaded_owner_id = rows[1]["owner"]["id"]
+    insert_checkpoint(repo, session_id, covered_through_seq=2)
+
+    context = assembler(repo, scope).assemble(
+        session_id=session_id,
+        stage="EXPLORE",
+        working_state=repo.get_working_state(scope, session_id).state_json,
+        owner_message_id=uid(),
+        owner_text="当前老板消息。",
+    )
+    bindings = context.to_dict()["owner_evidence_references"]
+    binding_ids = {binding["target_id"] for binding in bindings}
+    assert [turn.owner.id for turn in context.history_turns] == [loaded_owner_id]
+    assert loaded_owner_id in binding_ids
+    assert covered_owner_id not in binding_ids
+
+
+def test_checkpoint_covered_owner_is_authorized_only_when_point_loaded_as_evidence(repository) -> None:
+    repo, scope, session_id = repository
+    orchestrator = DirectorOrchestrator(
+        repo, scope, lambda context: wait_result(context), max_internal_steps=1
+    )
+    orchestrator.run(make_request(session_id, "early"))
+    early_owner_id = repo.get_complete_message_turns(scope, session_id)[0]["owner"]["id"]
+    insert_checkpoint(repo, session_id, covered_through_seq=2)
+    state = repo.get_working_state(scope, session_id).state_json
+    evidence_ref = {
+        "evidence_type": "owner_message",
+        "target_id": early_owner_id,
+        "target_session_id": session_id,
+    }
+    state["owner_facts"] = [{
+        "item_id": uid(),
+        "statement": "老板早期提供的真实内容。",
+        "evidence_refs": [evidence_ref],
+        "supersedes_item_ids": [],
+        "inherited_from": None,
+    }]
+    context = assembler(repo, scope).assemble(
+        session_id=session_id,
+        stage="EXPLORE",
+        working_state=state,
+        owner_message_id=uid(),
+        owner_text="当前老板消息。",
+    )
+    assert context.history_turns == ()
+    assert [message.id for message in context.evidence_messages] == [early_owner_id]
+    assert evidence_ref in context.to_dict()["owner_evidence_references"]
+
+    post_state = context.to_dict()["working_state"]
+    post_state["direction"] = {
+        "item_id": uid(),
+        "statement": "沿早期真实内容展开。",
+        "owner_confirmed": True,
+        "evidence_refs": [evidence_ref],
+        "inherited_from": None,
+    }
+    validated = validate_stage_model_output({
+        "output_format_version": 1,
+        "run_control": "CONTINUE",
+        "target_stage": "DEEPEN",
+        "transition_reason_code": "DIRECTION_CONFIRMED",
+        "director_message": None,
+        "gate": None,
+        "review": None,
+        "post_state": post_state,
+    }, context=context)
+    assert validated.post_state.direction is not None
+
+
+def test_unloaded_historical_owner_reference_is_rejected(repository) -> None:
+    repo, scope, session_id = repository
+    DirectorOrchestrator(
+        repo, scope, lambda context: wait_result(context), max_internal_steps=1
+    ).run(make_request(session_id, "unloaded"))
+    old_owner_id = repo.get_complete_message_turns(scope, session_id)[0]["owner"]["id"]
+    insert_checkpoint(repo, session_id, covered_through_seq=2)
+    context = assembler(repo, scope).assemble(
+        session_id=session_id,
+        stage="EXPLORE",
+        working_state=repo.get_working_state(scope, session_id).state_json,
+        owner_message_id=uid(),
+        owner_text="当前老板消息。",
+    )
+    post_state = context.to_dict()["working_state"]
+    post_state["direction"] = {
+        "item_id": uid(),
+        "statement": "试图引用未加载历史。",
+        "owner_confirmed": True,
+        "evidence_refs": [{
+            "evidence_type": "owner_message",
+            "target_id": old_owner_id,
+            "target_session_id": session_id,
+        }],
+        "inherited_from": None,
+    }
+    with pytest.raises(StageModelOutputError, match="authorized OWNER Evidence Reference"):
+        validate_stage_model_output({
+            "output_format_version": 1,
+            "run_control": "CONTINUE",
+            "target_stage": "DEEPEN",
+            "transition_reason_code": "DIRECTION_CONFIRMED",
+            "director_message": None,
+            "gate": None,
+            "review": None,
+            "post_state": post_state,
+        }, context=context)
+
+
+def test_checkpoint_keeps_long_history_bindings_bounded_and_bindings_use_budget(repository) -> None:
+    repo, scope, session_id = repository
+    orchestrator = DirectorOrchestrator(
+        repo, scope, lambda context: wait_result(context), max_internal_steps=1
+    )
+    for index in range(20):
+        orchestrator.run(make_request(session_id, f"history-{index}", expected=index))
+    insert_checkpoint(repo, session_id, covered_through_seq=40)
+    current_owner_id = uid()
+    context = assembler(repo, scope).assemble(
+        session_id=session_id,
+        stage="EXPLORE",
+        working_state=repo.get_working_state(scope, session_id).state_json,
+        owner_message_id=current_owner_id,
+        owner_text="当前老板消息。",
+    )
+    assert context.history_turns == ()
+    assert context.to_dict()["owner_evidence_references"] == [{
+        "evidence_type": "owner_message",
+        "target_id": current_owner_id,
+        "target_session_id": session_id,
+    }]
+
+    class BindingCounter:
+        def estimate(self, value):
+            if isinstance(value, dict) and "owner_references" in value:
+                return 10 * len(value["owner_references"])
+            return 0
+
+    with pytest.raises(ContextBudgetExceededError, match="irreducible"):
+        ModelContextAssembler(repo, scope, ContextBudget(5, BindingCounter())).assemble(
+            session_id=session_id,
+            stage="EXPLORE",
+            working_state=repo.get_working_state(scope, session_id).state_json,
+            owner_message_id=uid(),
+            owner_text="当前老板消息。",
+        )
 
 
 def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) -> None:
