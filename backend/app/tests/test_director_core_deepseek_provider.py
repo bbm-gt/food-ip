@@ -38,6 +38,7 @@ from backend.app.director_core.stage_handler import (
     ForgedUUIDError,
     StageContractViolationError,
     StageModelOutputSchemaError,
+    validate_stage_model_output,
 )
 
 
@@ -168,7 +169,9 @@ def test_normal_request_is_sync_non_streaming_json_and_returns_plain_dict() -> N
     assert body["response_format"] == {"type": "json_object"}
     assert body["thinking"] == {"type": "disabled"}
     assert body["max_tokens"] == 8000
-    assert json.loads(body["messages"][1]["content"]) == context.to_dict()
+    assert json.loads(body["messages"][1]["content"]) == {
+        "model_context": context.to_dict()
+    }
     assert "test-secret" not in repr(handler)
 
 
@@ -189,7 +192,54 @@ def test_exactly_four_stage_prompts_use_the_existing_model_context(stage: str) -
     system_prompt = bodies[0]["messages"][0]["content"]
     assert DEEPSEEK_STAGE_PROMPTS[stage] in system_prompt
     assert "只输出一个完整 JSON object" in system_prompt
-    assert json.loads(bodies[0]["messages"][1]["content"]) == context.to_dict()
+    assert json.loads(bodies[0]["messages"][1]["content"]) == {
+        "model_context": context.to_dict()
+    }
+
+
+def test_prompt_contains_complete_contract_and_a_strictly_legal_json_example() -> None:
+    bodies: list[dict] = []
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=completion('{"plain":"object"}'))
+
+    context = model_context("EXPLORE")
+    with httpx.Client(transport=httpx.MockTransport(responder)) as client:
+        make_handler(client)(context)
+
+    prompt = bodies[0]["messages"][0]["content"]
+    for structure_name in (
+        "OwnerFact",
+        "OwnerConstraint",
+        "AIJudgment",
+        "UnconfirmedInference",
+        "RejectedItem",
+        "Direction",
+        "RequiredConfirmation",
+        "MaterialState",
+        "Content",
+        "Draft",
+        "Working State Review",
+        "GateResult",
+        "Trace Review",
+        "StageModelProposalV1",
+    ):
+        assert structure_name in prompt
+    assert "所有对象（包括嵌套对象）都禁止额外字段" in prompt
+    assert "post_state 必须是应用本阶段结果后的完整状态，不是 patch" in prompt
+    assert "new:item:<local_key>" in prompt
+    assert "new:draft:<local_key>" in prompt
+    assert "new:review:<local_key>" in prompt
+    assert "禁止拒绝同一输出中新建的对象" in prompt
+
+    example_text = prompt.split("完整 JSON 示例开始\n", 1)[1].split(
+        "\n完整 JSON 示例结束", 1
+    )[0]
+    example = json.loads(example_text)
+    validated = validate_stage_model_output(example, context=context)
+    assert validated.output_format_version == 1
+    assert validated.post_state.format_version == 1
 
 
 def test_ready_never_sends_an_http_request() -> None:
@@ -359,7 +409,7 @@ def request(session_id: str, client_id: str = "deepseek-turn") -> DirectorTurnRe
 
 def proposal_from_request(request_body: bytes, kind: str) -> dict:
     body = json.loads(request_body)
-    context = json.loads(body["messages"][1]["content"])
+    context = json.loads(body["messages"][1]["content"])["model_context"]
     state = deepcopy(context["working_state"])
     reference = deepcopy(context["owner_evidence_references"][0])
     if kind == "schema":
@@ -422,6 +472,118 @@ def test_real_provider_vertical_slice_commits_through_existing_executor(
         "SELECT count(*) FROM director_messages"
     ).fetchone()[0] == 2
     assert repository.get_working_state(scope, session_id).state_version == 1
+
+
+def test_real_handler_mock_closes_explore_deepen_wait_in_one_atomic_owner_turn(
+    director_repository,
+    monkeypatch,
+) -> None:
+    repository, scope, session_id = director_repository
+    bodies: list[dict] = []
+    commit_calls = 0
+    original_commit = repository.commit_successful_turn
+
+    def counting_commit(commit_scope, prepared):
+        nonlocal commit_calls
+        commit_calls += 1
+        return original_commit(commit_scope, prepared)
+
+    monkeypatch.setattr(repository, "commit_successful_turn", counting_commit)
+
+    def responder(http_request: httpx.Request) -> httpx.Response:
+        body = json.loads(http_request.content)
+        bodies.append(body)
+        context = json.loads(body["messages"][1]["content"])["model_context"]
+        stage = context["stage_contract"]["stage"]
+        state = deepcopy(context["working_state"])
+        if stage == "EXPLORE":
+            state["direction"] = {
+                "item_id": "new:item:direction_1",
+                "statement": "讲老板为什么一直坚持一道真实菜品。",
+                "owner_confirmed": True,
+                "evidence_refs": [
+                    deepcopy(context["owner_evidence_references"][0])
+                ],
+                "inherited_from": None,
+            }
+            proposal = {
+                "output_format_version": 1,
+                "run_control": "CONTINUE",
+                "target_stage": "DEEPEN",
+                "transition_reason_code": "DIRECTION_CONFIRMED",
+                "director_message": None,
+                "gate": None,
+                "review": None,
+                "post_state": state,
+            }
+        else:
+            assert stage == "DEEPEN"
+            state["material_state"] = {
+                "status": "INSUFFICIENT",
+                "required_confirmations": [{
+                    "item_id": "new:item:confirmation_1",
+                    "statement": "补充这道菜被长期保留的一个具体经历。",
+                    "reason": "核心表达仍缺一个可追溯的真实细节。",
+                    "evidence_refs": [],
+                    "inherited_from": None,
+                }],
+            }
+            proposal = {
+                "output_format_version": 1,
+                "run_control": "WAIT_FOR_OWNER",
+                "target_stage": "DEEPEN",
+                "transition_reason_code": "OWNER_INPUT_REQUIRED",
+                "director_message": "请补充这道菜一直保留到现在的一个具体经历。",
+                "gate": {
+                    "outcome": "BLOCKED",
+                    "gate_code": "MATERIAL_INSUFFICIENT",
+                    "explanation": "方向已确认，但还缺支撑核心表达的真实细节。",
+                },
+                "review": None,
+                "post_state": state,
+            }
+        return httpx.Response(
+            200,
+            json=completion(json.dumps(proposal, ensure_ascii=False)),
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(responder)) as client:
+        executor = DirectorStageExecutor(
+            ModelContextAssembler(repository, scope, ContextBudget(100_000)),
+            make_handler(client),
+        )
+        result = DirectorOrchestrator(
+            repository, scope, executor, max_internal_steps=3
+        ).run(request(session_id, "mock-multistage"))
+
+    assert len(bodies) == 2
+    assert [
+        json.loads(body["messages"][1]["content"])["model_context"]
+        ["stage_contract"]["stage"]
+        for body in bodies
+    ] == ["EXPLORE", "DEEPEN"]
+    for body, stage in zip(bodies, ("EXPLORE", "DEEPEN"), strict=True):
+        assert DEEPSEEK_STAGE_PROMPTS[stage] in body["messages"][0]["content"]
+    assert result.response["run_control"] == "WAIT_FOR_OWNER"
+    assert result.response["stage"] == "DEEPEN"
+    assert commit_calls == 1
+    assert repository.connection.execute(
+        "SELECT count(*) FROM director_turns WHERE session_id = ?", (session_id,)
+    ).fetchone()[0] == 1
+    assert repository.connection.execute(
+        "SELECT count(*) FROM director_messages WHERE session_id = ?", (session_id,)
+    ).fetchone()[0] == 2
+    trace = json.loads(repository.connection.execute(
+        "SELECT execution_trace_json FROM director_turns WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()[0])
+    assert [step["entered_stage"] for step in trace["steps"]] == [
+        "EXPLORE",
+        "DEEPEN",
+    ]
+    state = repository.get_working_state(scope, session_id)
+    assert state.state_version == 1
+    assert state.stage == "DEEPEN"
 
 
 @pytest.mark.parametrize(

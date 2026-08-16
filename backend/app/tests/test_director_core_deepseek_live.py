@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import json
 import os
+from uuid import uuid4
 
 import pytest
 
 from backend.app.director_core.context import ContextBudget, ModelContextAssembler
 from backend.app.director_core.database import apply_migrations, connect
+from backend.app.director_core.models import validate_working_state
 from backend.app.director_core.orchestrator import (
     DirectorOrchestrator,
     DirectorStageExecutor,
     DirectorTurnRequest,
+    StageExecutionContext,
+    StageExecutionResult,
 )
 from backend.app.director_core.providers.deepseek import DeepSeekStageHandler
 from backend.app.director_core.repository import AuthorizationScope, DirectorRepository
@@ -29,8 +34,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_deepseek_live_multi_turn_owner_conversation_commits_atomically(tmp_path) -> None:
-    connection = connect(tmp_path / "director-deepseek-live.sqlite", busy_timeout_ms=100)
+def live_repository(tmp_path, name: str):
+    connection = connect(tmp_path / name, busy_timeout_ms=100)
     apply_migrations(connection)
     repository = DirectorRepository(connection)
     scope = AuthorizationScope("live-workspace", "live-project")
@@ -38,6 +43,45 @@ def test_deepseek_live_multi_turn_owner_conversation_commits_atomically(tmp_path
     executor = DirectorStageExecutor(
         ModelContextAssembler(repository, scope, ContextBudget(1_000_000)),
         DeepSeekStageHandler.from_environment(),
+    )
+    return repository, scope, session, executor
+
+
+def test_deepseek_live_single_stage_produces_strict_structured_output(tmp_path) -> None:
+    repository, scope, session, executor = live_repository(
+        tmp_path, "director-deepseek-live-single-stage.sqlite"
+    )
+    working_state = repository.get_working_state(scope, session.id)
+
+    result = executor(StageExecutionContext(
+        stage="EXPLORE",
+        working_state=working_state.state_json,
+        owner_text=(
+            "我开一家社区小餐馆，现在只确定想做一条真实的短视频，但还没有确认讲什么方向。"
+            "不要替我补事实，请只根据这些信息判断下一步。"
+        ),
+        parameters={},
+        candidate_revision=0,
+        session_id=session.id,
+        owner_message_id=str(uuid4()),
+        is_revision_session=False,
+    ))
+
+    assert isinstance(result, StageExecutionResult)
+    assert result.run_control in {"CONTINUE", "WAIT_FOR_OWNER"}
+    if result.run_control == "WAIT_FOR_OWNER":
+        assert result.target_stage == "EXPLORE"
+        assert isinstance(result.director_message, str) and result.director_message.strip()
+        assert result.gate is not None and result.gate["outcome"] == "BLOCKED"
+    else:
+        assert result.target_stage == "DEEPEN"
+        assert result.director_message is None
+        assert result.post_state["direction"] is not None
+
+
+def test_deepseek_live_multi_turn_owner_conversation_commits_atomically(tmp_path) -> None:
+    repository, scope, session, executor = live_repository(
+        tmp_path, "director-deepseek-live-multi-turn.sqlite"
     )
     orchestrator = DirectorOrchestrator(
         repository, scope, executor, max_internal_steps=8
@@ -57,6 +101,7 @@ def test_deepseek_live_multi_turn_owner_conversation_commits_atomically(tmp_path
 
     committed_turns = 0
     expected_version = 0
+    responses: list[dict] = []
     for index, owner_text in enumerate(owner_messages, 1):
         if repository.get_session(scope, session.id).lifecycle_status == "READY":
             break
@@ -71,14 +116,48 @@ def test_deepseek_live_multi_turn_owner_conversation_commits_atomically(tmp_path
             )
         )
         assert result.replayed is False
-        expected_version = result.response["state_version"]
+        response = result.response
+        assert response["session_id"] == session.id
+        assert response["run_control"] in {"WAIT_FOR_OWNER", "READY"}
+        assert isinstance(response["director_message"], str)
+        assert response["director_message"].strip()
+        responses.append(response)
+        expected_version = response["state_version"]
         committed_turns += 1
 
     assert committed_turns >= 2
+    assert [response["state_version"] for response in responses] == list(
+        range(1, committed_turns + 1)
+    )
     assert repository.connection.execute(
         "SELECT count(*) FROM director_turns WHERE session_id = ?", (session.id,)
     ).fetchone()[0] == committed_turns
     assert repository.connection.execute(
         "SELECT count(*) FROM director_messages WHERE session_id = ?", (session.id,)
     ).fetchone()[0] == committed_turns * 2
-    assert repository.get_working_state(scope, session.id).state_version == committed_turns
+    working_state = repository.get_working_state(scope, session.id)
+    assert working_state.state_version == committed_turns
+    validated_state = validate_working_state(
+        working_state.state_json,
+        stage=working_state.stage,
+        state_version=working_state.state_version,
+    )
+    assert validated_state.direction is not None
+    assert validated_state.direction.evidence_refs
+    assert working_state.stage != "EXPLORE"
+
+    trace_rows = repository.connection.execute(
+        "SELECT execution_trace_json FROM director_turns WHERE session_id = ? "
+        "ORDER BY post_state_version",
+        (session.id,),
+    ).fetchall()
+    assert len(trace_rows) == committed_turns
+    assert all(json.loads(row[0])["steps"] for row in trace_rows)
+
+    if working_state.stage == "READY":
+        ready = repository.connection.execute(
+            "SELECT final_content_json FROM director_ready_content WHERE session_id = ?",
+            (session.id,),
+        ).fetchone()
+        assert ready is not None
+        assert json.loads(ready[0])["script_text"].strip()
