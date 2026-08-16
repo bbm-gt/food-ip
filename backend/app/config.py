@@ -17,6 +17,8 @@ DEFAULT_FRONTEND_DIST = REPOSITORY_ROOT / "frontend" / "dist"
 DEFAULT_CORS_ORIGINS = "http://localhost:5173"
 DEFAULT_AI_SCRIPT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_AI_SCRIPT_MODEL = "deepseek-v4-flash"
+DEFAULT_DIRECTOR_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEFAULT_DIRECTOR_DEEPSEEK_MODEL = "deepseek-v4-flash"
 
 
 def _load_env_file(path: Path) -> None:
@@ -68,5 +70,21 @@ AI_SCRIPT_THINKING = os.environ.get("AI_SCRIPT_THINKING", "disabled").strip().lo
 if AI_SCRIPT_THINKING not in {"enabled", "disabled"}:
     AI_SCRIPT_THINKING = "disabled"
 AI_SCRIPT_TIMEOUT_SECONDS = float(os.environ.get("AI_SCRIPT_TIMEOUT_SECONDS", "90"))
+DIRECTOR_DEEPSEEK_API_KEY = os.environ.get("DIRECTOR_DEEPSEEK_API_KEY", "").strip()
+DIRECTOR_DEEPSEEK_BASE_URL = os.environ.get(
+    "DIRECTOR_DEEPSEEK_BASE_URL", DEFAULT_DIRECTOR_DEEPSEEK_BASE_URL
+).rstrip("/")
+DIRECTOR_DEEPSEEK_MODEL = os.environ.get(
+    "DIRECTOR_DEEPSEEK_MODEL", DEFAULT_DIRECTOR_DEEPSEEK_MODEL
+).strip()
+DIRECTOR_DEEPSEEK_TIMEOUT_SECONDS = float(
+    os.environ.get("DIRECTOR_DEEPSEEK_TIMEOUT_SECONDS", "90")
+)
+DIRECTOR_DEEPSEEK_MAX_OUTPUT_TOKENS = int(
+    os.environ.get("DIRECTOR_DEEPSEEK_MAX_OUTPUT_TOKENS", "8000")
+)
+DIRECTOR_DEEPSEEK_THINKING_MODE = os.environ.get(
+    "DIRECTOR_DEEPSEEK_THINKING_MODE", "disabled"
+).strip().lower()
 FFMPEG_PATH = _probe_binary("ffmpeg")
 FFPROBE_PATH = _probe_binary("ffprobe")
