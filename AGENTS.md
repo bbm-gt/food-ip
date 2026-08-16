@@ -24,6 +24,8 @@ Direction Problem → EXPLORE
 
 The workflow controls only critical boundaries. The LLM makes the concrete creative judgments inside those boundaries.
 
+Current implementation status and next task are defined by docs/project-status.yaml.
+
 ---
 
 ## Product Workflow Rules
@@ -109,13 +111,11 @@ The new and legacy creative cores do not share a core state machine. When reuse 
 
 Continue to reuse and protect general project/file persistence capabilities, message-idempotency patterns, Materials / Upload, Timeline, FFmpeg, Export, and applicable programmatic safety checks.
 
-The current formal development stage is **Phase 1 — Director Core minimum skeleton**. Phase 1 does not include a frontend rewrite, Knowledge Retrieval, complex Memory, Multi-Agent, complete CREATE or REVIEW prompts, or editing-pipeline refactoring. This is an approved implementation direction, not a claim that Director Core already exists.
-
 ---
 
 ## Knowledge Pipeline Rules
 
-`knowledge_pipeline/` remains an independent knowledge-production subsystem; it is not the product's current mainline. The repository's formal mainline is **Director Core Phase 1 — minimum skeleton**. Its existing video pipeline is one implemented and validated ingestion path, not the definition of all future knowledge sources.
+`knowledge_pipeline/` remains an independent knowledge-production subsystem. Its existing video pipeline is one implemented and validated ingestion path, not the definition of all future knowledge sources.
 
 Do not reopen completed reliability work without a concrete regression, failed test, violated invariant, or explicit task. Preserve:
 
@@ -130,6 +130,12 @@ Do not reopen completed reliability work without a concrete regression, failed t
 - fail-fast validation.
 
 Knowledge-source tiers, admission rules, evidence standards, freshness governance, Retrieval design, and evaluation standards remain unconfirmed unless the user explicitly approves them. Do not turn them into implementation decisions. Knowledge-pipeline-specific rules belong in `knowledge_pipeline/AGENTS.md`.
+
+---
+
+## Authoritative Documentation
+
+For intended product and architecture direction, use sources in this order: confirmed user decisions; this file's durable rules; confirmed design and architecture documentation; and `docs/project-status.yaml` for dynamic implementation status and next-task intent. `docs/next-tasks.md` is generated from `docs/project-status.yaml` and is not hand-maintained. Code and tests establish implemented behavior. When these sources disagree, inspect and report the discrepancy rather than silently treating one source as authoritative for both intent and implementation.
 
 ---
 

@@ -1,0 +1,30 @@
+format_version: 1
+updated_at: "2026-08-16"
+
+current:
+  area: "Director Core"
+  milestone: "Phase 1E — Stage Handler Contract"
+  status: "completed"
+
+completed:
+  - "Phase 1A — Persistence foundation"
+  - "Phase 1B — Atomic successful-Turn contract"
+  - "Phase 1C — Internal multi-stage loop"
+  - "Phase 1D — Provider-neutral Model Context Assembly"
+  - "Phase 1E — Stage Handler Contract"
+
+next:
+  status: "design_required"
+  objective: "Define the smallest post-Phase-1E Director Core phase needed to connect real model execution without weakening existing contracts."
+  implementation_allowed: false
+
+deferred:
+  - "Production model/provider selection and integration"
+  - "Production prompts"
+  - "Provider parser and retry policy"
+  - "Director Core public API and frontend integration"
+  - "Complex Memory"
+  - "Knowledge Retrieval"
+  - "Checkpoint builder"
+  - "Multi-Agent, complex Router, or scoring systems"
+  - "Schema or Migration changes without explicit approval"

@@ -4,10 +4,16 @@ on:
   push:
     paths:
       - "backend/**"
+      - "docs/project-status.yaml"
+      - "docs/next-tasks.md"
+      - "scripts/generate_project_docs.py"
       - ".github/workflows/backend-ci.yml"
   pull_request:
     paths:
       - "backend/**"
+      - "docs/project-status.yaml"
+      - "docs/next-tasks.md"
+      - "scripts/generate_project_docs.py"
       - ".github/workflows/backend-ci.yml"
 
 permissions:
@@ -25,4 +31,5 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r backend/requirements.txt
+      - run: python scripts/generate_project_docs.py --check
       - run: python -m pytest backend/app/tests -q --basetemp .pytest-basetemp
