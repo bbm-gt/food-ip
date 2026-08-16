@@ -15,6 +15,7 @@ from backend.app.director_core.orchestrator import (
 )
 from backend.app.director_core.repository import AuthorizationScope, DirectorRepository
 from backend.app.director_core.stage_handler import (
+    AuthoritativeObjectDeletionError,
     ContentIdentityError,
     DuplicateItemIdentityError,
     DraftIdentityError,
@@ -491,6 +492,16 @@ def _owner_fact(ctx, item_id: str, statement: str = "老板确认的一条真实
     }
 
 
+def _owner_constraint(ctx, item_id: str, statement: str = "不要拍后厨。") -> dict:
+    return {
+        "item_id": item_id,
+        "statement": statement,
+        "evidence_refs": [_owner_reference(ctx)],
+        "constraint_kind": "PROHIBITION",
+        "inherited_from": None,
+    }
+
+
 def _rejected(source: dict, item_kind: str, *, item_id: str | None = None, **changes) -> dict:
     value = {
         "item_id": source["item_id"] if item_id is None else item_id,
@@ -740,6 +751,84 @@ def test_working_state_rejects_item_ids_repeated_across_collections() -> None:
         resolve_stage_model_proposal(output(post_state=state), context=ctx)
 
 
+def test_authoritative_owner_fact_cannot_disappear_without_rejection() -> None:
+    ctx = context("EXPLORE")
+    ctx.working_state["owner_facts"] = [_owner_fact(ctx, uid())]
+    with pytest.raises(AuthoritativeObjectDeletionError):
+        resolve_stage_model_proposal(output(post_state=empty_state()), context=ctx)
+
+
+def test_authoritative_owner_constraint_cannot_disappear_without_rejection() -> None:
+    ctx = context("EXPLORE")
+    ctx.working_state["owner_constraints"] = [_owner_constraint(ctx, uid())]
+    with pytest.raises(AuthoritativeObjectDeletionError):
+        resolve_stage_model_proposal(output(post_state=empty_state()), context=ctx)
+
+
+def test_authoritative_direction_cannot_disappear_without_rejection() -> None:
+    ctx = context("EXPLORE")
+    ctx.working_state["direction"] = _confirmed_direction(ctx, uid())
+    with pytest.raises(AuthoritativeObjectDeletionError):
+        resolve_stage_model_proposal(output(post_state=empty_state()), context=ctx)
+
+
+def test_authoritative_owner_fact_can_enter_rejected_with_the_same_identity() -> None:
+    ctx = context("EXPLORE")
+    source = _owner_fact(ctx, uid())
+    ctx.working_state["owner_facts"] = [source]
+    state = deepcopy(ctx.working_state)
+    state["owner_facts"] = []
+    state["rejected_items"] = [_rejected(source, "OWNER_FACT")]
+    resolved = resolve_stage_model_proposal(output(post_state=state), context=ctx)
+    assert resolved.post_state.owner_facts == []
+    assert resolved.post_state.rejected_items[0].item_id == source["item_id"]
+
+
+def test_authoritative_direction_can_enter_rejected_with_the_same_identity() -> None:
+    ctx = context("EXPLORE")
+    source = _confirmed_direction(ctx, uid())
+    ctx.working_state["direction"] = source
+    state = deepcopy(ctx.working_state)
+    state["direction"] = None
+    state["rejected_items"] = [_rejected(source, "DIRECTION")]
+    resolved = resolve_stage_model_proposal(output(post_state=state), context=ctx)
+    assert resolved.post_state.direction is None
+    assert resolved.post_state.rejected_items[0].item_id == source["item_id"]
+
+
+def test_existing_rejected_item_cannot_be_deleted() -> None:
+    ctx = context("EXPLORE")
+    existing = _rejected(_owner_fact(ctx, uid()), "OWNER_FACT")
+    ctx.working_state["rejected_items"] = [existing]
+    with pytest.raises(RejectedItemIdentityError):
+        resolve_stage_model_proposal(output(post_state=empty_state()), context=ctx)
+
+
+def test_existing_rejected_item_cannot_be_modified() -> None:
+    ctx = context("EXPLORE")
+    existing = _rejected(_owner_fact(ctx, uid()), "OWNER_FACT")
+    ctx.working_state["rejected_items"] = [existing]
+    state = empty_state()
+    modified = deepcopy(existing)
+    modified["statement"] = "被篡改的历史拒绝项。"
+    state["rejected_items"] = [modified]
+    with pytest.raises(RejectedItemIdentityError):
+        resolve_stage_model_proposal(output(post_state=state), context=ctx)
+
+
+def test_ai_judgment_and_unconfirmed_inference_can_be_cleared_directly() -> None:
+    ctx = context("EXPLORE")
+    ctx.working_state["ai_judgments"] = [{
+        "item_id": uid(), "judgment_kind": "STRUCTURE", "statement": "暂时判断。",
+    }]
+    ctx.working_state["unconfirmed_inferences"] = [{
+        "item_id": uid(), "statement": "暂未确认的推断。", "reason": "需要老板确认。",
+    }]
+    resolved = resolve_stage_model_proposal(output(post_state=empty_state()), context=ctx)
+    assert resolved.post_state.ai_judgments == []
+    assert resolved.post_state.unconfirmed_inferences == []
+
+
 def _revision_null_draft_context(text: str = "来源内容"):
     state = empty_state()
     state["draft"] = _draft(None, text)
@@ -868,3 +957,59 @@ def test_review_stage_rejects_reusing_the_previous_review_id() -> None:
     }
     with pytest.raises(ReviewIdentityError):
         resolve_stage_model_proposal(output(post_state=deepcopy(ctx.working_state)), context=ctx)
+
+
+def test_authoritative_deletion_failure_leaves_all_six_tables_unchanged(tmp_path) -> None:
+    connection = connect(tmp_path / "authoritative-deletion.sqlite", busy_timeout_ms=100)
+    apply_migrations(connection)
+    repo = DirectorRepository(connection)
+    scope = AuthorizationScope("workspace-1", "project-1")
+    session = repo.create_session(scope)
+
+    def seed_handler(model_context):
+        state = model_context.to_dict()["working_state"]
+        state["owner_facts"] = [{
+            "item_id": temp("item", "seed_fact"),
+            "statement": "老板确认的一条真实事实。",
+            "evidence_refs": [{
+                "evidence_type": "owner_message",
+                "target_id": model_context.current_owner_message.id,
+                "target_session_id": session.id,
+            }],
+            "supersedes_item_ids": [],
+            "inherited_from": None,
+        }]
+        return output(post_state=state)
+
+    assembler = ModelContextAssembler(repo, scope, ContextBudget(100_000))
+    executor = DirectorStageExecutor(assembler, seed_handler)
+    DirectorOrchestrator(repo, scope, executor, 1).run(
+        DirectorTurnRequest(session.id, "seed-fact", 0, "老板输入。", 1, {})
+    )
+    tables = (
+        "director_sessions", "director_messages", "director_working_state",
+        "director_turns", "director_context_checkpoints", "director_ready_content",
+    )
+    before = {
+        table: tuple(map(tuple, connection.execute(f"SELECT * FROM {table}").fetchall()))
+        for table in tables
+    }
+
+    def deleting_handler(model_context):
+        state = model_context.to_dict()["working_state"]
+        state["owner_facts"] = []
+        return output(post_state=state)
+
+    with pytest.raises(AuthoritativeObjectDeletionError):
+        DirectorOrchestrator(
+            repo,
+            scope,
+            DirectorStageExecutor(assembler, deleting_handler),
+            1,
+        ).run(DirectorTurnRequest(session.id, "delete-fact", 1, "老板输入。", 1, {}))
+
+    after = {
+        table: tuple(map(tuple, connection.execute(f"SELECT * FROM {table}").fetchall()))
+        for table in tables
+    }
+    assert after == before

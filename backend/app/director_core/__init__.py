@@ -38,6 +38,7 @@ from .repository import (
     SQLiteBusyError,
 )
 from .stage_handler import (
+    AuthoritativeObjectDeletionError,
     ContentIdentityError,
     DuplicateItemIdentityError,
     DraftIdentityError,
@@ -65,6 +66,7 @@ from .stage_handler import (
 
 __all__ = [
     "AuthorizationScope",
+    "AuthoritativeObjectDeletionError",
     "CheckpointRebuildRequiredError",
     "CommitOutcomeIndeterminateError",
     "CommitRolledBackError",

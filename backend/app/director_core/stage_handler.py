@@ -94,6 +94,10 @@ class RejectedItemIdentityError(IdentityResolutionError):
     """A rejected item does not close over one pre-state effective object."""
 
 
+class AuthoritativeObjectDeletionError(IdentityResolutionError):
+    """A pre-state authoritative object disappeared without rejection."""
+
+
 class DuplicateItemIdentityError(IdentityResolutionError):
     """One item identity appeared in more than one Working State location."""
 
@@ -357,6 +361,12 @@ def _rejected_source_payload(source: dict[str, Any]) -> dict[str, Any]:
 
 def _validate_rejected_item_closure(pre_state: dict[str, Any], post_state: dict[str, Any]) -> None:
     pre_rejected = {item["item_id"]: item for item in pre_state["rejected_items"]}
+    post_rejected = {item["item_id"]: item for item in post_state["rejected_items"]}
+    for item_id in pre_rejected:
+        if item_id not in post_rejected:
+            raise RejectedItemIdentityError(
+                f"existing rejected item {item_id} cannot be deleted"
+            )
     pre_active: dict[str, list[tuple[str, dict[str, Any]]]] = {}
     for kind in ("owner_facts", "owner_constraints", "direction", "ai_judgments", "unconfirmed_inferences"):
         for item in _source_items(pre_state, kind):
@@ -405,6 +415,29 @@ def _validate_rejected_item_closure(pre_state: dict[str, Any], post_state: dict[
         ):
             raise RejectedItemIdentityError(
                 f"rejected item {item_id} must be removed from its effective location"
+            )
+
+
+def _validate_authoritative_object_retention(
+    pre_state: dict[str, Any], post_state: dict[str, Any]
+) -> None:
+    post_rejected_ids = {item["item_id"] for item in post_state["rejected_items"]}
+    for kind in ("owner_facts", "owner_constraints"):
+        post_ids = {item["item_id"] for item in post_state[kind]}
+        for item in pre_state[kind]:
+            if item["item_id"] not in post_ids and item["item_id"] not in post_rejected_ids:
+                raise AuthoritativeObjectDeletionError(
+                    f"pre-state {kind} object {item['item_id']} disappeared without entering rejected_items"
+                )
+
+    before_direction = pre_state["direction"]
+    if before_direction is not None:
+        post_direction = post_state["direction"]
+        retained = post_direction is not None and post_direction["item_id"] == before_direction["item_id"]
+        rejected = before_direction["item_id"] in post_rejected_ids
+        if not retained and not rejected:
+            raise AuthoritativeObjectDeletionError(
+                f"pre-state Direction {before_direction['item_id']} disappeared without entering rejected_items"
             )
 
 
@@ -506,6 +539,7 @@ def _resolve_identity_references(proposal_state: dict[str, Any], context: Any) -
         pre_state, resolved, context, ids_by_kind, generated_by_namespace
     )
     _validate_global_item_uniqueness(resolved)
+    _validate_authoritative_object_retention(pre_state, resolved)
     _validate_rejected_item_closure(pre_state, resolved)
     return resolved
 
@@ -799,6 +833,7 @@ def validate_stage_model_output(
 
 
 __all__ = [
+    "AuthoritativeObjectDeletionError",
     "ContentIdentityError",
     "DuplicateItemIdentityError",
     "DuplicateTemporaryDefinitionError",
