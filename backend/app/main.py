@@ -64,10 +64,14 @@ def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse
     del request
     detail = exc.detail
     if isinstance(detail, dict) and "message" in detail:
-        detail = detail["message"]
+        content = {"message": str(detail["message"])}
+        if isinstance(detail.get("code"), str):
+            content["code"] = detail["code"]
+    else:
+        content = {"message": str(detail)}
     return JSONResponse(
         status_code=exc.status_code,
-        content={"message": str(detail)},
+        content=content,
         headers=exc.headers,
     )
 

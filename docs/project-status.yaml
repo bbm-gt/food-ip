@@ -16,8 +16,8 @@ completed:
   - "Phase 1G — Minimal Director API"
 
 test_baseline:
-  ref: "working tree based on 77543443363e0791f1c7e51b9423802406e9fa4f"
-  backend_ci: "passed"
+  ref: "1fd011d17187ad149cab16762d14bd3ecc4562d8"
+  backend_ci: "passed: 522 tests, 2 opt-in live tests skipped"
   coverage: "backend/app/tests; opt-in paid DeepSeek live tests remain skipped unless explicitly enabled"
 
 next:

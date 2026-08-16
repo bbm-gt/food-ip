@@ -245,6 +245,8 @@ def test_idempotency_and_state_version_conflicts(client: TestClient, monkeypatch
 
     assert conflict.status_code == 409
     assert stale.status_code == 409
+    assert conflict.json()["code"] == "idempotency_conflict"
+    assert stale.json()["code"] == "state_version_conflict"
     assert provider.calls == 1
 
 
@@ -255,8 +257,10 @@ def test_ready_returns_full_content_and_rejects_new_message(
     install_provider(monkeypatch, provider)
     project_id = create_project(client)
     session_id = create_session(client, project_id)
+    body = submit_body()
 
-    ready = client.post(submit_url(project_id, session_id), json=submit_body())
+    ready = client.post(submit_url(project_id, session_id), json=body)
+    replay = client.post(submit_url(project_id, session_id), json=body)
     rejected = client.post(
         submit_url(project_id, session_id),
         json=submit_body(expected_state_version=1),
@@ -264,6 +268,10 @@ def test_ready_returns_full_content_and_rejects_new_message(
 
     assert ready.status_code == 200
     assert ready.json()["status"] == "READY"
+    assert replay.status_code == 200
+    assert replay.json()["replayed"] is True
+    assert replay.json()["turn_id"] == ready.json()["turn_id"]
+    assert replay.json()["ready_content"] == ready.json()["ready_content"]
     assert ready.json()["ready_content"] == {
         "id": ready.json()["ready_content"]["id"],
         "title": "一碗面的真实来历",
@@ -271,7 +279,7 @@ def test_ready_returns_full_content_and_rejects_new_message(
         "shooting_notes": ["拍摄老板制作面条的手部特写。"],
     }
     assert rejected.status_code == 409
-    assert rejected.json()["message"] == "session_ready"
+    assert rejected.json()["code"] == "session_ready"
     assert provider.calls == 4
 
 

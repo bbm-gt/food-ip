@@ -79,15 +79,24 @@ def _http_error(status_code: int, message: str) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"message": message})
 
 
+def _conflict_error(code: str, message: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"code": code, "message": message},
+    )
+
+
 def _raise_mapped_error(error: Exception) -> None:
     """Translate only known boundary failures and never expose provider details."""
 
     if isinstance(error, DirectorNotFoundError):
         raise _http_error(status.HTTP_404_NOT_FOUND, "Director 资源不存在") from error
-    if isinstance(error, (IdempotencyConflictError, StaleStateVersionError)):
-        raise _http_error(status.HTTP_409_CONFLICT, "请求与当前 Director 状态冲突") from error
+    if isinstance(error, IdempotencyConflictError):
+        raise _conflict_error("idempotency_conflict", "消息 ID 已用于不同请求") from error
+    if isinstance(error, StaleStateVersionError):
+        raise _conflict_error("state_version_conflict", "请求基于过期的 Director 状态") from error
     if isinstance(error, SessionReadyError):
-        raise _http_error(status.HTTP_409_CONFLICT, "session_ready") from error
+        raise _conflict_error("session_ready", "该 Director Session 已完成") from error
     if isinstance(error, (SQLiteBusyError, CommitRolledBackError, CommitOutcomeIndeterminateError)):
         raise _http_error(status.HTTP_503_SERVICE_UNAVAILABLE, "Director 服务暂时不可用，请使用同一消息 ID 重试") from error
     if isinstance(error, DeepSeekConfigurationError):
