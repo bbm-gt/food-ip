@@ -46,12 +46,18 @@ def context(stage: str, state: dict | None = None):
     session_id = uid()
     owner_id = uid()
     owner = ContextMessage(owner_id, "OWNER", "老板确认了这条内容。", 1, "CURRENT_TURN")
+    owner_reference = {
+        "evidence_type": "owner_message",
+        "target_id": owner_id,
+        "target_session_id": session_id,
+    }
     return SimpleNamespace(
         stage=stage,
         working_state=deepcopy(empty_state() if state is None else state),
         current_owner_message=owner,
         evidence_messages=(),
         history_turns=(),
+        owner_evidence_references=(owner_reference,),
         session_id=session_id,
     )
 
@@ -201,6 +207,42 @@ def test_model_output_is_strict_forbids_unknown_and_infrastructure_fields(change
         validate_stage_model_output(payload, context=context("EXPLORE"))
 
 
+def test_new_stage_model_output_still_requires_gate_field() -> None:
+    payload = output()
+    del payload["gate"]
+    with pytest.raises(StageModelOutputSchemaError):
+        validate_stage_model_output(payload, context=context("EXPLORE"))
+
+
+@pytest.mark.parametrize("wrong_part", ["session", "target"])
+def test_direction_evidence_must_match_the_complete_authorized_reference(wrong_part: str) -> None:
+    ctx = context("EXPLORE")
+    state = empty_state()
+    state["direction"] = direction(ctx)
+    reference = state["direction"]["evidence_refs"][0]
+    if wrong_part == "session":
+        reference["target_session_id"] = uid()
+    else:
+        reference["target_id"] = uid()
+    payload = output(
+        run_control="CONTINUE",
+        target_stage="DEEPEN",
+        transition_reason_code="DIRECTION_CONFIRMED",
+        director_message=None,
+        gate=None,
+        post_state=state,
+    )
+    with pytest.raises(StageContractViolationError, match="exactly match"):
+        validate_stage_model_output(payload, context=ctx)
+
+
+def test_mutated_stage_model_output_instance_is_revalidated_and_rejected() -> None:
+    model = StageModelOutputV1.model_validate(output())
+    object.__setattr__(model, "output_format_version", "1")
+    with pytest.raises(StageModelOutputSchemaError):
+        validate_stage_model_output(model, context=context("EXPLORE"))
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -287,7 +329,77 @@ def test_model_output_failure_leaves_all_six_tables_unchanged(tmp_path) -> None:
     assert after == before
 
 
-def test_consecutive_deepen_material_gap_self_loops_are_atomic(tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("failure_kind", "expected_error"),
+    [
+        ("wrong_session", StageContractViolationError),
+        ("unauthorized_target", StageContractViolationError),
+        ("mutated_instance", StageModelOutputSchemaError),
+        ("missing_gate", StageModelOutputSchemaError),
+    ],
+)
+def test_review_failures_leave_all_six_tables_unchanged(
+    tmp_path, failure_kind, expected_error
+) -> None:
+    connection = connect(tmp_path / f"atomic-{failure_kind}.sqlite", busy_timeout_ms=100)
+    apply_migrations(connection)
+    repo = DirectorRepository(connection)
+    scope = AuthorizationScope("workspace-1", "project-1")
+    session = repo.create_session(scope)
+    tables = (
+        "director_sessions", "director_messages", "director_working_state",
+        "director_turns", "director_context_checkpoints", "director_ready_content",
+    )
+    before = {
+        table: tuple(map(tuple, connection.execute(f"SELECT * FROM {table}").fetchall()))
+        for table in tables
+    }
+
+    def handler(model_context):
+        if failure_kind == "mutated_instance":
+            model = StageModelOutputV1.model_validate(output())
+            object.__setattr__(model, "output_format_version", "1")
+            return model
+        if failure_kind == "missing_gate":
+            payload = output()
+            del payload["gate"]
+            return payload
+        state = model_context.to_dict()["working_state"]
+        reference = deepcopy(model_context.to_dict()["owner_evidence_references"][0])
+        reference[
+            "target_session_id" if failure_kind == "wrong_session" else "target_id"
+        ] = uid()
+        state["direction"] = {
+            "item_id": uid(),
+            "statement": "未经授权的方向。",
+            "owner_confirmed": True,
+            "evidence_refs": [reference],
+            "inherited_from": None,
+        }
+        return output(
+            run_control="CONTINUE",
+            target_stage="DEEPEN",
+            transition_reason_code="DIRECTION_CONFIRMED",
+            director_message=None,
+            gate=None,
+            post_state=state,
+        )
+
+    executor = DirectorStageExecutor(
+        ModelContextAssembler(repo, scope, ContextBudget(100_000)), handler
+    )
+    with pytest.raises(expected_error):
+        DirectorOrchestrator(repo, scope, executor, 2).run(
+            DirectorTurnRequest(session.id, failure_kind, 0, "老板输入。", 1, {})
+        )
+    after = {
+        table: tuple(map(tuple, connection.execute(f"SELECT * FROM {table}").fetchall()))
+        for table in tables
+    }
+    assert after == before
+
+
+def test_real_model_context_unchanged_deepen_material_gap_is_atomic(tmp_path) -> None:
     connection = connect(tmp_path / "material-loop.sqlite", busy_timeout_ms=100)
     apply_migrations(connection)
     repo = DirectorRepository(connection)
@@ -298,6 +410,7 @@ def test_consecutive_deepen_material_gap_self_loops_are_atomic(tmp_path) -> None
         "director_turns", "director_context_checkpoints", "director_ready_content",
     )
     before = {table: tuple(map(tuple, connection.execute(f"SELECT * FROM {table}").fetchall())) for table in tables}
+    gap_confirmation = confirmation()
 
     def handler(model_context):
         state = model_context.to_dict()["working_state"]
@@ -311,7 +424,7 @@ def test_consecutive_deepen_material_gap_self_loops_are_atomic(tmp_path) -> None
             return output(run_control="CONTINUE", target_stage="DEEPEN", transition_reason_code="DIRECTION_CONFIRMED", director_message=None, gate=None, post_state=state)
         state["material_state"] = {
             "status": "INSUFFICIENT",
-            "required_confirmations": [confirmation()],
+            "required_confirmations": [deepcopy(gap_confirmation)],
         }
         return output(run_control="CONTINUE", target_stage="DEEPEN", transition_reason_code="MATERIAL_GAP", director_message=None, gate={"outcome": "BLOCKED", "gate_code": "MATERIAL_INSUFFICIENT", "explanation": "内部投影素材缺口。"}, post_state=state)
 
@@ -319,7 +432,7 @@ def test_consecutive_deepen_material_gap_self_loops_are_atomic(tmp_path) -> None
         ModelContextAssembler(repo, scope, ContextBudget(100_000)), handler
     )
     request = DirectorTurnRequest(session.id, "repeated-gap", 0, "老板输入。", 1, {})
-    with pytest.raises(ValueError, match="consecutive MATERIAL_GAP"):
+    with pytest.raises(StageContractViolationError, match="Working State change"):
         DirectorOrchestrator(repo, scope, executor, 5).run(request)
     after = {table: tuple(map(tuple, connection.execute(f"SELECT * FROM {table}").fetchall())) for table in tables}
     assert after == before

@@ -216,6 +216,7 @@ def test_historical_owner_evidence_is_loaded_even_when_not_current(repository) -
         "SELECT id FROM director_messages WHERE visible_role = 'OWNER'"
     ).fetchone()[0]
     seen: list[tuple[str, str]] = []
+    seen_references: list[dict[str, str]] = []
 
     def handler(context):
         state = context.to_dict()["working_state"]
@@ -246,6 +247,7 @@ def test_historical_owner_evidence_is_loaded_even_when_not_current(repository) -
                 review=None,
             )
         seen.extend((message.id, message.content) for message in context.evidence_messages)
+        seen_references.extend(context.to_dict()["owner_evidence_references"])
         state["material_state"] = {
             "status": "INSUFFICIENT",
             "required_confirmations": [{
@@ -267,6 +269,11 @@ def test_historical_owner_evidence_is_loaded_even_when_not_current(repository) -
         repo, scope, DirectorStageExecutor(assembler(repo, scope), model_handler(handler)), max_internal_steps=2
     ).run(make_request(session_id, "evidence", expected=1))
     assert seen == [(old_owner_id, "老板说了一条可追溯的真实内容。")]
+    assert {
+        "evidence_type": "owner_message",
+        "target_id": old_owner_id,
+        "target_session_id": session_id,
+    } in seen_references
 
 
 def test_checkpoint_loads_only_boundary_after_complete_turns(repository) -> None:
@@ -592,6 +599,34 @@ def test_stage_contract_exposes_only_shared_legal_combinations(repository, stage
         not (entry["run_control"] == "READY" and stage != "REVIEW")
         for entry in context.stage_contract["allowed_combinations"]
     )
+    assert context.stage_contract["outcomes"]
+    for outcome in context.stage_contract["outcomes"]:
+        assert set(outcome["state_requirements"]) == {
+            "confirmed_direction",
+            "material_status",
+            "required_confirmations",
+            "draft",
+            "review",
+            "active_direction",
+            "state_change",
+        }
+
+
+def test_model_context_exposes_copyable_current_owner_evidence_reference(repository) -> None:
+    repo, scope, session_id = repository
+    owner_message_id = uid()
+    context = assembler(repo, scope).assemble(
+        session_id=session_id,
+        stage="EXPLORE",
+        working_state=empty_state(),
+        owner_message_id=owner_message_id,
+        owner_text="当前老板消息。",
+    )
+    assert context.to_dict()["owner_evidence_references"] == [{
+        "evidence_type": "owner_message",
+        "target_id": owner_message_id,
+        "target_session_id": session_id,
+    }]
 
 
 def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) -> None:
@@ -648,6 +683,17 @@ def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) 
     ready_id = ready_outcome.response["ready_content_id"]
     revision = repo.create_revision_session(scope, ready_id)
     revision_state = repo.get_working_state(scope, revision.id).state_json
+    inherited_context = assembler(repo, scope).assemble(
+        session_id=revision.id,
+        stage="EXPLORE",
+        working_state=revision_state,
+        owner_message_id=uid(),
+        owner_text="修改来源内容。",
+    )
+    assert any(
+        reference["target_session_id"] == source_session_id
+        for reference in inherited_context.to_dict()["owner_evidence_references"]
+    )
 
     class StepPolicy:
         def __init__(self) -> None:

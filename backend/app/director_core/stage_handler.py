@@ -15,7 +15,7 @@ from .models import (
     TraceReview,
     WorkingState,
 )
-from .stage_contract import validate_outcome_envelope
+from .stage_contract import outcome_spec, validate_outcome_envelope
 
 
 class StageModelOutputError(ValueError):
@@ -60,44 +60,106 @@ class StageModelOutputV1(StrictModel):
         return value
 
 
-def _legal_owner_message_ids(context: Any) -> set[str]:
-    ids = {context.current_owner_message.id}
-    ids.update(message.id for message in context.evidence_messages if message.role == "OWNER")
-    ids.update(turn.owner.id for turn in context.history_turns)
-    return ids
+def _legal_owner_evidence_references(context: Any) -> set[tuple[str, str, str]]:
+    references = getattr(context, "owner_evidence_references", ())
+    return {
+        (reference["evidence_type"], reference["target_id"], reference["target_session_id"])
+        for reference in references
+    }
 
 
 def _require_confirmed_direction(state: WorkingState, context: Any) -> None:
     direction = state.direction
     if direction is None or direction.owner_confirmed is not True or not direction.evidence_refs:
         raise StageContractViolationError("progression requires an owner-confirmed Direction")
-    legal_ids = _legal_owner_message_ids(context)
-    if any(reference.target_id not in legal_ids for reference in direction.evidence_refs):
-        raise StageContractViolationError(
-            "Direction Evidence must close to a legal OWNER Message in Model Context"
-        )
 
 
-def _require_material_gap(state: WorkingState) -> None:
-    if state.material_state.status != "INSUFFICIENT":
-        raise StageContractViolationError("MATERIAL_GAP requires INSUFFICIENT material")
-    if not state.material_state.required_confirmations:
-        raise StageContractViolationError("MATERIAL_GAP requires confirmations")
+def _require_authorized_evidence(state: WorkingState, context: Any) -> None:
+    legal_references = _legal_owner_evidence_references(context)
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            if "evidence_type" in value:
+                marker = (
+                    value.get("evidence_type"),
+                    value.get("target_id"),
+                    value.get("target_session_id"),
+                )
+                if marker not in legal_references:
+                    raise StageContractViolationError(
+                        "Evidence must exactly match an authorized OWNER Evidence Reference in Model Context"
+                    )
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(state.model_dump(mode="json"))
 
 
-def _require_review_matches_state(output: StageModelOutputV1) -> None:
-    state_review = output.post_state.review
-    if state_review is None or output.review is None:
+def _require_review_matches_state(state: WorkingState, trace_review: TraceReview | None) -> None:
+    state_review = state.review
+    if state_review is None or trace_review is None:
         raise StageContractViolationError("REVIEW output requires a current Working State review")
     if (
-        state_review.outcome != output.review.outcome
-        or state_review.root_cause != output.review.root_cause
-        or output.post_state.draft is None
-        or state_review.against_draft_id != output.post_state.draft.draft_id
+        state_review.outcome != trace_review.outcome
+        or state_review.root_cause != trace_review.root_cause
+        or state.draft is None
+        or state_review.against_draft_id != state.draft.draft_id
     ):
         raise StageContractViolationError(
             "trace review must match Working State review and current Draft"
         )
+
+
+def _normalized_context_state(context: Any) -> WorkingState:
+    to_dict = getattr(context, "to_dict", None)
+    raw_state = to_dict()["working_state"] if callable(to_dict) else deepcopy(context.working_state)
+    return WorkingState.model_validate(raw_state)
+
+
+def _validate_state_requirements(
+    requirements: dict[str, str],
+    *,
+    state: WorkingState,
+    pre_state: WorkingState,
+    trace_review: TraceReview | None,
+    context: Any,
+) -> None:
+    if requirements["active_direction"] == "REQUIRED" and state.direction is None:
+        raise StageContractViolationError("outcome requires an active Direction")
+    if requirements["active_direction"] == "ABSENT" and state.direction is not None:
+        raise StageContractViolationError("outcome requires the active Direction to be cleared")
+    if requirements["confirmed_direction"] == "REQUIRED":
+        _require_confirmed_direction(state, context)
+    if requirements["material_status"] != "ANY" and (
+        state.material_state.status != requirements["material_status"]
+    ):
+        raise StageContractViolationError(
+            f"outcome requires {requirements['material_status']} material"
+        )
+    confirmations = state.material_state.required_confirmations
+    if requirements["required_confirmations"] == "NON_EMPTY" and not confirmations:
+        raise StageContractViolationError("outcome requires material confirmations")
+    if requirements["required_confirmations"] == "EMPTY" and confirmations:
+        raise StageContractViolationError("outcome requires no pending material confirmations")
+    if requirements["draft"] == "REQUIRED" and state.draft is None:
+        raise StageContractViolationError("outcome requires a Draft")
+    if requirements["draft"] == "FINAL_CANDIDATE" and (
+        state.draft is None
+        or state.draft.draft_id is None
+        or state.draft.content_status != "FINAL_CANDIDATE"
+    ):
+        raise StageContractViolationError("outcome requires one UUIDv4 FINAL_CANDIDATE Draft")
+    if requirements["review"] == "ABSENT" and state.review is not None:
+        raise StageContractViolationError("outcome requires review to be absent")
+    if requirements["review"] == "MATCH_TRACE_AND_DRAFT":
+        _require_review_matches_state(state, trace_review)
+    if requirements["state_change"] == "REQUIRED" and (
+        state.model_dump(mode="json") == pre_state.model_dump(mode="json")
+    ):
+        raise StageContractViolationError("outcome requires a meaningful Working State change")
 
 
 def validate_stage_model_output(
@@ -107,17 +169,19 @@ def validate_stage_model_output(
 ) -> StageModelOutputV1:
     """Reject loose provider results, then enforce the current Stage contract."""
 
-    if isinstance(raw_output, StageModelOutputV1):
-        output = raw_output
-    else:
-        if not isinstance(raw_output, dict):
-            raise StageModelOutputTypeError(
-                "Stage model output must be one structured object; text, Markdown, and arrays are forbidden"
-            )
-        try:
-            output = StageModelOutputV1.model_validate(deepcopy(raw_output))
-        except ValidationError as exc:
-            raise StageModelOutputSchemaError("Stage model output failed strict v1 schema") from exc
+    if not isinstance(raw_output, (dict, StageModelOutputV1)):
+        raise StageModelOutputTypeError(
+            "Stage model output must be one structured object; text, Markdown, and arrays are forbidden"
+        )
+    candidate = (
+        raw_output.model_dump(mode="python", warnings=False)
+        if isinstance(raw_output, StageModelOutputV1)
+        else deepcopy(raw_output)
+    )
+    try:
+        output = StageModelOutputV1.model_validate(candidate)
+    except ValidationError as exc:
+        raise StageModelOutputSchemaError("Stage model output failed strict v1 schema") from exc
 
     entered_stage = getattr(context, "stage", None)
     if entered_stage is None:
@@ -132,59 +196,21 @@ def validate_stage_model_output(
             gate=output.gate,
             review=output.review,
         )
-
         state = output.post_state
-        if entered_stage == "EXPLORE" and output.target_stage == "DEEPEN":
-            _require_confirmed_direction(state, context)
-
-        if entered_stage == "DEEPEN":
-            if output.transition_reason_code in {"MATERIAL_GAP", "OWNER_INPUT_REQUIRED"}:
-                _require_material_gap(state)
-                if (
-                    output.transition_reason_code == "MATERIAL_GAP"
-                    and state.model_dump(mode="json") == dict(context.working_state)
-                ):
-                    raise StageContractViolationError(
-                        "internal MATERIAL_GAP must make a meaningful candidate-state change"
-                    )
-            elif output.target_stage == "CREATE":
-                _require_confirmed_direction(state, context)
-                if state.material_state.status != "SUFFICIENT":
-                    raise StageContractViolationError("CREATE requires SUFFICIENT material")
-                if state.material_state.required_confirmations:
-                    raise StageContractViolationError(
-                        "CREATE requires an empty required_confirmations list"
-                    )
-
-        if entered_stage == "CREATE":
-            _require_confirmed_direction(state, context)
-            if state.material_state.status != "SUFFICIENT":
-                raise StageContractViolationError("CREATE requires SUFFICIENT material")
-            if state.review is not None:
-                raise StageContractViolationError("CREATE must clear the current review")
-            draft = state.draft
-            if (
-                draft is None
-                or draft.draft_id is None
-                or draft.content_status != "FINAL_CANDIDATE"
-            ):
-                raise StageContractViolationError(
-                    "CREATE must produce one UUIDv4 FINAL_CANDIDATE Draft"
-                )
-
-        if entered_stage == "REVIEW":
-            _require_review_matches_state(output)
-            if output.transition_reason_code == "MATERIAL_GAP":
-                _require_material_gap(state)
-            elif output.transition_reason_code == "DIRECTION_INVALID":
-                if state.direction is not None:
-                    raise StageContractViolationError(
-                        "an invalid Direction cannot remain the active Direction"
-                    )
-            elif output.transition_reason_code == "REVIEW_PASSED":
-                _require_confirmed_direction(state, context)
-                if state.material_state.status != "SUFFICIENT":
-                    raise StageContractViolationError("READY requires SUFFICIENT material")
+        _require_authorized_evidence(state, context)
+        spec = outcome_spec(
+            entered_stage,
+            output.run_control,
+            output.target_stage,
+            output.transition_reason_code,
+        )
+        _validate_state_requirements(
+            spec["state_requirements"],
+            state=state,
+            pre_state=_normalized_context_state(context),
+            trace_review=output.review,
+            context=context,
+        )
     except StageContractViolationError:
         raise
     except (AttributeError, TypeError, ValueError) as exc:

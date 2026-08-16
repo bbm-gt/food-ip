@@ -8,24 +8,45 @@ from typing import Any
 from .canonical import is_blank_text
 
 
+def _requirements(
+    *,
+    confirmed_direction: str = "OPTIONAL",
+    material_status: str = "ANY",
+    required_confirmations: str = "ANY",
+    draft: str = "OPTIONAL",
+    review: str = "OPTIONAL",
+    active_direction: str = "OPTIONAL",
+    state_change: str = "OPTIONAL",
+) -> dict[str, str]:
+    return {
+        "confirmed_direction": confirmed_direction,
+        "material_status": material_status,
+        "required_confirmations": required_confirmations,
+        "draft": draft,
+        "review": review,
+        "active_direction": active_direction,
+        "state_change": state_change,
+    }
+
+
 STAGE_OUTCOME_CONTRACT: dict[str, tuple[dict[str, Any], ...]] = {
     "EXPLORE": (
-        {"run_control": "WAIT_FOR_OWNER", "target_stage": "EXPLORE", "transition_reason_code": "OWNER_INPUT_REQUIRED", "director_message": "REQUIRED", "gate_outcome": "BLOCKED", "gate_codes": ("DIRECTION_NOT_CONFIRMED", "FACT_BOUNDARY_UNCLEAR"), "review_outcome": None, "review_root_cause": None},
-        {"run_control": "CONTINUE", "target_stage": "DEEPEN", "transition_reason_code": "DIRECTION_CONFIRMED", "director_message": "FORBIDDEN", "gate_outcome": None, "gate_codes": (), "review_outcome": None, "review_root_cause": None},
+        {"run_control": "WAIT_FOR_OWNER", "target_stage": "EXPLORE", "transition_reason_code": "OWNER_INPUT_REQUIRED", "director_message": "REQUIRED", "gate_outcome": "BLOCKED", "gate_codes": ("DIRECTION_NOT_CONFIRMED", "FACT_BOUNDARY_UNCLEAR"), "review_outcome": None, "review_root_cause": None, "state_requirements": _requirements()},
+        {"run_control": "CONTINUE", "target_stage": "DEEPEN", "transition_reason_code": "DIRECTION_CONFIRMED", "director_message": "FORBIDDEN", "gate_outcome": None, "gate_codes": (), "review_outcome": None, "review_root_cause": None, "state_requirements": _requirements(confirmed_direction="REQUIRED", active_direction="REQUIRED")},
     ),
     "DEEPEN": (
-        {"run_control": "CONTINUE", "target_stage": "DEEPEN", "transition_reason_code": "MATERIAL_GAP", "director_message": "FORBIDDEN", "gate_outcome": "BLOCKED", "gate_codes": ("MATERIAL_INSUFFICIENT",), "review_outcome": None, "review_root_cause": None},
-        {"run_control": "WAIT_FOR_OWNER", "target_stage": "DEEPEN", "transition_reason_code": "OWNER_INPUT_REQUIRED", "director_message": "REQUIRED", "gate_outcome": "BLOCKED", "gate_codes": ("MATERIAL_INSUFFICIENT",), "review_outcome": None, "review_root_cause": None},
-        {"run_control": "CONTINUE", "target_stage": "CREATE", "transition_reason_code": "MATERIAL_SUFFICIENT", "director_message": "FORBIDDEN", "gate_outcome": None, "gate_codes": (), "review_outcome": None, "review_root_cause": None},
+        {"run_control": "CONTINUE", "target_stage": "DEEPEN", "transition_reason_code": "MATERIAL_GAP", "director_message": "FORBIDDEN", "gate_outcome": "BLOCKED", "gate_codes": ("MATERIAL_INSUFFICIENT",), "review_outcome": None, "review_root_cause": None, "state_requirements": _requirements(material_status="INSUFFICIENT", required_confirmations="NON_EMPTY", state_change="REQUIRED")},
+        {"run_control": "WAIT_FOR_OWNER", "target_stage": "DEEPEN", "transition_reason_code": "OWNER_INPUT_REQUIRED", "director_message": "REQUIRED", "gate_outcome": "BLOCKED", "gate_codes": ("MATERIAL_INSUFFICIENT",), "review_outcome": None, "review_root_cause": None, "state_requirements": _requirements(material_status="INSUFFICIENT", required_confirmations="NON_EMPTY")},
+        {"run_control": "CONTINUE", "target_stage": "CREATE", "transition_reason_code": "MATERIAL_SUFFICIENT", "director_message": "FORBIDDEN", "gate_outcome": None, "gate_codes": (), "review_outcome": None, "review_root_cause": None, "state_requirements": _requirements(confirmed_direction="REQUIRED", material_status="SUFFICIENT", required_confirmations="EMPTY", active_direction="REQUIRED")},
     ),
     "CREATE": (
-        {"run_control": "CONTINUE", "target_stage": "REVIEW", "transition_reason_code": "DRAFT_CREATED", "director_message": "FORBIDDEN", "gate_outcome": None, "gate_codes": (), "review_outcome": None, "review_root_cause": None},
+        {"run_control": "CONTINUE", "target_stage": "REVIEW", "transition_reason_code": "DRAFT_CREATED", "director_message": "FORBIDDEN", "gate_outcome": None, "gate_codes": (), "review_outcome": None, "review_root_cause": None, "state_requirements": _requirements(confirmed_direction="REQUIRED", material_status="SUFFICIENT", required_confirmations="EMPTY", draft="FINAL_CANDIDATE", review="ABSENT", active_direction="REQUIRED")},
     ),
     "REVIEW": (
-        {"run_control": "CONTINUE", "target_stage": "CREATE", "transition_reason_code": "WRITING_REPAIR", "director_message": "FORBIDDEN", "gate_outcome": "BLOCKED", "gate_codes": ("CONTENT_INCOMPLETE", "NOT_SHOOTABLE", "OWNER_VOICE_MISMATCH"), "review_outcome": "BLOCKED", "review_root_cause": "WRITING_PROBLEM"},
-        {"run_control": "CONTINUE", "target_stage": "DEEPEN", "transition_reason_code": "MATERIAL_GAP", "director_message": "FORBIDDEN", "gate_outcome": "BLOCKED", "gate_codes": ("MATERIAL_INSUFFICIENT",), "review_outcome": "BLOCKED", "review_root_cause": "MATERIAL_PROBLEM"},
-        {"run_control": "CONTINUE", "target_stage": "EXPLORE", "transition_reason_code": "DIRECTION_INVALID", "director_message": "FORBIDDEN", "gate_outcome": "BLOCKED", "gate_codes": ("DIRECTION_NOT_CONFIRMED", "FACT_BOUNDARY_UNCLEAR"), "review_outcome": "BLOCKED", "review_root_cause": "DIRECTION_PROBLEM"},
-        {"run_control": "READY", "target_stage": "READY", "transition_reason_code": "REVIEW_PASSED", "director_message": "REQUIRED", "gate_outcome": "PASSED", "gate_codes": ("READINESS_PASSED",), "review_outcome": "PASSED", "review_root_cause": None},
+        {"run_control": "CONTINUE", "target_stage": "CREATE", "transition_reason_code": "WRITING_REPAIR", "director_message": "FORBIDDEN", "gate_outcome": "BLOCKED", "gate_codes": ("CONTENT_INCOMPLETE", "NOT_SHOOTABLE", "OWNER_VOICE_MISMATCH"), "review_outcome": "BLOCKED", "review_root_cause": "WRITING_PROBLEM", "state_requirements": _requirements(confirmed_direction="REQUIRED", material_status="SUFFICIENT", required_confirmations="EMPTY", draft="REQUIRED", review="MATCH_TRACE_AND_DRAFT", active_direction="REQUIRED")},
+        {"run_control": "CONTINUE", "target_stage": "DEEPEN", "transition_reason_code": "MATERIAL_GAP", "director_message": "FORBIDDEN", "gate_outcome": "BLOCKED", "gate_codes": ("MATERIAL_INSUFFICIENT",), "review_outcome": "BLOCKED", "review_root_cause": "MATERIAL_PROBLEM", "state_requirements": _requirements(confirmed_direction="REQUIRED", material_status="INSUFFICIENT", required_confirmations="NON_EMPTY", draft="REQUIRED", review="MATCH_TRACE_AND_DRAFT", active_direction="REQUIRED")},
+        {"run_control": "CONTINUE", "target_stage": "EXPLORE", "transition_reason_code": "DIRECTION_INVALID", "director_message": "FORBIDDEN", "gate_outcome": "BLOCKED", "gate_codes": ("DIRECTION_NOT_CONFIRMED", "FACT_BOUNDARY_UNCLEAR"), "review_outcome": "BLOCKED", "review_root_cause": "DIRECTION_PROBLEM", "state_requirements": _requirements(draft="REQUIRED", review="MATCH_TRACE_AND_DRAFT", active_direction="ABSENT")},
+        {"run_control": "READY", "target_stage": "READY", "transition_reason_code": "REVIEW_PASSED", "director_message": "REQUIRED", "gate_outcome": "PASSED", "gate_codes": ("READINESS_PASSED",), "review_outcome": "PASSED", "review_root_cause": None, "state_requirements": _requirements(confirmed_direction="REQUIRED", material_status="SUFFICIENT", required_confirmations="EMPTY", draft="REQUIRED", review="MATCH_TRACE_AND_DRAFT", active_direction="REQUIRED")},
     ),
     "READY": (),
 }
@@ -78,6 +99,7 @@ def validate_outcome_envelope(
     director_message: str | None,
     gate: Any,
     review: Any,
+    allow_legacy_null_gate: bool = False,
 ) -> None:
     """Validate the fields shared by model output and persisted trace."""
 
@@ -91,6 +113,8 @@ def validate_outcome_envelope(
     if spec["gate_outcome"] is None:
         if gate is not None:
             raise ValueError("this Stage outcome forbids gate")
+    elif gate is None and allow_legacy_null_gate:
+        pass
     elif (
         gate is None
         or getattr(gate, "outcome", None) != spec["gate_outcome"]

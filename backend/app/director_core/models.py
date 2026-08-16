@@ -340,6 +340,7 @@ class ExecutionStep(StrictModel):
             director_message=(None if self.run_control == "CONTINUE" else "trace-terminal"),
             gate=self.gate,
             review=self.review,
+            allow_legacy_null_gate=True,
         )
         return self
 

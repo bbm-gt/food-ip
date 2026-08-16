@@ -209,5 +209,28 @@ def test_review_blocked_route_and_review_passed_gate_are_closed() -> None:
         "transition_reason_code": "REVIEW_PASSED", "gate": None,
         "review": {"outcome": "PASSED", "root_cause": None}, "candidate_revision": 1,
     }
-    with pytest.raises(ValidationError):
-        ExecutionStep.model_validate(passed)
+    assert ExecutionStep.model_validate(passed).gate is None
+
+
+def test_historical_trace_v1_accepts_legal_null_gate_without_version_change() -> None:
+    trace = {"format_version": 1, "steps": [{
+        "step_no": 1,
+        "entered_stage": "EXPLORE",
+        "run_control": "WAIT_FOR_OWNER",
+        "target_stage": "EXPLORE",
+        "transition_reason_code": "OWNER_INPUT_REQUIRED",
+        "gate": None,
+        "review": None,
+        "candidate_revision": 1,
+    }]}
+    validated = validate_turn_execution_trace(
+        trace,
+        pre_stage="EXPLORE",
+        final_run_control="WAIT_FOR_OWNER",
+        target_stage="EXPLORE",
+        transition_reason_code="OWNER_INPUT_REQUIRED",
+        gate_outcome=None,
+        review_root_cause=None,
+    )
+    assert validated.format_version == 1
+    assert validated.steps[0].gate is None

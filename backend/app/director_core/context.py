@@ -123,6 +123,7 @@ class ModelContext:
     checkpoint: Mapping[str, Any] | None
     history_turns: tuple[ContextTurn, ...]
     evidence_messages: tuple[ContextMessage, ...]
+    owner_evidence_references: tuple[Mapping[str, str], ...]
     estimated_units: int
 
     def __post_init__(self) -> None:
@@ -133,6 +134,7 @@ class ModelContext:
         object.__setattr__(self, "checkpoint", _freeze(self.checkpoint))
         object.__setattr__(self, "history_turns", _freeze(self.history_turns))
         object.__setattr__(self, "evidence_messages", _freeze(self.evidence_messages))
+        object.__setattr__(self, "owner_evidence_references", _freeze(self.owner_evidence_references))
 
     @property
     def owner_message(self) -> str:
@@ -162,6 +164,7 @@ class ModelContext:
             "checkpoint": self.checkpoint,
             "history_turns": self.history_turns,
             "evidence_messages": self.evidence_messages,
+            "owner_evidence_references": self.owner_evidence_references,
             "estimated_units": self.estimated_units,
         })
 
@@ -288,6 +291,24 @@ class ModelContextAssembler:
             ContextTurn(owner=_message(pair["owner"]), director=_message(pair["director"]))
             for pair in history_rows
         )
+        all_history_rows = self.repository.get_complete_message_turns(self.scope, session_id)
+        owner_evidence_references: list[dict[str, str]] = [{
+            "evidence_type": "owner_message",
+            "target_id": current_owner.id,
+            "target_session_id": session_id,
+        }]
+        owner_evidence_references.extend({
+            "evidence_type": "owner_message",
+            "target_id": pair["owner"]["id"],
+            "target_session_id": session_id,
+        } for pair in all_history_rows)
+        owner_evidence_references.extend(
+            reference for reference, _inherited_from in _references(working_state)
+        )
+        owner_evidence_references = list({
+            (reference["evidence_type"], reference["target_id"], reference["target_session_id"]): reference
+            for reference in owner_evidence_references
+        }.values())
 
         rules = deepcopy(_RULES)
         stage_contract = stage_execution_contract(stage)
@@ -303,7 +324,10 @@ class ModelContextAssembler:
             "working_state": working_state,
             "current_owner_message": current_owner,
             "source_ready_content": source,
-            "evidence_messages": evidence_messages,
+            "evidence": {
+                "messages": evidence_messages,
+                "owner_references": owner_evidence_references,
+            },
         }
         irreducible_units = sum(
             self.budget.estimate(value) for value in irreducible_sections.values()
@@ -337,6 +361,7 @@ class ModelContextAssembler:
             checkpoint=checkpoint_payload,
             history_turns=tuple(history_values),
             evidence_messages=tuple(evidence_messages),
+            owner_evidence_references=tuple(owner_evidence_references),
             estimated_units=total_units,
         )
 
