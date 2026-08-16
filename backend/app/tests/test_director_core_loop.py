@@ -98,9 +98,40 @@ def result(
 ) -> StageExecutionResult:
     if message is _DEFAULT_MESSAGE:
         message = None if run_control == "CONTINUE" else "请继续补充真实内容。"
+    state = deepcopy(context.working_state if post_state is None else post_state)
+    if run_control == "WAIT_FOR_OWNER" and gate is None:
+        if target_stage == "DEEPEN":
+            state["material_state"] = {
+                "status": "INSUFFICIENT",
+                "required_confirmations": [{
+                    "item_id": uid(), "statement": "补充关键真实素材", "reason": "素材不足",
+                    "evidence_refs": [], "inherited_from": None,
+                }],
+            }
+            gate = {"outcome": "BLOCKED", "gate_code": "MATERIAL_INSUFFICIENT", "explanation": "仍缺关键素材。"}
+        elif target_stage == "EXPLORE":
+            gate = {"outcome": "BLOCKED", "gate_code": "DIRECTION_NOT_CONFIRMED", "explanation": "方向尚未确认。"}
+    if context.stage == "REVIEW" and run_control == "CONTINUE" and gate is None:
+        root = None if review is None else review.get("root_cause")
+        code = {
+            "WRITING_PROBLEM": "CONTENT_INCOMPLETE",
+            "MATERIAL_PROBLEM": "MATERIAL_INSUFFICIENT",
+            "DIRECTION_PROBLEM": "DIRECTION_NOT_CONFIRMED",
+        }.get(root)
+        if code is not None:
+            gate = {"outcome": "BLOCKED", "gate_code": code, "explanation": "审核发现根因。"}
+    if reason == "MATERIAL_GAP" and gate is None:
+        state["material_state"] = {
+            "status": "INSUFFICIENT",
+            "required_confirmations": [{
+                "item_id": uid(), "statement": "补充关键真实素材", "reason": "素材不足",
+                "evidence_refs": [], "inherited_from": None,
+            }],
+        }
+        gate = {"outcome": "BLOCKED", "gate_code": "MATERIAL_INSUFFICIENT", "explanation": "仍缺关键素材。"}
     return StageExecutionResult(
         director_message=message,
-        post_state=deepcopy(context.working_state if post_state is None else post_state),
+        post_state=state,
         run_control=run_control,
         target_stage=target_stage,
         transition_reason_code=reason,

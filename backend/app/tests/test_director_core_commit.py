@@ -513,7 +513,8 @@ def test_authoritative_pre_stage_mismatch_fails_closed(repository: DirectorRepos
         execution_trace={"format_version": 1, "steps": [{
             "step_no": 1, "entered_stage": "DEEPEN", "run_control": "WAIT_FOR_OWNER",
             "target_stage": "DEEPEN", "transition_reason_code": "OWNER_INPUT_REQUIRED",
-            "gate": None, "review": None, "candidate_revision": 1,
+                "gate": {"outcome": "BLOCKED", "gate_code": "MATERIAL_INSUFFICIENT", "explanation": "素材不足。"},
+                "review": None, "candidate_revision": 1,
         }]},
     )
     prepared = prepare_successful_turn(

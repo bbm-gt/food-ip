@@ -9,6 +9,11 @@ from typing import Annotated, Literal
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator, model_validator
 
 from .canonical import is_blank_text
+from .stage_contract import (
+    STAGE_EXECUTION_COMBINATIONS,
+    stage_execution_contract,
+    validate_outcome_envelope,
+)
 
 
 UUID4_PATTERN = re.compile(
@@ -19,54 +24,6 @@ SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 Stage = Literal["EXPLORE", "DEEPEN", "CREATE", "REVIEW", "READY"]
 RunControl = Literal["CONTINUE", "WAIT_FOR_OWNER", "READY"]
-
-# One shared source of truth for the combinations exposed to a Stage handler
-# and accepted by the persisted ExecutionStep validator.
-STAGE_EXECUTION_COMBINATIONS: dict[Stage, tuple[tuple[RunControl, Stage], ...]] = {
-    "EXPLORE": (
-        ("WAIT_FOR_OWNER", "EXPLORE"),
-        ("CONTINUE", "DEEPEN"),
-    ),
-    "DEEPEN": (
-        ("WAIT_FOR_OWNER", "DEEPEN"),
-        ("CONTINUE", "DEEPEN"),
-        ("CONTINUE", "CREATE"),
-    ),
-    "CREATE": (
-        ("CONTINUE", "REVIEW"),
-    ),
-    "REVIEW": (
-        ("CONTINUE", "CREATE"),
-        ("CONTINUE", "DEEPEN"),
-        ("CONTINUE", "EXPLORE"),
-        ("READY", "READY"),
-    ),
-    "READY": (),
-}
-
-
-def stage_execution_contract(stage: Stage) -> dict[str, object]:
-    """Return the handler-visible legal control/target combinations."""
-
-    combinations = STAGE_EXECUTION_COMBINATIONS[stage]
-    contract: dict[str, object] = {
-        "stage": stage,
-        "allowed_combinations": [
-            {"run_control": run_control, "target_stage": target_stage}
-            for run_control, target_stage in combinations
-        ],
-        "run_controls": list(dict.fromkeys(run_control for run_control, _ in combinations)),
-        "legal_target_stages": list(dict.fromkeys(target_stage for _, target_stage in combinations)),
-    }
-    if stage == "REVIEW":
-        contract["review_routes"] = [
-            {"root_cause": "WRITING_PROBLEM", "run_control": "CONTINUE", "target_stage": "CREATE"},
-            {"root_cause": "MATERIAL_PROBLEM", "run_control": "CONTINUE", "target_stage": "DEEPEN"},
-            {"root_cause": "DIRECTION_PROBLEM", "run_control": "CONTINUE", "target_stage": "EXPLORE"},
-            {"outcome": "PASSED", "run_control": "READY", "target_stage": "READY"},
-        ]
-    return contract
-
 
 def validate_uuid4(value: str) -> str:
     if UUID4_PATTERN.fullmatch(value) is None:
@@ -278,7 +235,7 @@ class Review(StrictModel):
 
 
 class WorkingState(StrictModel):
-    format_version: Literal[1]
+    format_version: StrictInt
     owner_facts: list[OwnerFact]
     ai_judgments: list[AIJudgment]
     unconfirmed_inferences: list[UnconfirmedInference]
@@ -289,14 +246,24 @@ class WorkingState(StrictModel):
     draft: Draft | None
     review: Review | None
 
+    @field_validator("format_version")
+    @classmethod
+    def version_one(cls, value: int) -> int:
+        if value != 1:
+            raise ValueError("only Working State format_version 1 is supported")
+        return value
+
     @model_validator(mode="after")
     def identities_and_review(self) -> "WorkingState":
-        for name in ("owner_facts", "ai_judgments", "unconfirmed_inferences", "rejected_items", "owner_constraints"):
-            _require_unique([item.item_id for item in getattr(self, name)], name)
-        if self.direction is not None and any(
-            item.item_id == self.direction.item_id for item in self.ai_judgments
-        ):
-            raise ValueError("current direction cannot also exist as an AI Judgment copy")
+        item_ids: list[str] = []
+        for name in ("owner_facts", "owner_constraints", "ai_judgments", "unconfirmed_inferences", "rejected_items"):
+            values = [item.item_id for item in getattr(self, name)]
+            _require_unique(values, name)
+            item_ids.extend(values)
+        if self.direction is not None:
+            item_ids.append(self.direction.item_id)
+        item_ids.extend(item.item_id for item in self.material_state.required_confirmations)
+        _require_unique(item_ids, "Working State item_id")
         if self.review is not None:
             if self.draft is None or self.draft.draft_id is None:
                 raise ValueError("review requires a non-null draft_id")
@@ -368,28 +335,16 @@ class ExecutionStep(StrictModel):
 
     @model_validator(mode="after")
     def legal_transition_and_review_route(self) -> "ExecutionStep":
-        if (self.run_control, self.target_stage) not in STAGE_EXECUTION_COMBINATIONS[self.entered_stage]:
-            raise ValueError("illegal Director Core stage transition")
-        if (self.review is not None) != (self.entered_stage == "REVIEW"):
-            raise ValueError("review is only allowed on REVIEW steps")
-        if self.review is not None:
-            expected = {
-                "WRITING_PROBLEM": "CREATE",
-                "MATERIAL_PROBLEM": "DEEPEN",
-                "DIRECTION_PROBLEM": "EXPLORE",
-                None: "READY",
-            }[self.review.root_cause]
-            if self.target_stage != expected:
-                raise ValueError("review root cause does not match target stage")
-            if self.review.outcome == "PASSED" and (
-                self.run_control != "READY" or self.target_stage != "READY"
-                or self.transition_reason_code != "REVIEW_PASSED"
-                or self.gate is None or self.gate.outcome != "PASSED"
-                or self.gate.gate_code != "READINESS_PASSED"
-            ):
-                raise ValueError("passed review requires a passed gate and READY control")
-            if self.review.outcome == "BLOCKED" and self.run_control != "CONTINUE":
-                raise ValueError("blocked review must continue to its repair stage")
+        validate_outcome_envelope(
+            entered_stage=self.entered_stage,
+            run_control=self.run_control,
+            target_stage=self.target_stage,
+            transition_reason_code=self.transition_reason_code,
+            director_message=(None if self.run_control == "CONTINUE" else "trace-terminal"),
+            gate=self.gate,
+            review=self.review,
+            allow_legacy_null_gate=True,
+        )
         return self
 
 
@@ -436,52 +391,6 @@ def validate_turn_execution_trace(
     ):
         raise ValueError("Turn top-level fields do not close over the final trace step")
 
-    reason_routes = {
-        "OWNER_INPUT_REQUIRED": {("EXPLORE", "EXPLORE"), ("DEEPEN", "DEEPEN")},
-        "DIRECTION_CONFIRMED": {("EXPLORE", "DEEPEN")},
-        "DIRECTION_INVALID": {("REVIEW", "EXPLORE")},
-        "MATERIAL_GAP": {("DEEPEN", "DEEPEN"), ("REVIEW", "DEEPEN")},
-        "MATERIAL_SUFFICIENT": {("DEEPEN", "CREATE")},
-        "DRAFT_CREATED": {("CREATE", "REVIEW")},
-        "WRITING_REPAIR": {("REVIEW", "CREATE")},
-        "REVIEW_PASSED": {("REVIEW", "READY")},
-    }
-    for step in steps:
-        if (step.entered_stage, step.target_stage) not in reason_routes[step.transition_reason_code]:
-            raise ValueError("transition reason code does not match its transition")
-        if step.transition_reason_code == "OWNER_INPUT_REQUIRED" and step.run_control != "WAIT_FOR_OWNER":
-            raise ValueError("OWNER_INPUT_REQUIRED requires WAIT_FOR_OWNER")
-        if step.transition_reason_code == "REVIEW_PASSED":
-            if step.run_control != "READY" or step.gate is None or step.gate.gate_code != "READINESS_PASSED" or step.gate.outcome != "PASSED" or step.review is None or step.review.outcome != "PASSED":
-                raise ValueError("REVIEW_PASSED requires READY, a passed readiness gate, and passed review")
-        review_reasons = {
-            "DIRECTION_INVALID": "DIRECTION_PROBLEM",
-            "WRITING_REPAIR": "WRITING_PROBLEM",
-        }
-        if step.entered_stage == "REVIEW" and step.transition_reason_code == "MATERIAL_GAP":
-            review_reasons["MATERIAL_GAP"] = "MATERIAL_PROBLEM"
-        expected_root = review_reasons.get(step.transition_reason_code)
-        if expected_root is not None and (
-            step.review is None
-            or step.review.outcome != "BLOCKED"
-            or step.review.root_cause != expected_root
-        ):
-            raise ValueError("review outcome and root cause do not match the repair transition")
-        if step.gate is not None:
-            gate_targets = {
-                "READINESS_PASSED": ("PASSED", "READY"),
-                "DIRECTION_NOT_CONFIRMED": ("BLOCKED", "EXPLORE"),
-                "MATERIAL_INSUFFICIENT": ("BLOCKED", "DEEPEN"),
-                "CONTENT_INCOMPLETE": ("BLOCKED", "CREATE"),
-                "FACT_BOUNDARY_UNCLEAR": ("BLOCKED", "EXPLORE"),
-                "NOT_SHOOTABLE": ("BLOCKED", "CREATE"),
-                "OWNER_VOICE_MISMATCH": ("BLOCKED", "CREATE"),
-            }
-            if (step.gate.outcome, step.target_stage) != gate_targets[step.gate.gate_code]:
-                raise ValueError("gate outcome/code does not match target stage")
-        if step.review is not None and step.review.outcome == "BLOCKED":
-            if step.run_control != "CONTINUE":
-                raise ValueError("blocked review must continue to its repair stage")
     return trace
 
 

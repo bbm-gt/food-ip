@@ -68,6 +68,21 @@ def test_constraint_kind_is_closed_six_value_enum() -> None:
         WorkingState.model_validate(state)
 
 
+def test_working_state_item_ids_are_unique_across_all_item_collections() -> None:
+    item_id = uid()
+    state = empty_state()
+    state["owner_facts"] = [{
+        "item_id": item_id, "statement": "同一个事实。", "evidence_refs": [evidence()],
+        "supersedes_item_ids": [], "inherited_from": None,
+    }]
+    state["owner_constraints"] = [{
+        "item_id": item_id, "statement": "同一个约束。", "evidence_refs": [evidence()],
+        "constraint_kind": "PROHIBITION", "inherited_from": None,
+    }]
+    with pytest.raises(ValidationError):
+        WorkingState.model_validate(state)
+
+
 def test_rejected_item_evidence_conditions_are_enforced() -> None:
     state = empty_state()
     state["rejected_items"] = [{
@@ -114,7 +129,8 @@ def test_trace_checkpoint_and_first_response_are_strict() -> None:
         "steps": [{
             "step_no": 1, "entered_stage": "EXPLORE", "run_control": "WAIT_FOR_OWNER",
             "target_stage": "EXPLORE", "transition_reason_code": "OWNER_INPUT_REQUIRED",
-            "gate": None, "review": None, "candidate_revision": 1,
+            "gate": {"outcome": "BLOCKED", "gate_code": "DIRECTION_NOT_CONFIRMED", "explanation": "方向尚未确认。"},
+            "review": None, "candidate_revision": 1,
         }],
     }
     TurnExecutionTrace.model_validate(trace)
@@ -210,3 +226,54 @@ def test_review_blocked_route_and_review_passed_gate_are_closed() -> None:
     }
     with pytest.raises(ValidationError):
         ExecutionStep.model_validate(passed)
+
+
+def test_historical_review_passed_rejects_wrong_gate_and_accepts_readiness_gate() -> None:
+    step = {
+        "step_no": 1, "entered_stage": "REVIEW", "run_control": "READY",
+        "target_stage": "READY", "transition_reason_code": "REVIEW_PASSED",
+        "gate": {
+            "outcome": "BLOCKED", "gate_code": "CONTENT_INCOMPLETE",
+            "explanation": "错误 Gate。",
+        },
+        "review": {"outcome": "PASSED", "root_cause": None}, "candidate_revision": 1,
+    }
+    with pytest.raises(ValidationError):
+        ExecutionStep.model_validate(step)
+
+    step["gate"] = {
+        "outcome": "PASSED", "gate_code": "READINESS_PASSED", "explanation": "内容可拍。",
+    }
+    validated = ExecutionStep.model_validate(step)
+    assert validated.gate is not None
+    assert validated.gate.gate_code == "READINESS_PASSED"
+
+
+@pytest.mark.parametrize(("entered_stage", "target_stage"), [
+    ("EXPLORE", "EXPLORE"),
+    ("DEEPEN", "DEEPEN"),
+])
+def test_historical_trace_v1_accepts_legal_wait_null_gate_without_version_change(
+    entered_stage: str, target_stage: str
+) -> None:
+    trace = {"format_version": 1, "steps": [{
+        "step_no": 1,
+        "entered_stage": entered_stage,
+        "run_control": "WAIT_FOR_OWNER",
+        "target_stage": target_stage,
+        "transition_reason_code": "OWNER_INPUT_REQUIRED",
+        "gate": None,
+        "review": None,
+        "candidate_revision": 1,
+    }]}
+    validated = validate_turn_execution_trace(
+        trace,
+        pre_stage=entered_stage,
+        final_run_control="WAIT_FOR_OWNER",
+        target_stage=target_stage,
+        transition_reason_code="OWNER_INPUT_REQUIRED",
+        gate_outcome=None,
+        review_root_cause=None,
+    )
+    assert validated.format_version == 1
+    assert validated.steps[0].gate is None

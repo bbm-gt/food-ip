@@ -15,7 +15,8 @@ from types import MappingProxyType
 from typing import Any, Protocol
 
 from .canonical import is_blank_text
-from .models import EvidenceReference, Stage, STAGE_EXECUTION_COMBINATIONS, stage_execution_contract
+from .models import EvidenceReference, Stage
+from .stage_contract import STAGE_EXECUTION_COMBINATIONS, stage_execution_contract
 from .repository import (
     AuthorizationScope,
     DirectorIntegrityError,
@@ -122,6 +123,7 @@ class ModelContext:
     checkpoint: Mapping[str, Any] | None
     history_turns: tuple[ContextTurn, ...]
     evidence_messages: tuple[ContextMessage, ...]
+    owner_evidence_references: tuple[Mapping[str, str], ...]
     estimated_units: int
 
     def __post_init__(self) -> None:
@@ -132,6 +134,7 @@ class ModelContext:
         object.__setattr__(self, "checkpoint", _freeze(self.checkpoint))
         object.__setattr__(self, "history_turns", _freeze(self.history_turns))
         object.__setattr__(self, "evidence_messages", _freeze(self.evidence_messages))
+        object.__setattr__(self, "owner_evidence_references", _freeze(self.owner_evidence_references))
 
     @property
     def owner_message(self) -> str:
@@ -161,6 +164,7 @@ class ModelContext:
             "checkpoint": self.checkpoint,
             "history_turns": self.history_turns,
             "evidence_messages": self.evidence_messages,
+            "owner_evidence_references": self.owner_evidence_references,
             "estimated_units": self.estimated_units,
         })
 
@@ -169,6 +173,11 @@ _RULES = {
     "workflow": ["EXPLORE", "DEEPEN", "CREATE", "REVIEW", "READY"],
     "owner_fact_boundary": "Only confirmed OWNER Message evidence establishes Owner Facts.",
     "checkpoint_boundary": "Checkpoint is a disposable history cache, never current state or evidence.",
+    "identity_boundary": [
+        "Existing objects must copy IDs from working_state.",
+        "New items use new:item:<local_key>; new drafts use new:draft:<local_key>; new reviews use new:review:<local_key>.",
+        "The model must never invent UUIDs.",
+    ],
     "review_routing": {
         "WRITING_PROBLEM": "CREATE",
         "MATERIAL_PROBLEM": "DEEPEN",
@@ -278,7 +287,7 @@ class ModelContextAssembler:
             message_seq=2 * (self.repository.get_working_state(self.scope, session_id).state_version + 1) - 1,
             turn_id="CURRENT_TURN",
         )
-        evidence_messages = self._resolve_evidence(
+        evidence_messages, loaded_evidence_references = self._resolve_evidence(
             session_id,
             working_state,
             current_owner=current_owner,
@@ -287,6 +296,21 @@ class ModelContextAssembler:
             ContextTurn(owner=_message(pair["owner"]), director=_message(pair["director"]))
             for pair in history_rows
         )
+        owner_evidence_references: list[dict[str, str]] = [{
+            "evidence_type": "owner_message",
+            "target_id": current_owner.id,
+            "target_session_id": session_id,
+        }]
+        owner_evidence_references.extend({
+            "evidence_type": "owner_message",
+            "target_id": turn.owner.id,
+            "target_session_id": session_id,
+        } for turn in history)
+        owner_evidence_references.extend(loaded_evidence_references)
+        owner_evidence_references = list({
+            (reference["evidence_type"], reference["target_id"], reference["target_session_id"]): reference
+            for reference in owner_evidence_references
+        }.values())
 
         rules = deepcopy(_RULES)
         stage_contract = stage_execution_contract(stage)
@@ -302,7 +326,10 @@ class ModelContextAssembler:
             "working_state": working_state,
             "current_owner_message": current_owner,
             "source_ready_content": source,
-            "evidence_messages": evidence_messages,
+            "evidence": {
+                "messages": evidence_messages,
+                "owner_references": owner_evidence_references,
+            },
         }
         irreducible_units = sum(
             self.budget.estimate(value) for value in irreducible_sections.values()
@@ -336,6 +363,7 @@ class ModelContextAssembler:
             checkpoint=checkpoint_payload,
             history_turns=tuple(history_values),
             evidence_messages=tuple(evidence_messages),
+            owner_evidence_references=tuple(owner_evidence_references),
             estimated_units=total_units,
         )
 
@@ -345,9 +373,10 @@ class ModelContextAssembler:
         working_state: dict[str, Any],
         *,
         current_owner: ContextMessage,
-    ) -> list[ContextMessage]:
+    ) -> tuple[list[ContextMessage], list[dict[str, Any]]]:
         resolved: list[ContextMessage] = []
-        seen: set[str] = set()
+        resolved_references: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
         session = self.repository.get_session(self.scope, session_id)
         try:
             self.repository.validate_context_evidence_closure(
@@ -363,9 +392,12 @@ class ModelContextAssembler:
         for raw_reference, inherited_from in _references(working_state):
             target_id = raw_reference["target_id"]
             target_session_id = raw_reference["target_session_id"]
-            if target_id in seen:
+            reference_key = (
+                raw_reference["evidence_type"], target_id, target_session_id
+            )
+            if reference_key in seen:
                 continue
-            seen.add(target_id)
+            seen.add(reference_key)
             if target_id == current_owner.id:
                 if target_session_id != session_id:
                     raise EvidenceReferenceError("current OWNER Evidence has the wrong Session")
@@ -389,6 +421,7 @@ class ModelContextAssembler:
                 if source_ready["session_id"] != target_session_id:
                     raise EvidenceReferenceError("inherited Evidence source Session does not match")
                 resolved.append(_message(row))
+                resolved_references.append(raw_reference)
                 continue
             try:
                 row = self.repository.get_owner_message_for_context(
@@ -399,7 +432,8 @@ class ModelContextAssembler:
                     f"Evidence Reference does not resolve to a committed OWNER Message: {target_id}"
                 ) from exc
             resolved.append(_message(row))
-        return resolved
+            resolved_references.append(raw_reference)
+        return resolved, resolved_references
 
 
 # Short discoverable aliases preserve the single assembler/budget boundary.

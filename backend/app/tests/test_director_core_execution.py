@@ -42,10 +42,11 @@ def valid_non_ready_command() -> CommitSuccessfulTurnInput:
         execution_trace={"format_version": 1, "steps": [{
             "step_no": 1, "entered_stage": "EXPLORE", "run_control": "WAIT_FOR_OWNER",
             "target_stage": "EXPLORE", "transition_reason_code": "OWNER_INPUT_REQUIRED",
-            "gate": None, "review": None, "candidate_revision": 1,
+            "gate": {"outcome": "BLOCKED", "gate_code": "DIRECTION_NOT_CONFIRMED", "explanation": "方向尚未确认。"},
+            "review": None, "candidate_revision": 1,
         }]},
         post_state=empty_state(), final_run_control="WAIT_FOR_OWNER", target_stage="EXPLORE",
-        transition_reason_code="OWNER_INPUT_REQUIRED", gate_outcome=None, review_root_cause=None,
+        transition_reason_code="OWNER_INPUT_REQUIRED", gate_outcome="BLOCKED", review_root_cause=None,
         ready_content_id=None, ready_content=None, created_at="2026-08-14T10:20:30.123Z",
     )
 

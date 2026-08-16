@@ -32,6 +32,7 @@ from .repository import (
     SessionRecord,
     WorkingStateRecord,
 )
+from .stage_handler import StageModelOutputV1, StageModelProposalV1, validate_stage_model_output
 
 
 def _utc_now() -> str:
@@ -157,7 +158,7 @@ class StageExecutionResult:
 class StageHandler(Protocol):
     """Provider-neutral business handler for one assembled Stage context."""
 
-    def __call__(self, context: ModelContext) -> StageExecutionResult:
+    def __call__(self, context: ModelContext) -> dict[str, Any] | StageModelProposalV1 | StageModelOutputV1:
         ...
 
 
@@ -219,12 +220,16 @@ class DirectorStageExecutor:
             context,
             include_source_ready_content=context.is_revision_session and include_source,
         )
-        result = self.handler(assembled)
-        if not isinstance(result, StageExecutionResult):
-            raise DirectorExecutionValidationError(
-                "Stage Handler must return StageExecutionResult"
-            )
-        return result
+        output = validate_stage_model_output(self.handler(assembled), context=assembled)
+        return StageExecutionResult(
+            director_message=output.director_message,
+            post_state=output.post_state.model_dump(mode="json"),
+            run_control=output.run_control,
+            target_stage=output.target_stage,
+            transition_reason_code=output.transition_reason_code,
+            gate=None if output.gate is None else output.gate.model_dump(mode="json"),
+            review=None if output.review is None else output.review.model_dump(mode="json"),
+        )
 
 
 class SingleStageExecutor(Protocol):
@@ -359,6 +364,18 @@ class DirectorOrchestrator:
             if not isinstance(result, StageExecutionResult):
                 raise DirectorExecutionValidationError(
                     "single-stage executor must return StageExecutionResult"
+                )
+            if (
+                trace_steps
+                and trace_steps[-1]["entered_stage"] == "DEEPEN"
+                and trace_steps[-1]["target_stage"] == "DEEPEN"
+                and trace_steps[-1]["transition_reason_code"] == "MATERIAL_GAP"
+                and current_stage == "DEEPEN"
+                and result.target_stage == "DEEPEN"
+                and result.transition_reason_code == "MATERIAL_GAP"
+            ):
+                raise DirectorExecutionValidationError(
+                    "consecutive MATERIAL_GAP self-loops are forbidden within one owner request"
                 )
             if result.run_control == "CONTINUE":
                 if result.director_message is not None:

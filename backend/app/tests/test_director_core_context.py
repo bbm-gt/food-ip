@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 import json
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -27,10 +27,18 @@ from backend.app.director_core.orchestrator import (
     StageExecutionResult,
 )
 from backend.app.director_core.repository import AuthorizationScope, DirectorRepository
+from backend.app.director_core.stage_handler import (
+    StageModelOutputError,
+    validate_stage_model_output,
+)
 
 
 def uid() -> str:
     return str(uuid4())
+
+
+def temp(namespace: str, key: str) -> str:
+    return f"new:{namespace}:{key}"
 
 
 def empty_state() -> dict:
@@ -60,15 +68,48 @@ def make_request(session_id: str, client_id: str, expected: int = 0) -> Director
 
 
 def wait_result(context: StageExecutionContext) -> StageExecutionResult:
+    state = deepcopy(context.working_state)
+    if context.stage == "DEEPEN":
+        state["material_state"] = {
+            "status": "INSUFFICIENT",
+            "required_confirmations": [{
+                "item_id": uid(), "statement": "补充关键真实素材", "reason": "素材不足",
+                "evidence_refs": [], "inherited_from": None,
+            }],
+        }
+        gate = {"outcome": "BLOCKED", "gate_code": "MATERIAL_INSUFFICIENT", "explanation": "仍缺关键素材。"}
+    else:
+        gate = {"outcome": "BLOCKED", "gate_code": "DIRECTION_NOT_CONFIRMED", "explanation": "方向尚未确认。"}
     return StageExecutionResult(
         director_message="请继续补充真实内容。",
-        post_state=deepcopy(context.working_state),
+        post_state=state,
         run_control="WAIT_FOR_OWNER",
         target_stage=context.stage,
         transition_reason_code="OWNER_INPUT_REQUIRED",
-        gate=None,
+        gate=gate,
         review=None,
     )
+
+
+def model_handler(handler):
+    """Adapt an internal test DTO into the explicit StageModelOutputV1 shape."""
+
+    def wrapped(context):
+        result = handler(context)
+        if not isinstance(result, StageExecutionResult):
+            return result
+        return {
+            "output_format_version": 1,
+            "run_control": result.run_control,
+            "target_stage": result.target_stage,
+            "transition_reason_code": result.transition_reason_code,
+            "director_message": result.director_message,
+            "gate": deepcopy(result.gate),
+            "review": deepcopy(result.review),
+            "post_state": deepcopy(result.post_state),
+        }
+
+    return wrapped
 
 
 @pytest.fixture
@@ -117,11 +158,17 @@ def test_each_internal_step_reassembles_latest_candidate_and_handler_cannot_comm
         state = context.to_dict()["working_state"]
         seen.append((context.stage_contract["stage"], state))
         if context.stage_contract["stage"] == "EXPLORE":
-            state["ai_judgments"].append({
-                "item_id": uid(),
-                "judgment_kind": "DIRECTION_CANDIDATE",
+            state["direction"] = {
+                "item_id": temp("item", "direction_1"),
                 "statement": "从老板真实经历展开。",
-            })
+                "owner_confirmed": True,
+                "evidence_refs": [{
+                    "evidence_type": "owner_message",
+                    "target_id": context.current_owner_message.id,
+                    "target_session_id": session_id,
+                }],
+                "inherited_from": None,
+            }
             return StageExecutionResult(
                 director_message=None,
                 post_state=state,
@@ -131,23 +178,30 @@ def test_each_internal_step_reassembles_latest_candidate_and_handler_cannot_comm
                 gate=None,
                 review=None,
             )
+        state["material_state"] = {
+            "status": "INSUFFICIENT",
+            "required_confirmations": [{
+                "item_id": temp("item", "confirmation_1"), "statement": "补充关键细节", "reason": "素材不足",
+                "evidence_refs": [], "inherited_from": None,
+            }],
+        }
         return StageExecutionResult(
             director_message="请补充最关键的真实细节。",
             post_state=state,
             run_control="WAIT_FOR_OWNER",
             target_stage="DEEPEN",
             transition_reason_code="OWNER_INPUT_REQUIRED",
-            gate=None,
+            gate={"outcome": "BLOCKED", "gate_code": "MATERIAL_INSUFFICIENT", "explanation": "仍缺关键素材。"},
             review=None,
         )
 
-    wrapped = DirectorStageExecutor(assembler(repo, scope), handler)
+    wrapped = DirectorStageExecutor(assembler(repo, scope), model_handler(handler))
     outcome = DirectorOrchestrator(repo, scope, wrapped, max_internal_steps=3).run(
         make_request(session_id, "reassemble")
     )
 
     assert [stage for stage, _ in seen] == ["EXPLORE", "DEEPEN"]
-    assert seen[1][1]["ai_judgments"]
+    assert seen[1][1]["direction"]["owner_confirmed"] is True
     assembled = assembler(repo, scope).assemble(
         session_id=session_id,
         stage="DEEPEN",
@@ -169,12 +223,13 @@ def test_historical_owner_evidence_is_loaded_even_when_not_current(repository) -
         "SELECT id FROM director_messages WHERE visible_role = 'OWNER'"
     ).fetchone()[0]
     seen: list[tuple[str, str]] = []
+    seen_references: list[dict[str, str]] = []
 
     def handler(context):
         state = context.to_dict()["working_state"]
         if context.stage_contract["stage"] == "EXPLORE":
             state["owner_facts"] = [{
-                "item_id": uid(),
+                "item_id": temp("item", "fact_1"),
                 "statement": "老板说过一条真实内容。",
                 "evidence_refs": [{
                     "evidence_type": "owner_message",
@@ -184,6 +239,11 @@ def test_historical_owner_evidence_is_loaded_even_when_not_current(repository) -
                 "supersedes_item_ids": [],
                 "inherited_from": None,
             }]
+            state["direction"] = {
+                "item_id": temp("item", "direction_1"), "statement": "沿老板确认的真实内容展开", "owner_confirmed": True,
+                "evidence_refs": [{"evidence_type": "owner_message", "target_id": old_owner_id, "target_session_id": session_id}],
+                "inherited_from": None,
+            }
             return StageExecutionResult(
                 director_message=None,
                 post_state=state,
@@ -194,20 +254,33 @@ def test_historical_owner_evidence_is_loaded_even_when_not_current(repository) -
                 review=None,
             )
         seen.extend((message.id, message.content) for message in context.evidence_messages)
+        seen_references.extend(context.to_dict()["owner_evidence_references"])
+        state["material_state"] = {
+            "status": "INSUFFICIENT",
+            "required_confirmations": [{
+                "item_id": temp("item", "confirmation_1"), "statement": "补充关键细节", "reason": "素材不足",
+                "evidence_refs": [], "inherited_from": None,
+            }],
+        }
         return StageExecutionResult(
             director_message="已记录这条真实内容。",
             post_state=state,
             run_control="WAIT_FOR_OWNER",
             target_stage="DEEPEN",
             transition_reason_code="OWNER_INPUT_REQUIRED",
-            gate=None,
+            gate={"outcome": "BLOCKED", "gate_code": "MATERIAL_INSUFFICIENT", "explanation": "仍缺关键素材。"},
             review=None,
         )
 
     DirectorOrchestrator(
-        repo, scope, DirectorStageExecutor(assembler(repo, scope), handler), max_internal_steps=2
+        repo, scope, DirectorStageExecutor(assembler(repo, scope), model_handler(handler)), max_internal_steps=2
     ).run(make_request(session_id, "evidence", expected=1))
     assert seen == [(old_owner_id, "老板说了一条可追溯的真实内容。")]
+    assert {
+        "evidence_type": "owner_message",
+        "target_id": old_owner_id,
+        "target_session_id": session_id,
+    } in seen_references
 
 
 def test_checkpoint_loads_only_boundary_after_complete_turns(repository) -> None:
@@ -299,7 +372,7 @@ def test_old_checkpoint_history_over_budget_requires_rebuild_before_handler(repo
     before = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] for table in tables]
     with pytest.raises(CheckpointRebuildRequiredError, match="Checkpoint and"):
         DirectorOrchestrator(
-            repo, scope, DirectorStageExecutor(limited, handler), max_internal_steps=1
+            repo, scope, DirectorStageExecutor(limited, model_handler(handler)), max_internal_steps=1
         ).run(make_request(session_id, "too-large", expected=3))
     after = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] for table in tables]
     assert called == 0
@@ -363,7 +436,7 @@ def test_protected_context_over_budget_fails_before_orchestrator_commit(reposito
               for table in tables]
     with pytest.raises(ContextBudgetExceededError, match="irreducible"):
         DirectorOrchestrator(
-            repo, scope, DirectorStageExecutor(limited, handler), max_internal_steps=1
+            repo, scope, DirectorStageExecutor(limited, model_handler(handler)), max_internal_steps=1
         ).run(make_request(session_id, "budget"))
     after = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
              for table in tables]
@@ -423,7 +496,7 @@ def test_oversized_checkpoint_requires_rebuild_not_budget_failure(repository) ->
               for table in tables]
     with pytest.raises(CheckpointRebuildRequiredError, match="Checkpoint"):
         DirectorOrchestrator(
-            repo, scope, DirectorStageExecutor(limited, handler), max_internal_steps=1
+            repo, scope, DirectorStageExecutor(limited, model_handler(handler)), max_internal_steps=1
         ).run(make_request(session_id, "oversized-checkpoint", expected=1))
     after = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
              for table in tables]
@@ -437,8 +510,14 @@ def test_create_stage_cannot_wait_for_owner_and_failure_is_atomic(repository) ->
     def handler(context):
         state = context.to_dict()["working_state"]
         if context.stage_contract["stage"] == "EXPLORE":
+            state["direction"] = {
+                "item_id": temp("item", "direction_1"), "statement": "老板确认的方向", "owner_confirmed": True,
+                "evidence_refs": [{"evidence_type": "owner_message", "target_id": context.current_owner_message.id, "target_session_id": session_id}],
+                "inherited_from": None,
+            }
             return StageExecutionResult(None, state, "CONTINUE", "DEEPEN", "DIRECTION_CONFIRMED", None, None)
         if context.stage_contract["stage"] == "DEEPEN":
+            state["material_state"] = {"status": "SUFFICIENT", "required_confirmations": []}
             return StageExecutionResult(None, state, "CONTINUE", "CREATE", "MATERIAL_SUFFICIENT", None, None)
         return StageExecutionResult(
             "不能在 CREATE 阶段直接向老板补问。", state, "WAIT_FOR_OWNER", "CREATE",
@@ -451,9 +530,9 @@ def test_create_stage_cannot_wait_for_owner_and_failure_is_atomic(repository) ->
     )
     before = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
               for table in tables]
-    with pytest.raises(DirectorExecutionValidationError):
+    with pytest.raises(StageModelOutputError):
         DirectorOrchestrator(
-            repo, scope, DirectorStageExecutor(assembler(repo, scope), handler), max_internal_steps=3
+            repo, scope, DirectorStageExecutor(assembler(repo, scope), model_handler(handler)), max_internal_steps=3
         ).run(make_request(session_id, "invalid-create-wait"))
     after = [repo.connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
              for table in tables]
@@ -465,7 +544,7 @@ def test_invalid_cross_session_and_director_evidence_fail_explicitly(repository)
     other = repo.create_session(scope)
     state = empty_state()
     state["owner_facts"] = [{
-        "item_id": uid(),
+        "item_id": temp("item", "fact_1"),
         "statement": "不应通过。",
         "evidence_refs": [{
             "evidence_type": "owner_message",
@@ -490,11 +569,11 @@ def test_invalid_cross_session_and_director_evidence_fail_explicitly(repository)
     [
         ("EXPLORE", [("WAIT_FOR_OWNER", "EXPLORE"), ("CONTINUE", "DEEPEN")]),
         (
-            "DEEPEN",
-            [
-                ("WAIT_FOR_OWNER", "DEEPEN"),
-                ("CONTINUE", "DEEPEN"),
-                ("CONTINUE", "CREATE"),
+                "DEEPEN",
+                [
+                    ("CONTINUE", "DEEPEN"),
+                    ("WAIT_FOR_OWNER", "DEEPEN"),
+                    ("CONTINUE", "CREATE"),
             ],
         ),
         ("CREATE", [("CONTINUE", "REVIEW")]),
@@ -527,17 +606,224 @@ def test_stage_contract_exposes_only_shared_legal_combinations(repository, stage
         not (entry["run_control"] == "READY" and stage != "REVIEW")
         for entry in context.stage_contract["allowed_combinations"]
     )
+    assert context.stage_contract["outcomes"]
+    for outcome in context.stage_contract["outcomes"]:
+        assert set(outcome["state_requirements"]) == {
+            "confirmed_direction",
+            "material_status",
+            "required_confirmations",
+            "draft",
+            "review",
+            "active_direction",
+            "state_change",
+        }
+
+
+def insert_checkpoint(repo: DirectorRepository, session_id: str, covered_through_seq: int) -> None:
+    payload = {
+        "conversation_summary": "",
+        "confirmed_owner_positions": [],
+        "open_threads": [],
+        "abandoned_directions": [],
+    }
+    repo.connection.execute(
+        """INSERT INTO director_context_checkpoints
+           (id, session_id, covered_through_seq, format_version, checkpoint_json,
+            integrity_sha256, status, discarded_at, discard_reason_code, created_at)
+           VALUES (?, ?, ?, 1, ?, ?, 'VALID', NULL, NULL, ?)""",
+        (
+            uid(), session_id, covered_through_seq, canonical_text(payload),
+            checkpoint_sha256(session_id, covered_through_seq, payload, format_version=1),
+            "2026-01-01T00:00:00.000Z",
+        ),
+    )
+    repo.connection.commit()
+
+
+def test_model_context_exposes_copyable_current_owner_evidence_reference(repository) -> None:
+    repo, scope, session_id = repository
+    owner_message_id = uid()
+    context = assembler(repo, scope).assemble(
+        session_id=session_id,
+        stage="EXPLORE",
+        working_state=empty_state(),
+        owner_message_id=owner_message_id,
+        owner_text="当前老板消息。",
+    )
+    assert context.to_dict()["owner_evidence_references"] == [{
+        "evidence_type": "owner_message",
+        "target_id": owner_message_id,
+        "target_session_id": session_id,
+    }]
+
+
+def test_checkpoint_covered_unrelated_owner_is_not_authorized_but_loaded_history_is(repository) -> None:
+    repo, scope, session_id = repository
+    orchestrator = DirectorOrchestrator(
+        repo, scope, lambda context: wait_result(context), max_internal_steps=1
+    )
+    orchestrator.run(make_request(session_id, "covered"))
+    orchestrator.run(make_request(session_id, "loaded", expected=1))
+    rows = repo.get_complete_message_turns(scope, session_id)
+    covered_owner_id = rows[0]["owner"]["id"]
+    loaded_owner_id = rows[1]["owner"]["id"]
+    insert_checkpoint(repo, session_id, covered_through_seq=2)
+
+    context = assembler(repo, scope).assemble(
+        session_id=session_id,
+        stage="EXPLORE",
+        working_state=repo.get_working_state(scope, session_id).state_json,
+        owner_message_id=uid(),
+        owner_text="当前老板消息。",
+    )
+    bindings = context.to_dict()["owner_evidence_references"]
+    binding_ids = {binding["target_id"] for binding in bindings}
+    assert [turn.owner.id for turn in context.history_turns] == [loaded_owner_id]
+    assert loaded_owner_id in binding_ids
+    assert covered_owner_id not in binding_ids
+
+
+def test_checkpoint_covered_owner_is_authorized_only_when_point_loaded_as_evidence(repository) -> None:
+    repo, scope, session_id = repository
+    orchestrator = DirectorOrchestrator(
+        repo, scope, lambda context: wait_result(context), max_internal_steps=1
+    )
+    orchestrator.run(make_request(session_id, "early"))
+    early_owner_id = repo.get_complete_message_turns(scope, session_id)[0]["owner"]["id"]
+    insert_checkpoint(repo, session_id, covered_through_seq=2)
+    state = repo.get_working_state(scope, session_id).state_json
+    evidence_ref = {
+        "evidence_type": "owner_message",
+        "target_id": early_owner_id,
+        "target_session_id": session_id,
+    }
+    state["owner_facts"] = [{
+        "item_id": uid(),
+        "statement": "老板早期提供的真实内容。",
+        "evidence_refs": [evidence_ref],
+        "supersedes_item_ids": [],
+        "inherited_from": None,
+    }]
+    context = assembler(repo, scope).assemble(
+        session_id=session_id,
+        stage="EXPLORE",
+        working_state=state,
+        owner_message_id=uid(),
+        owner_text="当前老板消息。",
+    )
+    assert context.history_turns == ()
+    assert [message.id for message in context.evidence_messages] == [early_owner_id]
+    assert evidence_ref in context.to_dict()["owner_evidence_references"]
+
+    post_state = context.to_dict()["working_state"]
+    post_state["direction"] = {
+        "item_id": temp("item", "direction_1"),
+        "statement": "沿早期真实内容展开。",
+        "owner_confirmed": True,
+        "evidence_refs": [evidence_ref],
+        "inherited_from": None,
+    }
+    validated = validate_stage_model_output({
+        "output_format_version": 1,
+        "run_control": "CONTINUE",
+        "target_stage": "DEEPEN",
+        "transition_reason_code": "DIRECTION_CONFIRMED",
+        "director_message": None,
+        "gate": None,
+        "review": None,
+        "post_state": post_state,
+    }, context=context)
+    assert validated.post_state.direction is not None
+
+
+def test_unloaded_historical_owner_reference_is_rejected(repository) -> None:
+    repo, scope, session_id = repository
+    DirectorOrchestrator(
+        repo, scope, lambda context: wait_result(context), max_internal_steps=1
+    ).run(make_request(session_id, "unloaded"))
+    old_owner_id = repo.get_complete_message_turns(scope, session_id)[0]["owner"]["id"]
+    insert_checkpoint(repo, session_id, covered_through_seq=2)
+    context = assembler(repo, scope).assemble(
+        session_id=session_id,
+        stage="EXPLORE",
+        working_state=repo.get_working_state(scope, session_id).state_json,
+        owner_message_id=uid(),
+        owner_text="当前老板消息。",
+    )
+    post_state = context.to_dict()["working_state"]
+    post_state["direction"] = {
+        "item_id": temp("item", "direction_1"),
+        "statement": "试图引用未加载历史。",
+        "owner_confirmed": True,
+        "evidence_refs": [{
+            "evidence_type": "owner_message",
+            "target_id": old_owner_id,
+            "target_session_id": session_id,
+        }],
+        "inherited_from": None,
+    }
+    with pytest.raises(StageModelOutputError, match="authorized OWNER Evidence Reference"):
+        validate_stage_model_output({
+            "output_format_version": 1,
+            "run_control": "CONTINUE",
+            "target_stage": "DEEPEN",
+            "transition_reason_code": "DIRECTION_CONFIRMED",
+            "director_message": None,
+            "gate": None,
+            "review": None,
+            "post_state": post_state,
+        }, context=context)
+
+
+def test_checkpoint_keeps_long_history_bindings_bounded_and_bindings_use_budget(repository) -> None:
+    repo, scope, session_id = repository
+    orchestrator = DirectorOrchestrator(
+        repo, scope, lambda context: wait_result(context), max_internal_steps=1
+    )
+    for index in range(20):
+        orchestrator.run(make_request(session_id, f"history-{index}", expected=index))
+    insert_checkpoint(repo, session_id, covered_through_seq=40)
+    current_owner_id = uid()
+    context = assembler(repo, scope).assemble(
+        session_id=session_id,
+        stage="EXPLORE",
+        working_state=repo.get_working_state(scope, session_id).state_json,
+        owner_message_id=current_owner_id,
+        owner_text="当前老板消息。",
+    )
+    assert context.history_turns == ()
+    assert context.to_dict()["owner_evidence_references"] == [{
+        "evidence_type": "owner_message",
+        "target_id": current_owner_id,
+        "target_session_id": session_id,
+    }]
+
+    class BindingCounter:
+        def estimate(self, value):
+            if isinstance(value, dict) and "owner_references" in value:
+                return 10 * len(value["owner_references"])
+            return 0
+
+    with pytest.raises(ContextBudgetExceededError, match="irreducible"):
+        ModelContextAssembler(repo, scope, ContextBudget(5, BindingCounter())).assemble(
+            session_id=session_id,
+            stage="EXPLORE",
+            working_state=repo.get_working_state(scope, session_id).state_json,
+            owner_message_id=uid(),
+            owner_text="当前老板消息。",
+        )
 
 
 def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) -> None:
     repo, scope, source_session_id = repository
+    review_draft_ids: list[str] = []
 
     def ready_handler(context):
         state = context.to_dict()["working_state"]
         stage = context.stage_contract["stage"]
         if stage == "EXPLORE":
             state["direction"] = {
-                "item_id": uid(),
+                "item_id": temp("item", "direction_1"),
                 "statement": "讲清这道菜的真实来历。",
                 "owner_confirmed": True,
                 "evidence_refs": [{
@@ -553,7 +839,7 @@ def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) 
             return StageExecutionResult(None, state, "CONTINUE", "CREATE", "MATERIAL_SUFFICIENT", None, None)
         if stage == "CREATE":
             state["draft"] = {
-                "draft_id": uid(),
+                "draft_id": temp("draft", "draft_1"),
                 "content": {
                     "title": "真实来历",
                     "script_text": "这是一段有真实依据的内容。",
@@ -564,8 +850,9 @@ def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) 
             }
             return StageExecutionResult(None, state, "CONTINUE", "REVIEW", "DRAFT_CREATED", None, None)
         draft = state["draft"]
+        review_draft_ids.append(draft["draft_id"])
         state["review"] = {
-            "review_id": uid(),
+            "review_id": temp("review", "review_1"),
             "outcome": "PASSED",
             "root_cause": None,
             "against_draft_id": draft["draft_id"],
@@ -578,11 +865,56 @@ def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) 
         )
 
     ready_outcome = DirectorOrchestrator(
-        repo, scope, DirectorStageExecutor(assembler(repo, scope), ready_handler), max_internal_steps=4
+        repo, scope, DirectorStageExecutor(assembler(repo, scope), model_handler(ready_handler)), max_internal_steps=4
     ).run(make_request(source_session_id, "make-ready"))
     ready_id = ready_outcome.response["ready_content_id"]
+    assert len(review_draft_ids) == 1
+    assert UUID(review_draft_ids[0]).version == 4
+    assert review_draft_ids[0] == repo.get_working_state(scope, source_session_id).state_json["draft"]["draft_id"]
     revision = repo.create_revision_session(scope, ready_id)
     revision_state = repo.get_working_state(scope, revision.id).state_json
+
+    def rewrite_handler(context):
+        state = context.to_dict()["working_state"]
+        state["draft"]["content"]["script_text"] = "第一次改写后的真实内容。"
+        state["draft"]["draft_id"] = temp("draft", "first_rewrite")
+        return {
+            "output_format_version": 1,
+            "run_control": "WAIT_FOR_OWNER",
+            "target_stage": "EXPLORE",
+            "transition_reason_code": "OWNER_INPUT_REQUIRED",
+            "director_message": "请继续确认第一次改写。",
+            "gate": {
+                "outcome": "BLOCKED",
+                "gate_code": "DIRECTION_NOT_CONFIRMED",
+                "explanation": "改写仍需老板确认。",
+            },
+            "review": None,
+            "post_state": state,
+        }
+
+    rewritten = DirectorOrchestrator(
+        repo,
+        scope,
+        DirectorStageExecutor(assembler(repo, scope), rewrite_handler),
+        max_internal_steps=1,
+    ).run(make_request(revision.id, "first-revision-rewrite"))
+    assert rewritten.replayed is False
+    rewritten_state = repo.get_working_state(scope, revision.id).state_json
+    assert rewritten_state["draft"]["draft_id"] is not None
+    assert rewritten_state["draft"]["draft_id"] != revision_state["draft"]["draft_id"]
+    assert rewritten_state["draft"]["content"]["script_text"] == "第一次改写后的真实内容。"
+    inherited_context = assembler(repo, scope).assemble(
+        session_id=revision.id,
+        stage="EXPLORE",
+        working_state=revision_state,
+        owner_message_id=uid(),
+        owner_text="修改来源内容。",
+    )
+    assert any(
+        reference["target_session_id"] == source_session_id
+        for reference in inherited_context.to_dict()["owner_evidence_references"]
+    )
 
     class StepPolicy:
         def __init__(self) -> None:
@@ -602,12 +934,21 @@ def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) 
         loaded.append((stage, context.source_ready_content is not None))
         if stage == "EXPLORE":
             return StageExecutionResult(None, state, "CONTINUE", "DEEPEN", "DIRECTION_CONFIRMED", None, None)
+        state["material_state"] = {
+            "status": "INSUFFICIENT",
+            "required_confirmations": [{
+                "item_id": temp("item", "confirmation_1"), "statement": "确认修改重点", "reason": "素材不足",
+                "evidence_refs": [], "inherited_from": None,
+            }],
+        }
         return StageExecutionResult(
             "请继续补充修改内容。", state, "WAIT_FOR_OWNER", "DEEPEN",
-            "OWNER_INPUT_REQUIRED", None, None,
+            "OWNER_INPUT_REQUIRED",
+            {"outcome": "BLOCKED", "gate_code": "MATERIAL_INSUFFICIENT", "explanation": "仍缺修改素材。"},
+            None,
         )
 
-    executor = DirectorStageExecutor(assembler(repo, scope), revision_handler, policy)
+    executor = DirectorStageExecutor(assembler(repo, scope), model_handler(revision_handler), policy)
     first = executor(StageExecutionContext(
         stage="EXPLORE",
         working_state=revision_state,
@@ -643,14 +984,14 @@ def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) 
             "请继续补充真实内容。",
             context.to_dict()["working_state"],
             "WAIT_FOR_OWNER",
-            "EXPLORE",
-            "OWNER_INPUT_REQUIRED",
-            None,
-            None,
+                "EXPLORE",
+                "OWNER_INPUT_REQUIRED",
+                {"outcome": "BLOCKED", "gate_code": "DIRECTION_NOT_CONFIRMED", "explanation": "方向尚未确认。"},
+                None,
         )
 
     DirectorStageExecutor(
-        assembler(repo, scope), ordinary_handler, AlwaysInclude()
+        assembler(repo, scope), model_handler(ordinary_handler), AlwaysInclude()
     )(StageExecutionContext(
         stage="EXPLORE",
         working_state=repo.get_working_state(scope, source_session_id).state_json,
@@ -703,7 +1044,7 @@ def test_revision_source_ready_content_is_loaded_only_when_explicit(repository) 
 
         with pytest.raises(EvidenceReferenceError, match="closure"):
             DirectorStageExecutor(
-                assembler(repo, scope), invalid_handler, DisabledSourceReadyContentPolicy()
+                assembler(repo, scope), model_handler(invalid_handler), DisabledSourceReadyContentPolicy()
             )(StageExecutionContext(
                 stage="EXPLORE",
                 working_state=bad_state,

@@ -76,13 +76,25 @@ def wait_result(
     context: StageExecutionContext,
     message: str = "请再补充一个真实细节。",
 ) -> StageExecutionResult:
+    state = deepcopy(context.working_state)
+    if context.stage == "DEEPEN":
+        state["material_state"] = {
+            "status": "INSUFFICIENT",
+            "required_confirmations": [{
+                "item_id": uid(), "statement": "补充一个关键真实细节",
+                "reason": "素材不足", "evidence_refs": [], "inherited_from": None,
+            }],
+        }
+        gate = {"outcome": "BLOCKED", "gate_code": "MATERIAL_INSUFFICIENT", "explanation": "仍缺关键素材。"}
+    else:
+        gate = {"outcome": "BLOCKED", "gate_code": "DIRECTION_NOT_CONFIRMED", "explanation": "方向尚未确认。"}
     return StageExecutionResult(
         director_message=message,
-        post_state=deepcopy(context.working_state),
+        post_state=state,
         run_control="WAIT_FOR_OWNER",
         target_stage=context.stage,
         transition_reason_code="OWNER_INPUT_REQUIRED",
-        gate=None,
+        gate=gate,
         review=None,
     )
 
@@ -397,7 +409,7 @@ def test_same_session_turns_are_serial_and_second_reads_latest_version(tmp_path)
             run_control="WAIT_FOR_OWNER",
             target_stage=context.stage,
             transition_reason_code="OWNER_INPUT_REQUIRED",
-            gate=None,
+            gate={"outcome": "BLOCKED", "gate_code": "DIRECTION_NOT_CONFIRMED", "explanation": "方向尚未确认。"},
             review=None,
         )
 
