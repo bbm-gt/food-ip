@@ -797,6 +797,27 @@ def validate_stage_model_output(
 
     output = resolve_stage_model_proposal(raw_output, context=context)
 
+    return validate_resolved_stage_model_output(output, context=context)
+
+
+def validate_resolved_stage_model_output(
+    output: StageModelOutputV1 | dict[str, Any],
+    *,
+    context: Any,
+) -> StageModelOutputV1:
+    """Validate an application-resolved output without re-running model IDs.
+
+    ``semantic_only`` allocates formal identities in trusted application code.
+    It still goes through the same envelope, evidence, state-requirement and
+    Pydantic checks as the legacy model proposal path.
+    """
+
+    if not isinstance(output, StageModelOutputV1):
+        try:
+            output = StageModelOutputV1.model_validate(output)
+        except ValidationError as exc:
+            raise StageModelOutputSchemaError("resolved Stage output failed strict v1 schema") from exc
+
     entered_stage = getattr(context, "stage", None)
     if entered_stage is None:
         entered_stage = context.stage_contract["stage"]
@@ -856,6 +877,7 @@ __all__ = [
     "TemporaryReferenceNamespaceError",
     "UndefinedTemporaryReferenceError",
     "resolve_stage_model_proposal",
+    "validate_resolved_stage_model_output",
     "validate_stage_model_output",
     "validate_stage_model_proposal",
 ]

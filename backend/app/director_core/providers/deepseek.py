@@ -17,6 +17,7 @@ import httpx
 from ... import config
 from ..canonical import is_blank_text
 from ..context import ModelContext
+from ..semantic_only import SEMANTIC_ONLY, semantic_model_input
 
 
 class DeepSeekProviderError(RuntimeError):
@@ -83,6 +84,30 @@ DEEPSEEK_STAGE_PROMPTS: dict[str, str] = {
         "仅在内容完整、真实、自然且可拍时进入 READY。"
     ),
 }
+
+SEMANTIC_STAGE_PROMPTS: dict[str, str] = {
+    "EXPLORE": (
+        "只判断老板现在最值得继续的内容方向。输出 result、message、direction、new_facts、"
+        "new_constraints、reason；老板没有明确确认方向时只能 ASK_OWNER。"
+    ),
+    "DEEPEN": (
+        "只判断还缺哪些最影响核心表达的真实材料。输出 result、message、new_facts、"
+        "new_constraints、missing_material、reason；不要补写老板没有说过的事实。"
+    ),
+    "CREATE": (
+        "只根据已确认方向、真实事实和约束创作一个完整可拍的脚本。输出 title、script_text、"
+        "shooting_notes，不要输出任何状态、ID、证据或路由字段。"
+    ),
+    "REVIEW": (
+        "只审核当前脚本的最大根因。输出 result、problem、reason；PASS、REWRITE、"
+        "NEED_MATERIAL、CHANGE_DIRECTION 四选一，不要输出状态、ID、证据或路由字段。"
+    ),
+}
+
+_SEMANTIC_COMMON_SYSTEM_PROMPT = """你是 Food-IP 的餐饮内容编导。
+你只能使用老板明确提供的事实；不要把猜测、知识、案例或外部信息写成老板事实。
+只输出当前阶段规定的一个小 JSON object，禁止 Markdown、隐藏推理或任何系统保存字段。
+"""
 
 _COMPLETE_LEGAL_JSON_EXAMPLE = {
     "output_format_version": 1,
@@ -189,6 +214,10 @@ _JSON_REGENERATION_INSTRUCTION = (
     "\n上一次响应为空或不是一个完整 JSON 文档。请基于完全相同的 model_context "
     "重新生成整个 JSON object；不要解释、修补片段或引用上次响应。"
 )
+_SEMANTIC_JSON_REGENERATION_INSTRUCTION = (
+    "\n上一次响应为空或不是一个完整 JSON 文档。请基于完全相同的 semantic_context "
+    "重新生成当前阶段规定的小 JSON object；不要解释、修补片段或引用上次响应。"
+)
 
 _RETRYABLE_HTTP_STATUSES = {408, 429}
 
@@ -212,6 +241,7 @@ class DeepSeekStageHandler:
     timeout_seconds: float = 90.0
     max_output_tokens: int = 8000
     thinking_mode: str = "disabled"
+    stage_mode: str = "legacy"
     client: httpx.Client | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -244,6 +274,10 @@ class DeepSeekStageHandler:
             raise DeepSeekConfigurationError(
                 "Phase 1F requires DIRECTOR_DEEPSEEK_THINKING_MODE=disabled"
             )
+        if self.stage_mode not in {"legacy", SEMANTIC_ONLY}:
+            raise DeepSeekConfigurationError(
+                "DIRECTOR_STAGE_MODE must be legacy or semantic_only"
+            )
         if self.client is not None and not isinstance(self.client, httpx.Client):
             raise DeepSeekConfigurationError("client must be a synchronous httpx.Client")
 
@@ -256,6 +290,7 @@ class DeepSeekStageHandler:
             timeout_seconds=config.DIRECTOR_DEEPSEEK_TIMEOUT_SECONDS,
             max_output_tokens=config.DIRECTOR_DEEPSEEK_MAX_OUTPUT_TOKENS,
             thinking_mode=config.DIRECTOR_DEEPSEEK_THINKING_MODE,
+            stage_mode=config.DIRECTOR_STAGE_MODE,
             client=client,
         )
 
@@ -333,13 +368,26 @@ class DeepSeekStageHandler:
         stage: str,
         regenerate_json: bool,
     ) -> dict[str, Any]:
-        system_prompt = (
-            _COMMON_SYSTEM_PROMPT
-            + "\n当前阶段任务："
-            + DEEPSEEK_STAGE_PROMPTS[stage]
-        )
+        if self.stage_mode == SEMANTIC_ONLY:
+            system_prompt = (
+                _SEMANTIC_COMMON_SYSTEM_PROMPT
+                + "\n当前阶段任务："
+                + SEMANTIC_STAGE_PROMPTS[stage]
+            )
+            user_payload = {"semantic_context": semantic_model_input(context)}
+        else:
+            system_prompt = (
+                _COMMON_SYSTEM_PROMPT
+                + "\n当前阶段任务："
+                + DEEPSEEK_STAGE_PROMPTS[stage]
+            )
+            user_payload = {"model_context": context.to_dict()}
         if regenerate_json:
-            system_prompt += _JSON_REGENERATION_INSTRUCTION
+            system_prompt += (
+                _SEMANTIC_JSON_REGENERATION_INSTRUCTION
+                if self.stage_mode == SEMANTIC_ONLY
+                else _JSON_REGENERATION_INSTRUCTION
+            )
         return {
             "model": self.model,
             "messages": [
@@ -347,7 +395,7 @@ class DeepSeekStageHandler:
                 {
                     "role": "user",
                     "content": json.dumps(
-                        {"model_context": context.to_dict()},
+                        user_payload,
                         ensure_ascii=False,
                         sort_keys=True,
                         separators=(",", ":"),
@@ -412,6 +460,7 @@ class DeepSeekStageHandler:
 
 __all__ = [
     "DEEPSEEK_STAGE_PROMPTS",
+    "SEMANTIC_STAGE_PROMPTS",
     "DeepSeekConfigurationError",
     "DeepSeekEmptyResponseError",
     "DeepSeekHTTPStatusError",

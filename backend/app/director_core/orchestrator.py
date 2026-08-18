@@ -34,6 +34,12 @@ from .repository import (
     WorkingStateRecord,
 )
 from .stage_handler import StageModelOutputV1, StageModelProposalV1, validate_stage_model_output
+from .stage_handler import validate_resolved_stage_model_output, StageModelOutputSchemaError
+from .semantic_only import (
+    SUPPORTED_STAGE_MODES,
+    SemanticOutputError,
+    convert_semantic_output,
+)
 
 
 def _utc_now() -> str:
@@ -192,6 +198,7 @@ class DirectorStageExecutor:
     source_ready_content_policy: SourceReadyContentPolicy = field(
         default_factory=DisabledSourceReadyContentPolicy
     )
+    mode: str = "legacy"
 
     def __post_init__(self) -> None:
         if not isinstance(self.assembler, ModelContextAssembler):
@@ -205,6 +212,10 @@ class DirectorStageExecutor:
         ):
             raise DirectorExecutionValidationError(
                 "source_ready_content_policy must provide should_include(context)"
+            )
+        if self.mode not in SUPPORTED_STAGE_MODES:
+            raise DirectorExecutionValidationError(
+                f"stage executor mode must be one of {SUPPORTED_STAGE_MODES}"
             )
 
     def __call__(self, context: StageExecutionContext) -> StageExecutionResult:
@@ -221,7 +232,24 @@ class DirectorStageExecutor:
             context,
             include_source_ready_content=context.is_revision_session and include_source,
         )
-        output = validate_stage_model_output(self.handler(assembled), context=assembled)
+        try:
+            raw_output = self.handler(assembled)
+            if self.mode == "semantic_only":
+                resolved = convert_semantic_output(
+                    context.stage,
+                    context.working_state,
+                    owner_text=context.owner_text,
+                    owner_message_id=context.owner_message_id,
+                    owner_session_id=context.session_id,
+                    semantic_output=raw_output,
+                )
+                output = validate_resolved_stage_model_output(resolved, context=assembled)
+            else:
+                output = validate_stage_model_output(raw_output, context=assembled)
+        except SemanticOutputError as exc:
+            raise StageModelOutputSchemaError(
+                "semantic_only output could not be accepted"
+            ) from exc
         return StageExecutionResult(
             director_message=output.director_message,
             post_state=output.post_state.model_dump(mode="json"),

@@ -66,7 +66,11 @@ def create_director_orchestrator(
         scope,
         ContextBudget(config.DIRECTOR_CONTEXT_MAX_UNITS),
     )
-    executor = DirectorStageExecutor(assembler, create_director_stage_handler())
+    executor = DirectorStageExecutor(
+        assembler,
+        create_director_stage_handler(),
+        mode=config.DIRECTOR_STAGE_MODE,
+    )
     return DirectorOrchestrator(
         repository,
         scope,

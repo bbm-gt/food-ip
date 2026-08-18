@@ -63,6 +63,16 @@ from .stage_handler import (
     DuplicateTemporaryDefinitionError,
     resolve_stage_model_proposal,
     validate_stage_model_proposal,
+    validate_resolved_stage_model_output,
+)
+from .semantic_only import (
+    LEGACY,
+    SEMANTIC_ONLY,
+    SemanticConversionError,
+    SemanticOutputSchemaError,
+    SemanticOutputTypeError,
+    convert_semantic_output,
+    validate_semantic_output,
 )
 
 __all__ = [
@@ -115,6 +125,14 @@ __all__ = [
     "RejectedItemIdentityError",
     "resolve_stage_model_proposal",
     "validate_stage_model_proposal",
+    "validate_resolved_stage_model_output",
+    "LEGACY",
+    "SEMANTIC_ONLY",
+    "SemanticConversionError",
+    "SemanticOutputSchemaError",
+    "SemanticOutputTypeError",
+    "convert_semantic_output",
+    "validate_semantic_output",
     "StageExecutor",
     "IdempotencyConflictError",
     "SessionLockManager",
