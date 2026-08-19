@@ -87,25 +87,45 @@ DEEPSEEK_STAGE_PROMPTS: dict[str, str] = {
 
 SEMANTIC_STAGE_PROMPTS: dict[str, str] = {
     "EXPLORE": (
-        "只判断老板现在最值得继续的内容方向。输出 result、message、direction、new_facts、"
-        "new_constraints、reason；老板没有明确确认方向时只能 ASK_OWNER。"
+        "只判断老板现在最值得继续的内容方向。顶层键必须且只能是 "
+        "result,message,direction,owner_quote,new_facts,new_constraints,reason。result 只能是 "
+        "ASK_OWNER、DIRECTION_CANDIDATE 或 DIRECTION_READY；每条 new_facts 都是对象，键只能是 "
+        "action,statement,owner_quote,replaces_statement，action 只能是 ADD、CORRECT、REMOVE；"
+        "每条 new_constraints 也必须有 action、statement、owner_quote、replaces_statement 和 constraint_kind，类别只能是 BUSINESS_OBJECTIVE、"
+        "CONTENT_REQUIREMENT、PREFERENCE、EXPRESSION、SHOOTING、PROHIBITION（不要使用 REQUIREMENT 等其他名称）。每个 ADD 对象都必须显式写 "
+        "replaces_statement:null；ASK_OWNER 的 direction 和 owner_quote 必须为 null；DIRECTION_CANDIDATE "
+        "必须有简短 direction 且 owner_quote 为 null；DIRECTION_READY 必须有简短、直接来自原话的 direction "
+        "和老板原话 owner_quote。结构示例：{\"result\":\"DIRECTION_CANDIDATE\",\"message\":\"请确认这个方向\","
+        "\"direction\":\"现熬牛骨汤\",\"owner_quote\":null,\"new_facts\":[],\"new_constraints\":[],\"reason\":\"候选\"}。"
     ),
     "DEEPEN": (
-        "只判断还缺哪些最影响核心表达的真实材料。输出 result、message、new_facts、"
-        "new_constraints、missing_material、reason；不要补写老板没有说过的事实。"
+        "只判断还缺哪些最影响核心表达的真实材料。顶层键必须且只能是 "
+        "result,message,new_facts,new_constraints,missing_material,reason；result 只能是 ASK_OWNER "
+        "或 MATERIAL_READY。new_facts/new_constraints 使用 action,statement,owner_quote,"
+        "replaces_statement（约束另外有 constraint_kind），action 只能是 ADD、CORRECT、REMOVE；"
+        "missing_material 是处理当前老板消息后的剩余缺口，不要补写老板没有说过的事实。ADD 必须显式写 "
+        "replaces_statement:null；constraint_kind 只能使用 BUSINESS_OBJECTIVE、CONTENT_REQUIREMENT、"
+        "PREFERENCE、EXPRESSION、SHOOTING、PROHIBITION；缺少方向或材料时使用 ASK_OWNER。"
     ),
     "CREATE": (
-        "只根据已确认方向、真实事实和约束创作一个完整可拍的脚本。输出 title、script_text、"
-        "shooting_notes，不要输出任何状态、ID、证据或路由字段。"
+        "只根据已确认方向、真实事实和约束创作一个完整可拍的脚本。顶层键必须且只能是 "
+        "title,script_text,shooting_notes；title 必须是字符串或 null，script_text 必须是字符串，"
+        "shooting_notes 必须是字符串数组（例如 [\"拍锅中汤面\",\"老板出镜说原话\"]）。不得添加事实中没有的具体时间、"
+        "食材、步骤、价格、承诺或经营细节；缺少细节时用概括表达。不要输出任何状态、ID、证据或路由字段。"
     ),
     "REVIEW": (
-        "只审核当前脚本的最大根因。输出 result、problem、reason；PASS、REWRITE、"
-        "NEED_MATERIAL、CHANGE_DIRECTION 四选一，不要输出状态、ID、证据或路由字段。"
+        "只审核当前脚本的最大根因。顶层键必须且只能是 result,problem,reason,preserve,change；"
+        "result 只能是 PASS、REWRITE、NEED_MATERIAL、CHANGE_DIRECTION。preserve 写应保留的内容，"
+        "change 写下一稿必须改变的目标，这两个字段必须是字符串数组，不是字符串；结构示例："
+        "{\"result\":\"REWRITE\",\"problem\":\"开头没有说清重点\",\"reason\":\"核心信息太晚出现\","
+        "\"preserve\":[\"真实做法\"],\"change\":[\"第一句说清重点\"]}；PASS 时 problem 必须是 null，"
+        "reason 仍必须填写简短判断，不能是空字符串；不要输出任何状态、ID、证据或路由字段。"
     ),
 }
 
 _SEMANTIC_COMMON_SYSTEM_PROMPT = """你是 Food-IP 的餐饮内容编导。
 你只能使用老板明确提供的事实；不要把猜测、知识、案例或外部信息写成老板事实。
+owner_quote 必须逐字复制当前老板消息中的连续原文（包括标点），不能改写、补字或换标点。
 只输出当前阶段规定的一个小 JSON object，禁止 Markdown、隐藏推理或任何系统保存字段。
 """
 

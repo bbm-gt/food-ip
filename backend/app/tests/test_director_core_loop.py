@@ -553,7 +553,7 @@ def test_stage_executor_boundary_is_single_stage_and_builder_path_is_absent(repo
     assert not hasattr(__import__("backend.app.director_core", fromlist=["x"]), "TurnCandidateBuilder")
     assert {field.name for field in fields(StageExecutionResult)} == {
         "director_message", "post_state", "run_control", "target_stage",
-        "transition_reason_code", "gate", "review",
+        "transition_reason_code", "gate", "review", "business_feedback",
     }
 
     def executor(context: StageExecutionContext) -> StageExecutionResult:

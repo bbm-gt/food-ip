@@ -38,6 +38,7 @@ from .stage_handler import validate_resolved_stage_model_output, StageModelOutpu
 from .semantic_only import (
     SUPPORTED_STAGE_MODES,
     SemanticOutputError,
+    build_business_feedback,
     convert_semantic_output,
 )
 
@@ -127,10 +128,12 @@ class StageExecutionContext:
     session_id: str
     owner_message_id: str
     is_revision_session: bool = False
+    business_feedback: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "working_state", deepcopy(self.working_state))
         object.__setattr__(self, "parameters", deepcopy(self.parameters))
+        object.__setattr__(self, "business_feedback", deepcopy(self.business_feedback))
 
 
 @dataclass(frozen=True)
@@ -149,11 +152,13 @@ class StageExecutionResult:
     transition_reason_code: str
     gate: dict[str, Any] | None
     review: dict[str, Any] | None
+    business_feedback: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "post_state", deepcopy(self.post_state))
         object.__setattr__(self, "gate", deepcopy(self.gate))
         object.__setattr__(self, "review", deepcopy(self.review))
+        object.__setattr__(self, "business_feedback", deepcopy(self.business_feedback))
 
     @property
     def candidate_state(self) -> dict[str, Any]:
@@ -182,6 +187,14 @@ class DisabledSourceReadyContentPolicy:
 
     def should_include(self, context: StageExecutionContext) -> bool:
         return False
+
+
+@dataclass(frozen=True)
+class RevisionSourceReadyContentPolicy:
+    """Load the approved source content only for revision Sessions."""
+
+    def should_include(self, context: StageExecutionContext) -> bool:
+        return context.is_revision_session
 
 
 @dataclass(frozen=True)
@@ -232,9 +245,17 @@ class DirectorStageExecutor:
             context,
             include_source_ready_content=context.is_revision_session and include_source,
         )
+        if context.business_feedback is not None:
+            assembled = replace(
+                assembled,
+                business_feedback=deepcopy(context.business_feedback),
+            )
         try:
             raw_output = self.handler(assembled)
             if self.mode == "semantic_only":
+                business_feedback = build_business_feedback(
+                    context.stage, context.working_state, raw_output
+                )
                 resolved = convert_semantic_output(
                     context.stage,
                     context.working_state,
@@ -245,6 +266,7 @@ class DirectorStageExecutor:
                 )
                 output = validate_resolved_stage_model_output(resolved, context=assembled)
             else:
+                business_feedback = None
                 output = validate_stage_model_output(raw_output, context=assembled)
         except SemanticOutputError as exc:
             raise StageModelOutputSchemaError(
@@ -258,6 +280,7 @@ class DirectorStageExecutor:
             transition_reason_code=output.transition_reason_code,
             gate=None if output.gate is None else output.gate.model_dump(mode="json"),
             review=None if output.review is None else output.review.model_dump(mode="json"),
+            business_feedback=business_feedback,
         )
 
 
@@ -375,6 +398,7 @@ class DirectorOrchestrator:
 
         candidate_state = deepcopy(working_state.state_json)
         current_stage: Stage = working_state.stage  # type: ignore[assignment]
+        candidate_feedback: dict[str, Any] | None = None
         trace_steps: list[dict[str, Any]] = []
         final_result: StageExecutionResult | None = None
 
@@ -388,6 +412,7 @@ class DirectorOrchestrator:
                 session_id=session.id,
                 owner_message_id=owner_message_id,
                 is_revision_session=session.source_ready_content_id is not None,
+                business_feedback=deepcopy(candidate_feedback),
             )
             result = executor(step_context)
             if not isinstance(result, StageExecutionResult):
@@ -448,6 +473,10 @@ class DirectorOrchestrator:
             candidate_state = state_model.model_dump(mode="json")
             trace_steps.append(step.model_dump(mode="json"))
             current_stage = step.target_stage
+            if result.business_feedback is not None:
+                candidate_feedback = deepcopy(result.business_feedback)
+            elif current_stage == "DEEPEN" and step.entered_stage == "EXPLORE":
+                candidate_feedback = None
             final_result = result
             if step.run_control != "CONTINUE":
                 break
@@ -566,6 +595,8 @@ class DirectorOrchestrator:
 __all__ = [
     "DirectorOrchestrator",
     "DirectorTurnRequest",
+    "DisabledSourceReadyContentPolicy",
+    "RevisionSourceReadyContentPolicy",
     "TurnCandidate",
     "TurnOrchestrationContext",
     "SingleStageExecutor",

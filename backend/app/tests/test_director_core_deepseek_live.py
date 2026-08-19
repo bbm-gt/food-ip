@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from backend.app import config
 from backend.app.director_core.context import ContextBudget, ModelContextAssembler
 from backend.app.director_core.database import apply_migrations, connect
 from backend.app.director_core.models import validate_working_state
@@ -43,6 +44,7 @@ def live_repository(tmp_path, name: str):
     executor = DirectorStageExecutor(
         ModelContextAssembler(repository, scope, ContextBudget(1_000_000)),
         DeepSeekStageHandler.from_environment(),
+        mode=config.DIRECTOR_STAGE_MODE,
     )
     return repository, scope, session, executor
 

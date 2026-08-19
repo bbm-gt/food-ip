@@ -125,6 +125,7 @@ class ModelContext:
     evidence_messages: tuple[ContextMessage, ...]
     owner_evidence_references: tuple[Mapping[str, str], ...]
     estimated_units: int
+    business_feedback: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "rules", _freeze(self.rules))
@@ -135,6 +136,7 @@ class ModelContext:
         object.__setattr__(self, "history_turns", _freeze(self.history_turns))
         object.__setattr__(self, "evidence_messages", _freeze(self.evidence_messages))
         object.__setattr__(self, "owner_evidence_references", _freeze(self.owner_evidence_references))
+        object.__setattr__(self, "business_feedback", _freeze(self.business_feedback))
 
     @property
     def owner_message(self) -> str:
@@ -239,6 +241,7 @@ class ModelContextAssembler:
         owner_message_id: str | None = None,
         owner_text: str | None = None,
         include_source_ready_content: bool = False,
+        business_feedback: dict[str, Any] | None = None,
     ) -> ModelContext:
         """Assemble from either a StageExecutionContext-like object or fields.
 
@@ -253,6 +256,7 @@ class ModelContextAssembler:
             working_state = deepcopy(context.working_state)
             owner_message_id = context.owner_message_id
             owner_text = context.owner_text
+            business_feedback = deepcopy(getattr(context, "business_feedback", None))
         if not isinstance(session_id, str) or not session_id:
             raise ContextAssemblyError("session_id is required for Context Assembly")
         if stage not in STAGE_EXECUTION_COMBINATIONS:
@@ -365,6 +369,7 @@ class ModelContextAssembler:
             evidence_messages=tuple(evidence_messages),
             owner_evidence_references=tuple(owner_evidence_references),
             estimated_units=total_units,
+            business_feedback=business_feedback,
         )
 
     def _resolve_evidence(

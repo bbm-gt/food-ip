@@ -96,6 +96,9 @@ DIRECTOR_DEEPSEEK_THINKING_MODE = os.environ.get(
 ).strip().lower()
 DIRECTOR_STAGE_MODE = os.environ.get("DIRECTOR_STAGE_MODE", "legacy").strip().lower()
 if DIRECTOR_STAGE_MODE not in {"legacy", "semantic_only"}:
-    DIRECTOR_STAGE_MODE = "legacy"
+    raise ValueError(
+        "DIRECTOR_STAGE_MODE must be exactly 'legacy' or 'semantic_only'; "
+        f"got {DIRECTOR_STAGE_MODE!r}"
+    )
 FFMPEG_PATH = _probe_binary("ffmpeg")
 FFPROBE_PATH = _probe_binary("ffprobe")

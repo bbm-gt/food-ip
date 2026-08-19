@@ -8,7 +8,11 @@ from contextlib import contextmanager
 from . import config
 from .director_core.context import ContextBudget, ModelContextAssembler
 from .director_core.database import apply_migrations, connect
-from .director_core.orchestrator import DirectorOrchestrator, DirectorStageExecutor
+from .director_core.orchestrator import (
+    DirectorOrchestrator,
+    DirectorStageExecutor,
+    RevisionSourceReadyContentPolicy,
+)
 from .director_core.providers.deepseek import DeepSeekStageHandler
 from .director_core.repository import AuthorizationScope, DirectorRepository
 
@@ -66,9 +70,15 @@ def create_director_orchestrator(
         scope,
         ContextBudget(config.DIRECTOR_CONTEXT_MAX_UNITS),
     )
+    source_policy = (
+        RevisionSourceReadyContentPolicy()
+        if config.DIRECTOR_STAGE_MODE == "semantic_only"
+        else None
+    )
     executor = DirectorStageExecutor(
         assembler,
         create_director_stage_handler(),
+        **({"source_ready_content_policy": source_policy} if source_policy is not None else {}),
         mode=config.DIRECTOR_STAGE_MODE,
     )
     return DirectorOrchestrator(
