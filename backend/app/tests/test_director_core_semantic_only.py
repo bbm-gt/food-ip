@@ -555,21 +555,31 @@ def test_direction_candidate_is_not_owner_confirmed_and_quote_is_required() -> N
         }, context)
 
 
-def test_owner_quote_safety_downgrades_expansion_and_rejects_missing_quote() -> None:
-    context = semantic_context("DEEPEN", owner_text="我们店每天现熬牛骨汤。")
+def test_owner_fact_accepts_faithful_semantic_normalization_and_rejects_missing_quote() -> None:
+    context = semantic_context(
+        "DEEPEN", owner_text="汤不是当天才现熬，是前一晚开始准备，第二天用完。"
+    )
     context.working_state = direction_and_material_state(context)
-    expanded = valid_output("DEEPEN", context.working_state, {
+    normalized = valid_output("DEEPEN", context.working_state, {
         "result": "MATERIAL_READY", "message": None,
-        "new_facts": [fact_change("每天现熬牛骨汤，汤底要熬八小时", "每天现熬牛骨汤")],
+        "new_facts": [fact_change(
+            "汤在前一晚开始准备，第二天用完",
+            "汤不是当天才现熬，是前一晚开始准备，第二天用完",
+        )],
         "new_constraints": [], "missing_material": [], "reason": "材料足够。",
     }, context)
-    assert expanded["post_state"]["owner_facts"] == []
-    assert expanded["post_state"]["unconfirmed_inferences"][0]["statement"].startswith("每天现熬")
+    assert [
+        item["statement"] for item in normalized["post_state"]["owner_facts"]
+    ] == ["汤在前一晚开始准备，第二天用完"]
+    assert normalized["post_state"]["unconfirmed_inferences"] == []
 
     with pytest.raises(SemanticConversionError):
         valid_output("DEEPEN", context.working_state, {
             "result": "MATERIAL_READY", "message": None,
-            "new_facts": [fact_change("每天现熬牛骨汤", "老板说每天现熬牛骨汤")],
+            "new_facts": [fact_change(
+                "汤在前一晚开始准备，第二天用完",
+                "老板说汤在前一晚开始准备，第二天用完",
+            )],
             "new_constraints": [], "missing_material": [], "reason": "材料足够。",
         }, context)
 

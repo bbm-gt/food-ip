@@ -282,3 +282,46 @@ def test_deepseek_live_review_catches_semantic_use_of_unconfirmed_fact(tmp_path)
         "outcome": "BLOCKED",
         "root_cause": "MATERIAL_PROBLEM",
     }
+
+
+def test_deepseek_live_captures_semantic_fact_without_existing_old_fact(tmp_path) -> None:
+    repository, scope, session, executor = live_repository(
+        tmp_path, "director-deepseek-live-semantic-fact-add.sqlite"
+    )
+    owner_message_id = str(uuid4())
+    evidence = {
+        "evidence_type": "owner_message",
+        "target_id": owner_message_id,
+        "target_session_id": session.id,
+    }
+    state = repository.get_working_state(scope, session.id).state_json
+    state["direction"] = {
+        "item_id": str(uuid4()),
+        "statement": "讲店里备汤的真实过程",
+        "owner_confirmed": True,
+        "evidence_refs": [evidence],
+        "inherited_from": None,
+    }
+    state["material_state"] = {
+        "status": "SUFFICIENT",
+        "required_confirmations": [],
+    }
+
+    result = executor(StageExecutionContext(
+        stage="DEEPEN",
+        working_state=state,
+        owner_text="汤不是当天才现熬，是前一晚开始准备，第二天用完。",
+        parameters={},
+        candidate_revision=0,
+        session_id=session.id,
+        owner_message_id=owner_message_id,
+        is_revision_session=False,
+    ))
+
+    statements = [item["statement"] for item in result.post_state["owner_facts"]]
+    assert any("前一晚" in statement and "第二天" in statement for statement in statements)
+    assert result.post_state["rejected_items"] == []
+    assert all(
+        item["supersedes_item_ids"] == []
+        for item in result.post_state["owner_facts"]
+    )

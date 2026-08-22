@@ -471,9 +471,6 @@ def _matching_active_items(state: dict[str, Any], key: str, statement: str) -> l
 
 def _apply_fact_change(state: dict[str, Any], change: SemanticFactChange, evidence: dict[str, str], owner_text: str) -> None:
     _validate_owner_quote(owner_text, change.owner_quote)
-    if change.action == "ADD" and not _statement_supported_by_quote(change.statement, change.owner_quote):
-        _append_unconfirmed(state, change.statement, "AI 提炼超出老板原话，待老板确认。")
-        return
     if change.action in {"CORRECT", "REMOVE"}:
         if change.action == "CORRECT" and change.replaces_statement is None:
             _append_fact(state, change.statement, evidence)

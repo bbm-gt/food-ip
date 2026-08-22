@@ -53,6 +53,8 @@ Knowledge teaches the AI **how to judge**. It does not establish **what happened
 
 Owner Facts must come from the owner or another explicitly trusted and confirmed source. Never promote examples, general knowledge, historical patterns, external information, or creative suggestions into facts about the current owner.
 
+The model may faithfully normalize facts explicitly expressed in the owner's current message; the normalized statement does not need to be a verbatim substring of the owner's quote. Preserve the exact owner quote as evidence, and do not introduce facts the owner did not express.
+
 When a useful fact is missing:
 
 - ask the minimum necessary question if it materially affects the current creative decision;

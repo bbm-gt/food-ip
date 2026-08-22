@@ -23,10 +23,10 @@ test_baseline:
   frontend_ci: "passed: 9 tests and production build"
   frontend_tests: "passed: 9 tests"
   frontend_build: "passed"
-  backend_ci: "passed: 567 tests, 5 opt-in live tests skipped in the default suite"
-  backend_live: "passed: all 5 opt-in DeepSeek scenarios against the configured real API; multi-turn rerun passed after duplicate-key regeneration hardening, and natural-language correction passed both with and without an existing old fact"
+  backend_ci: "passed: 567 tests, 6 opt-in live tests skipped in the default suite"
+  backend_live: "passed: all 6 opt-in DeepSeek scenarios against the configured real API; multi-turn rerun passed after duplicate-key regeneration hardening, natural-language correction passed with and without an existing old fact, and faithful semantic normalization passed for a negated statement without an existing old fact"
   knowledge_pipeline_ci: "passed: 141 tests in the subsystem virtual environment"
-  coverage: "backend/app/tests including Script Core dual-entry, direction-card v2, scoped selection, one-question, direct current-fact correction with or without an existing old fact and without hidden rejection history, semantic REVIEW context, bounded schema-repair budgets, duplicate-key regeneration, captured DeepSeek failure shapes, and v1/v2 replay coverage"
+  coverage: "backend/app/tests including Script Core dual-entry, direction-card v2, scoped selection, one-question, faithful semantic fact normalization, direct current-fact correction with or without an existing old fact and without hidden rejection history, semantic REVIEW context, bounded schema-repair budgets, duplicate-key regeneration, captured DeepSeek failure shapes, and v1/v2 replay coverage"
 
 next:
   status: "local_validation_required"
