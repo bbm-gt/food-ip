@@ -1,6 +1,7 @@
 # Food-IP Knowledge Pipeline
 
-The repository's formal mainline is Director Core Phase 1 — minimum skeleton.
+The repository's current mainline and next task are defined only by the parent
+`docs/project-status.yaml`; this subsystem README does not duplicate that status.
 `knowledge_pipeline/` is an independent Food-IP Professional Creative
 Knowledge production subsystem, not the repository's current mainline. It
 remains logically independent from `backend/` and `frontend/`: it produces

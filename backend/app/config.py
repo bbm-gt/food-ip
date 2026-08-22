@@ -94,7 +94,7 @@ DIRECTOR_DEEPSEEK_MAX_OUTPUT_TOKENS = int(
 DIRECTOR_DEEPSEEK_THINKING_MODE = os.environ.get(
     "DIRECTOR_DEEPSEEK_THINKING_MODE", "disabled"
 ).strip().lower()
-DIRECTOR_STAGE_MODE = os.environ.get("DIRECTOR_STAGE_MODE", "legacy").strip().lower()
+DIRECTOR_STAGE_MODE = os.environ.get("DIRECTOR_STAGE_MODE", "semantic_only").strip().lower()
 if DIRECTOR_STAGE_MODE not in {"legacy", "semantic_only"}:
     raise ValueError(
         "DIRECTOR_STAGE_MODE must be exactly 'legacy' or 'semantic_only'; "

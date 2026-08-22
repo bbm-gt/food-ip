@@ -34,12 +34,12 @@ from .execution import (
 )
 from .models import (
     ContextCheckpoint,
-    FirstResponse,
     ReadyContent,
     TurnExecutionTrace,
     TurnPostStateSnapshot,
     validate_utc_millis,
     validate_turn_execution_trace,
+    validate_first_response,
     validate_uuid4,
     validate_working_state,
 )
@@ -232,6 +232,10 @@ class DirectorRepository:
             if not isinstance(trace.get("steps"), list) or not trace["steps"]:
                 raise DirectorExecutionValidationError("Prepared execution trace is empty")
             current_stage = trace["steps"][0].get("entered_stage")
+            persisted_response = validate_first_response(
+                parse_canonical_object(prepared.first_response_json),
+                response_format_version=prepared.response_format_version,
+            )
             rebuilt = prepare_successful_turn(
                 CommitSuccessfulTurnInput(
                     session_id=prepared.session_id,
@@ -254,6 +258,7 @@ class DirectorRepository:
                     ready_content_id=prepared.ready_content_id,
                     ready_content=(None if prepared.final_content_json is None else parse_canonical_object(prepared.final_content_json)),
                     created_at=prepared.created_at,
+                    interaction=persisted_response.get("interaction"),
                 ),
                 current_state_version=prepared.pre_state_version,
                 current_max_message_seq=2 * prepared.pre_state_version,
@@ -972,10 +977,12 @@ class DirectorRepository:
         try:
             if row["session_id"] != session.id or row["post_state_version"] != row["pre_state_version"] + 1:
                 raise DirectorIntegrityError("recovery Turn identity or version is invalid")
-            if any(row[name] != 1 for name in (
-                "request_format_version", "execution_format_version",
-                "response_format_version", "snapshot_format_version",
-            )):
+            if (
+                row["request_format_version"] != 1
+                or row["execution_format_version"] != 1
+                or row["response_format_version"] not in {1, 2}
+                or row["snapshot_format_version"] != 1
+            ):
                 raise DirectorIntegrityError("unsupported recovery Turn format version")
             normalized_request = parse_canonical_object(row["normalized_request_json"])
             validate_normalized_request(normalized_request)
@@ -1005,12 +1012,14 @@ class DirectorRepository:
                 gate_outcome=row["gate_outcome"],
                 review_root_cause=row["review_root_cause"],
             ).model_dump(mode="json")
-            response = FirstResponse.model_validate(
-                parse_canonical_object(row["first_response_json"])
-            ).model_dump(mode="json")
+            response = validate_first_response(
+                parse_canonical_object(row["first_response_json"]),
+                response_format_version=row["response_format_version"],
+            )
             snapshot = TurnPostStateSnapshot.model_validate(
                 parse_canonical_object(row["post_state_snapshot_json"])
             ).model_dump(mode="json")
+            self._validate_response_interaction(response, snapshot["state_json"])
             digest = state_sha256(snapshot["state_version"], snapshot["stage"], snapshot["state_json"])
             if digest != row["post_state_sha256"]:
                 raise DirectorIntegrityError("recovery Turn snapshot hash mismatch")
@@ -1375,7 +1384,7 @@ class DirectorRepository:
         if (
             turn["request_format_version"] != 1
             or turn["execution_format_version"] != 1
-            or turn["response_format_version"] != 1
+            or turn["response_format_version"] not in {1, 2}
             or turn["snapshot_format_version"] != 1
         ):
             raise DirectorIntegrityError("Evidence Turn format version is invalid")
@@ -1399,9 +1408,13 @@ class DirectorRepository:
                 transition_reason_code=turn["transition_reason_code"], gate_outcome=turn["gate_outcome"],
                 review_root_cause=turn["review_root_cause"],
             )
-            response = FirstResponse.model_validate(parse_canonical_object(turn["first_response_json"])).model_dump(mode="json")
+            response = validate_first_response(
+                parse_canonical_object(turn["first_response_json"]),
+                response_format_version=turn["response_format_version"],
+            )
             self._validate_turn_ready_closure(turn, response)
             snapshot = TurnPostStateSnapshot.model_validate(parse_canonical_object(turn["post_state_snapshot_json"])).model_dump(mode="json")
+            self._validate_response_interaction(response, snapshot["state_json"])
             if state_sha256(snapshot["state_version"], snapshot["stage"], snapshot["state_json"]) != turn["post_state_sha256"]:
                 raise DirectorIntegrityError("Evidence Turn snapshot hash mismatch")
             if snapshot["state_version"] != turn["post_state_version"] or snapshot["stage"] != turn["target_stage"]:
@@ -1470,7 +1483,7 @@ class DirectorRepository:
                 raise DirectorIntegrityError("Turn request hash mismatch")
             if (
                 row["execution_format_version"] != 1
-                or row["response_format_version"] != 1
+                or row["response_format_version"] not in {1, 2}
                 or row["snapshot_format_version"] != 1
             ):
                 raise DirectorIntegrityError("unsupported Turn JSON format version")
@@ -1489,13 +1502,15 @@ class DirectorRepository:
                 transition_reason_code=row["transition_reason_code"], gate_outcome=row["gate_outcome"],
                 review_root_cause=row["review_root_cause"],
             ).model_dump(mode="json")
-            response = FirstResponse.model_validate(
-                parse_canonical_object(row["first_response_json"])
-            ).model_dump(mode="json")
+            response = validate_first_response(
+                parse_canonical_object(row["first_response_json"]),
+                response_format_version=row["response_format_version"],
+            )
             self._validate_turn_ready_closure(row, response)
             snapshot = TurnPostStateSnapshot.model_validate(
                 parse_canonical_object(row["post_state_snapshot_json"])
             ).model_dump(mode="json")
+            self._validate_response_interaction(response, snapshot["state_json"])
             digest = state_sha256(snapshot["state_version"], snapshot["stage"], snapshot["state_json"])
             if digest != row["post_state_sha256"]:
                 raise DirectorIntegrityError("Turn post-state hash mismatch")
@@ -1536,6 +1551,24 @@ class DirectorRepository:
             post_state_snapshot_json=snapshot,
         )
         return result
+
+    @staticmethod
+    def _validate_response_interaction(
+        response: dict[str, Any], state: dict[str, Any]
+    ) -> None:
+        interaction = response.get("interaction")
+        if interaction is None:
+            return
+        candidates = {
+            item["item_id"]: item["statement"]
+            for item in state["ai_judgments"]
+            if item["judgment_kind"] == "DIRECTION_CANDIDATE"
+        }
+        options = interaction["options"]
+        if {item["id"] for item in options} != set(candidates):
+            raise DirectorIntegrityError("direction interaction IDs do not match Working State")
+        if any(candidates[item["id"]] != item["direction"] for item in options):
+            raise DirectorIntegrityError("direction interaction text does not match Working State")
 
     def get_complete_message_turns(
         self, scope: AuthorizationScope, session_id: str

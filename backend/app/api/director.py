@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import sqlite3
 from typing import Any, Literal
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field, UUID4
+from pydantic import BaseModel, Field, UUID4, field_validator
 
 from ..core.store import get_project
 from ..director_core.execution import (
@@ -30,6 +31,7 @@ from ..director_core.repository import (
     SQLiteBusyError,
     is_sqlite_lock_error,
 )
+from ..director_core.semantic_only import DirectionSelectionError
 from ..director_core.stage_handler import StageModelOutputError
 from ..director_runtime import (
     create_director_orchestrator,
@@ -58,11 +60,40 @@ class SubmitOwnerMessageRequest(BaseModel):
     content: str = Field(min_length=1)
     parameters: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("parameters")
+    @classmethod
+    def supported_parameters(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if not value:
+            return value
+        if set(value) == {"entry_mode"} and value["entry_mode"] in {"DISCOVER", "IDEA"}:
+            return value
+        if set(value) == {"action", "direction_id"} and value["action"] == "SELECT_DIRECTION":
+            try:
+                parsed = UUID(value["direction_id"])
+            except (TypeError, ValueError):
+                raise ValueError("direction_id must be a UUIDv4") from None
+            if parsed.version != 4 or str(parsed) != value["direction_id"]:
+                raise ValueError("direction_id must be normalized")
+            return value
+        raise ValueError("unsupported Director message parameters")
+
 
 class DirectorMessageResponse(BaseModel):
     id: str
     role: Literal["DIRECTOR"]
     content: str
+
+
+class DirectorDirectionOptionResponse(BaseModel):
+    id: str
+    direction: str
+    reason: str
+    recommended: bool
+
+
+class DirectorInteractionResponse(BaseModel):
+    kind: Literal["DIRECTION_SELECTION"]
+    options: list[DirectorDirectionOptionResponse]
 
 
 class DirectorTurnResponse(BaseModel):
@@ -72,6 +103,7 @@ class DirectorTurnResponse(BaseModel):
     message: DirectorMessageResponse
     status: Literal["WAITING_FOR_OWNER", "READY"]
     ready_content: dict[str, Any] | None
+    interaction: DirectorInteractionResponse | None
     replayed: bool
 
 
@@ -97,6 +129,8 @@ def _raise_mapped_error(error: Exception) -> None:
         raise _conflict_error("state_version_conflict", "请求基于过期的 Director 状态") from error
     if isinstance(error, SessionReadyError):
         raise _conflict_error("session_ready", "该 Director Session 已完成") from error
+    if isinstance(error, DirectionSelectionError):
+        raise _conflict_error("invalid_direction_selection", "所选方向已失效，请使用当前方向卡重新选择") from error
     if isinstance(error, (SQLiteBusyError, CommitRolledBackError, CommitOutcomeIndeterminateError)):
         raise _http_error(status.HTTP_503_SERVICE_UNAVAILABLE, "Director 服务暂时不可用，请使用同一消息 ID 重试") from error
     if isinstance(error, DeepSeekConfigurationError):
@@ -193,6 +227,7 @@ def submit_owner_message_route(
                 ),
                 status=("READY" if response["run_control"] == "READY" else "WAITING_FOR_OWNER"),
                 ready_content=ready_content,
+                interaction=response.get("interaction"),
                 replayed=result.replayed,
             )
     except Exception as error:

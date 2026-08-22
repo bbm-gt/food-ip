@@ -2,7 +2,7 @@
 
 `knowledge_pipeline/` 是 Food-IP 仓库中的**独立 Creative Knowledge 生产子系统**。本文件中的“当前阶段”“当前工作”与“当前主线”均只指该子系统，不代表整个 Food-IP 产品当前主线；产品主线以父级 `AGENTS.md` 与 `docs/architecture.md` 为准。
 
-仓库当前正式主线是 **Director Core Phase 1 — 最小骨架**。`knowledge_pipeline/` 是独立的 Creative Knowledge 生产子系统，不代表整个仓库的当前主线；只有在明确授权时，才维护或继续优化该子系统。
+仓库当前正式主线及下一任务只引用父级 `docs/project-status.yaml`，本文件不硬编码阶段名称。`knowledge_pipeline/` 是独立的 Creative Knowledge 生产子系统，不代表整个仓库的当前主线；只有在明确授权时，才维护或继续优化该子系统。
 
 现有课程视频 pipeline 是一条已经实现并验证的知识摄入路径（课程视频 → 结构化、可追溯、有边界的知识），不是全部知识来源。未来知识源范围与治理方案尚未确认，不在本文件中预设。
 
@@ -44,7 +44,7 @@ P0 Reliability                 = FINAL GO / CLOSED（勿重新折腾）
 Knowledge Creative Value       = Strong Positive Signal
 Phase 0.5 Creative Value Gate  = PARTIAL / STRONG POSITIVE（非 PASS）
 以上为历史验收状态，不是当前 blocker
-仓库当前正式主线               = Director Core Phase 1 — 最小骨架
+仓库当前正式主线               = 见父级 docs/project-status.yaml
 knowledge_pipeline 当前定位     = 独立子系统；仅在明确授权时维护或优化
 Owner Facts / Knowledge 边界原则 = 当前立即生效
 正式 Fact Contract 与程序实现    = 当前 Deferred

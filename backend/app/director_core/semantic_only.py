@@ -12,7 +12,7 @@ from copy import deepcopy
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import ConfigDict, StrictStr, ValidationError, field_validator, model_validator
+from pydantic import ConfigDict, Field, StrictStr, ValidationError, field_validator, model_validator
 
 from .models import StrictModel, WorkingState
 
@@ -40,6 +40,10 @@ class SemanticOutputSchemaError(SemanticOutputError):
 
 class SemanticConversionError(SemanticOutputError):
     """The trusted application conversion could not produce valid state."""
+
+
+class DirectionSelectionError(ValueError):
+    """A structured direction selection is unknown, stale, or inconsistent."""
 
 
 class _SemanticModel(StrictModel):
@@ -71,12 +75,15 @@ class SemanticFactChange(StrictModel):
         if self.action == "ADD":
             if self.statement is None or not self.statement.strip() or self.replaces_statement is not None:
                 raise ValueError("ADD requires statement and no replaces_statement")
-        elif self.replaces_statement is None or not self.replaces_statement.strip():
-            raise ValueError("CORRECT and REMOVE require replaces_statement")
         if self.action == "CORRECT" and (self.statement is None or not self.statement.strip()):
             raise ValueError("CORRECT requires statement")
-        if self.action == "REMOVE" and self.statement is not None:
-            raise ValueError("REMOVE statement must be null")
+        if self.action == "CORRECT" and self.replaces_statement is not None and not self.replaces_statement.strip():
+            raise ValueError("CORRECT replaces_statement must be nonblank when provided")
+        if self.action == "REMOVE":
+            if self.statement is not None:
+                raise ValueError("REMOVE statement must be null")
+            if self.replaces_statement is None or not self.replaces_statement.strip():
+                raise ValueError("REMOVE requires replaces_statement")
         if not self.owner_quote.strip():
             raise ValueError("owner_quote must not be blank")
         return self
@@ -105,24 +112,47 @@ class SemanticConstraintChange(StrictModel):
         return self
 
 
+class SemanticDirectionOption(_SemanticModel):
+    direction: StrictStr
+    reason: StrictStr
+    recommended: bool
+
+    @field_validator("direction")
+    @classmethod
+    def nonblank_direction(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("direction must not be blank")
+        return value
+
+
 class ExploreSemanticOutput(_SemanticModel):
-    result: Literal["ASK_OWNER", "DIRECTION_CANDIDATE", "DIRECTION_READY"]
+    result: Literal["ASK_OWNER", "DIRECTION_CANDIDATE", "DIRECTION_OPTIONS", "DIRECTION_READY"]
     message: StrictStr | None
     direction: StrictStr | None
     owner_quote: StrictStr | None
     new_facts: list[SemanticFactChange]
     new_constraints: list[SemanticConstraintChange]
     reason: StrictStr
+    directions: list[SemanticDirectionOption] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def result_fields(self) -> "ExploreSemanticOutput":
-        if self.result in {"ASK_OWNER", "DIRECTION_CANDIDATE"}:
+        if self.result in {"ASK_OWNER", "DIRECTION_CANDIDATE", "DIRECTION_OPTIONS"}:
             if self.message is None or not self.message.strip():
                 raise ValueError("owner input result requires message")
             if self.result == "ASK_OWNER" and self.direction is not None:
                 raise ValueError("ASK_OWNER must not establish direction")
             if self.result == "DIRECTION_CANDIDATE" and (self.direction is None or not self.direction.strip()):
                 raise ValueError("DIRECTION_CANDIDATE requires direction")
+            if self.result == "DIRECTION_OPTIONS":
+                if self.direction is not None:
+                    raise ValueError("DIRECTION_OPTIONS must not set direction")
+                if len(self.directions) != 3:
+                    raise ValueError("DIRECTION_OPTIONS requires exactly three directions")
+                if len({item.direction for item in self.directions}) != 3:
+                    raise ValueError("DIRECTION_OPTIONS directions must be distinct")
+                if sum(item.recommended for item in self.directions) != 1:
+                    raise ValueError("DIRECTION_OPTIONS requires exactly one recommendation")
             if self.owner_quote is not None:
                 raise ValueError("unconfirmed direction must not include owner_quote")
         else:
@@ -130,6 +160,8 @@ class ExploreSemanticOutput(_SemanticModel):
                 raise ValueError("DIRECTION_READY requires direction")
             if self.owner_quote is None or not self.owner_quote.strip():
                 raise ValueError("DIRECTION_READY requires owner_quote")
+        if self.result != "DIRECTION_OPTIONS" and self.directions:
+            raise ValueError("directions are only allowed for DIRECTION_OPTIONS")
         return self
 
 
@@ -146,15 +178,15 @@ class DeepenSemanticOutput(_SemanticModel):
         if self.result == "ASK_OWNER":
             if self.message is None or not self.message.strip():
                 raise ValueError("ASK_OWNER requires message")
-            if not self.missing_material:
-                raise ValueError("ASK_OWNER requires missing_material")
+            if len(self.missing_material) != 1:
+                raise ValueError("ASK_OWNER requires exactly one missing material question")
         elif self.missing_material:
             raise ValueError("MATERIAL_READY must not leave missing_material")
         return self
 
 
 class CreateSemanticOutput(_SemanticModel):
-    title: StrictStr | None
+    title: StrictStr
     script_text: StrictStr
     shooting_notes: list[StrictStr]
 
@@ -163,6 +195,13 @@ class CreateSemanticOutput(_SemanticModel):
     def nonblank_script(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("script_text must not be blank")
+        return value
+
+    @field_validator("title")
+    @classmethod
+    def nonblank_title(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("title must not be blank")
         return value
 
     @field_validator("shooting_notes")
@@ -258,6 +297,13 @@ def _constraint_items(items: list[dict[str, Any]]) -> list[dict[str, str]]:
     ]
 
 
+def _unconfirmed_items(items: list[dict[str, Any]]) -> list[dict[str, str]]:
+    return [
+        {"statement": item["statement"], "reason": item["reason"]}
+        for item in items
+    ]
+
+
 def semantic_model_input(context: Any) -> dict[str, Any]:
     """Build stage-relevant business context without technical state metadata."""
 
@@ -270,9 +316,15 @@ def semantic_model_input(context: Any) -> dict[str, Any]:
         "direction": None if state["direction"] is None else state["direction"]["statement"],
         "facts": _owner_items(state["owner_facts"]),
         "constraints": _constraint_items(state["owner_constraints"]),
+        "unconfirmed_inferences": _unconfirmed_items(state["unconfirmed_inferences"]),
         "recent_dialogue": _recent_dialogue(payload),
     }
     if stage == "EXPLORE":
+        parameters = getattr(context, "request_parameters", None)
+        if parameters is not None:
+            entry_mode = parameters.get("entry_mode")
+            if entry_mode in {"DISCOVER", "IDEA"}:
+                base["entry_mode"] = entry_mode
         base["candidate_directions"] = [
             item["statement"]
             for item in state["ai_judgments"]
@@ -341,11 +393,22 @@ def _append_unconfirmed(state: dict[str, Any], statement: str, reason: str) -> N
     })
 
 
+def _clear_matching_unconfirmed(state: dict[str, Any], statement: str) -> None:
+    normalized_statement = _normalized_text(statement)
+    state["unconfirmed_inferences"] = [
+        item
+        for item in state["unconfirmed_inferences"]
+        if _normalized_text(item["statement"]) != normalized_statement
+    ]
+
+
 def _append_fact(
     state: dict[str, Any], statement: str, evidence: dict[str, str], *, supersedes: list[str] | None = None
 ) -> str:
     if any(item["statement"] == statement for item in state["owner_facts"]):
-        return next(item["item_id"] for item in state["owner_facts"] if item["statement"] == statement)
+        item_id = next(item["item_id"] for item in state["owner_facts"] if item["statement"] == statement)
+        _clear_matching_unconfirmed(state, statement)
+        return item_id
     item_id = str(uuid4())
     state["owner_facts"].append({
         "item_id": item_id,
@@ -354,6 +417,7 @@ def _append_fact(
         "supersedes_item_ids": list(supersedes or []),
         "inherited_from": None,
     })
+    _clear_matching_unconfirmed(state, statement)
     return item_id
 
 
@@ -361,7 +425,9 @@ def _append_constraint(
     state: dict[str, Any], statement: str, evidence: dict[str, str], *, constraint_kind: ConstraintKind,
 ) -> str:
     if any(item["statement"] == statement for item in state["owner_constraints"]):
-        return next(item["item_id"] for item in state["owner_constraints"] if item["statement"] == statement)
+        item_id = next(item["item_id"] for item in state["owner_constraints"] if item["statement"] == statement)
+        _clear_matching_unconfirmed(state, statement)
+        return item_id
     item_id = str(uuid4())
     state["owner_constraints"].append({
         "item_id": item_id,
@@ -370,6 +436,7 @@ def _append_constraint(
         "constraint_kind": constraint_kind,
         "inherited_from": None,
     })
+    _clear_matching_unconfirmed(state, statement)
     return item_id
 
 
@@ -408,19 +475,21 @@ def _apply_fact_change(state: dict[str, Any], change: SemanticFactChange, eviden
         _append_unconfirmed(state, change.statement, "AI 提炼超出老板原话，待老板确认。")
         return
     if change.action in {"CORRECT", "REMOVE"}:
-        if change.statement is not None and not _statement_supported_by_quote(change.statement, change.owner_quote):
-            raise SemanticConversionError("corrected fact statement is broader than owner_quote")
+        if change.action == "CORRECT" and change.replaces_statement is None:
+            _append_fact(state, change.statement, evidence)
+            return
         matches = _matching_active_items(state, "owner_facts", change.replaces_statement)
-        if len(matches) != 1:
-            raise SemanticConversionError("fact correction must match exactly one active fact")
-        old = matches[0]
+        if len(matches) > 1:
+            raise SemanticConversionError("fact correction must not match multiple active facts")
+        if matches:
+            state["owner_facts"].remove(matches[0])
+        _clear_matching_unconfirmed(state, change.replaces_statement)
         if change.action == "REMOVE":
-            _reject_active_item(state, old, "OWNER_FACT", "OWNER_REJECTED", evidence, None)
-            state["owner_facts"].remove(old)
+            if not matches:
+                raise SemanticConversionError("fact removal must match exactly one active fact")
+            return
         else:
-            new_id = _append_fact(state, change.statement, evidence, supersedes=[old["item_id"]])
-            _reject_active_item(state, old, "OWNER_FACT", "OWNER_CORRECTED", evidence, new_id)
-            state["owner_facts"].remove(old)
+            _append_fact(state, change.statement, evidence)
         return
     _append_fact(state, change.statement, evidence)
 
@@ -466,7 +535,8 @@ def _reject_direction(
 
 
 def _set_direction(
-    state: dict[str, Any], statement: str, evidence: dict[str, str], owner_text: str, owner_quote: str
+    state: dict[str, Any], statement: str, evidence: dict[str, str], owner_text: str, owner_quote: str,
+    *, item_id: str | None = None,
 ) -> None:
     _validate_owner_quote(owner_text, owner_quote)
     if not _statement_supported_by_quote(statement, owner_quote):
@@ -474,7 +544,7 @@ def _set_direction(
     old = state["direction"]
     if old is not None and old["statement"] == statement:
         return
-    new_id = str(uuid4())
+    new_id = item_id or str(uuid4())
     if old is not None:
         _reject_direction(state, old, evidence, replacement=new_id)
     state["direction"] = {
@@ -507,6 +577,17 @@ def _append_direction_candidate(state: dict[str, Any], statement: str) -> None:
     })
 
 
+def _replace_direction_candidates(
+    state: dict[str, Any], options: list[SemanticDirectionOption]
+) -> None:
+    state["ai_judgments"] = [
+        item for item in state["ai_judgments"]
+        if item["judgment_kind"] != "DIRECTION_CANDIDATE"
+    ]
+    for option in options:
+        _append_direction_candidate(state, option.direction)
+
+
 def _reconcile_missing_material(state: dict[str, Any], missing: list[str]) -> None:
     if len(set(missing)) != len(missing):
         raise SemanticConversionError("missing_material contains duplicate questions")
@@ -530,6 +611,23 @@ def _reconcile_missing_material(state: dict[str, Any], missing: list[str]) -> No
     }
 
 
+def _reject_questions_already_answered(state: dict[str, Any], missing: list[str]) -> None:
+    confirmed = [
+        item["statement"]
+        for key in ("owner_facts", "owner_constraints")
+        for item in state[key]
+    ]
+    for question in missing:
+        normalized_question = _normalized_text(question)
+        if any(
+            normalized_question and normalized_question in _normalized_text(statement)
+            for statement in confirmed
+        ):
+            raise SemanticConversionError(
+                "missing material repeats an already confirmed fact or constraint"
+            )
+
+
 def _clear_material_gap(state: dict[str, Any]) -> None:
     state["material_state"] = {"status": "SUFFICIENT", "required_confirmations": []}
 
@@ -538,8 +636,64 @@ def _content(output: CreateSemanticOutput) -> dict[str, Any]:
     return {
         "title": output.title,
         "script_text": output.script_text,
-        "shooting_notes": list(output.shooting_notes),
+        "shooting_notes": [],
     }
+
+
+def build_direction_interaction(
+    stage: str, semantic_output: Any, post_state: dict[str, Any]
+) -> dict[str, Any] | None:
+    output = validate_semantic_output(stage, semantic_output)
+    if not isinstance(output, ExploreSemanticOutput) or output.result != "DIRECTION_OPTIONS":
+        return None
+    candidates = {
+        item["statement"]: item["item_id"]
+        for item in post_state["ai_judgments"]
+        if item["judgment_kind"] == "DIRECTION_CANDIDATE"
+    }
+    return {
+        "kind": "DIRECTION_SELECTION",
+        "options": [
+            {
+                "id": candidates[item.direction],
+                "direction": item.direction,
+                "reason": item.reason,
+                "recommended": item.recommended,
+            }
+            for item in output.directions
+        ],
+    }
+
+
+def convert_direction_selection(
+    pre_state: dict[str, Any], *, owner_text: str, owner_message_id: str,
+    owner_session_id: str, direction_id: Any,
+) -> dict[str, Any]:
+    if not isinstance(direction_id, str):
+        raise DirectionSelectionError("direction_id must be a string")
+    state = WorkingState.model_validate(deepcopy(pre_state)).model_dump(mode="json")
+    candidates = [
+        item for item in state["ai_judgments"]
+        if item["judgment_kind"] == "DIRECTION_CANDIDATE" and item["item_id"] == direction_id
+    ]
+    if len(candidates) != 1:
+        raise DirectionSelectionError("direction does not belong to the current Session state")
+    candidate = candidates[0]
+    if candidate["statement"] not in owner_text:
+        raise DirectionSelectionError("owner confirmation must contain the selected direction")
+    _set_direction(
+        state, candidate["statement"], _evidence(owner_message_id, owner_session_id),
+        owner_text, candidate["statement"], item_id=candidate["item_id"],
+    )
+    state["ai_judgments"] = [
+        item for item in state["ai_judgments"]
+        if item["judgment_kind"] != "DIRECTION_CANDIDATE"
+    ]
+    return _envelope(
+        run_control="CONTINUE", target_stage="DEEPEN",
+        reason_code="DIRECTION_CONFIRMED", message=None, gate=None,
+        review=None, state=state,
+    )
 
 
 def _envelope(
@@ -570,7 +724,17 @@ def build_business_feedback(
     """Extract non-persistent creative feedback for the next internal stage."""
 
     output = validate_semantic_output(stage, semantic_output)
-    if stage != "REVIEW" or not isinstance(output, ReviewSemanticOutput) or output.result == "PASS":
+    if stage != "REVIEW" or not isinstance(output, ReviewSemanticOutput):
+        return None
+    if output.result == "PASS":
+        unresolved = _draft_dependent_unconfirmed(pre_state)
+        if unresolved is not None:
+            return {
+                "kind": "review", "target_stage": "DEEPEN",
+                "problem": unresolved["statement"],
+                "reason": "成稿依赖尚未确认的信息。", "preserve": [],
+                "change": ["向老板确认这一项真实信息"],
+            }
         return None
     target_stage = {
         "REWRITE": "CREATE",
@@ -588,6 +752,29 @@ def build_business_feedback(
     if output.result == "CHANGE_DIRECTION" and pre_state.get("direction") is not None:
         feedback["rejected_direction"] = pre_state["direction"]["statement"]
     return feedback
+
+
+def _draft_dependent_unconfirmed(state: dict[str, Any]) -> dict[str, Any] | None:
+    draft = state.get("draft")
+    if not isinstance(draft, dict):
+        return None
+    content = draft.get("content")
+    if not isinstance(content, dict):
+        return None
+    content_text = _normalized_text(" ".join(
+        value
+        for key in ("title", "script_text", "shooting_notes")
+        for value in (
+            content.get(key, []) if isinstance(content.get(key), list)
+            else [content.get(key)]
+        )
+        if isinstance(value, str)
+    ))
+    for item in state.get("unconfirmed_inferences", []):
+        statement = _normalized_text(item["statement"])
+        if statement and statement in content_text:
+            return item
+    return None
 
 
 def convert_semantic_output(
@@ -628,6 +815,14 @@ def convert_semantic_output(
                     gate={"outcome": "BLOCKED", "gate_code": "DIRECTION_NOT_CONFIRMED", "explanation": output.reason},
                     review=None, state=state,
                 )
+            if output.result == "DIRECTION_OPTIONS":
+                _replace_direction_candidates(state, output.directions)
+                return _envelope(
+                    run_control="WAIT_FOR_OWNER", target_stage="EXPLORE",
+                    reason_code="OWNER_INPUT_REQUIRED", message=output.message,
+                    gate={"outcome": "BLOCKED", "gate_code": "DIRECTION_NOT_CONFIRMED", "explanation": output.reason},
+                    review=None, state=state,
+                )
             if any(
                 item["item_kind"] == "DIRECTION" and item["statement"] == output.direction
                 for item in state["rejected_items"]
@@ -644,6 +839,7 @@ def convert_semantic_output(
             assert isinstance(output, DeepenSemanticOutput)
             _append_owner_material(state, output, evidence, owner_text)
             if output.result == "ASK_OWNER":
+                _reject_questions_already_answered(state, output.missing_material)
                 _reconcile_missing_material(state, output.missing_material)
                 return _envelope(
                     run_control="WAIT_FOR_OWNER", target_stage="DEEPEN",
@@ -696,6 +892,20 @@ def convert_semantic_output(
                 "against_draft_id": draft["draft_id"],
                 "against_content": deepcopy(draft["content"]),
             }
+            unresolved = _draft_dependent_unconfirmed(state)
+            if output.result == "PASS" and unresolved is not None:
+                state["review"] = {
+                    "review_id": str(uuid4()), "outcome": "BLOCKED",
+                    "root_cause": "MATERIAL_PROBLEM", "against_draft_id": draft["draft_id"],
+                    "against_content": deepcopy(draft["content"]),
+                }
+                _reconcile_missing_material(state, [f"请确认：{unresolved['statement']}"])
+                return _envelope(
+                    run_control="CONTINUE", target_stage="DEEPEN",
+                    reason_code="MATERIAL_GAP", message=None,
+                    gate={"outcome": "BLOCKED", "gate_code": "MATERIAL_INSUFFICIENT", "explanation": "成稿依赖尚未确认的信息。"},
+                    review={"outcome": "BLOCKED", "root_cause": "MATERIAL_PROBLEM"}, state=state,
+                )
             if output.result == "PASS":
                 _clear_material_gap(state)
                 return _envelope(
@@ -708,12 +918,7 @@ def convert_semantic_output(
                 _clear_material_gap(state)
                 target, code, gate_code = "CREATE", "WRITING_REPAIR", "CONTENT_INCOMPLETE"
             elif output.result == "NEED_MATERIAL":
-                existing = [
-                    item["statement"]
-                    for item in state["material_state"]["required_confirmations"]
-                    if item["statement"] != output.problem
-                ]
-                _reconcile_missing_material(state, [output.problem, *existing])  # type: ignore[list-item]
+                _reconcile_missing_material(state, [output.problem])  # type: ignore[list-item]
                 target, code, gate_code = "DEEPEN", "MATERIAL_GAP", "MATERIAL_INSUFFICIENT"
             else:
                 if state["direction"] is None:
@@ -747,6 +952,7 @@ def convert_semantic_output(
 
 __all__ = [
     "CreateSemanticOutput",
+    "DirectionSelectionError",
     "DeepenSemanticOutput",
     "ExploreSemanticOutput",
     "LEGACY",
@@ -760,6 +966,8 @@ __all__ = [
     "SemanticOutputTypeError",
     "SUPPORTED_STAGE_MODES",
     "build_business_feedback",
+    "build_direction_interaction",
+    "convert_direction_selection",
     "convert_semantic_output",
     "semantic_model_input",
     "validate_semantic_output",

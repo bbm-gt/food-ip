@@ -20,10 +20,12 @@ from .canonical import (
 )
 from .models import (
     FirstResponse,
+    FirstResponseV2,
     ReadyContent,
     Stage,
     TurnPostStateSnapshot,
     validate_turn_execution_trace,
+    validate_first_response,
     validate_utc_millis,
     validate_uuid4,
     validate_working_state,
@@ -135,6 +137,7 @@ class CommitSuccessfulTurnInput:
     ready_content_id: str | None
     ready_content: dict[str, Any] | None
     created_at: str
+    interaction: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -166,7 +169,7 @@ class SuccessfulTurnResult:
             raise DirectorExecutionValidationError("first_response_json must be canonical JSON text")
         try:
             parsed = parse_canonical_object(first_response_json)
-            validated = FirstResponse.model_validate(parsed).model_dump(mode="json")
+            validated = validate_first_response(parsed)
             if canonical_text(validated) != first_response_json:
                 raise ValueError("FirstResponse JSON is not canonical")
         except (TypeError, ValueError) as exc:
@@ -486,8 +489,7 @@ def prepare_successful_turn(
         )
         snapshot, post_state_snapshot_json = _canonical_payload(snapshot_model.model_dump(mode="json"), "post_state_snapshot")
         post_hash = state_sha256(post_state_version, target_stage, post_state)
-        response_model = FirstResponse.model_validate(
-            {
+        response_payload = {
                 "session_id": session_id,
                 "turn_id": turn_id,
                 "owner_message_id": owner_message_id,
@@ -498,7 +500,23 @@ def prepare_successful_turn(
                 "director_message": director_message,
                 "ready_content_id": ready_content_id,
             }
-        )
+        response_format_version = 1
+        if command.interaction is not None:
+            response_payload = {
+                **response_payload,
+                "format_version": 2,
+                "interaction": deepcopy(command.interaction),
+            }
+            response_model = FirstResponseV2.model_validate(response_payload)
+            response_format_version = 2
+            option_ids = {item["item_id"] for item in post_state["ai_judgments"] if item["judgment_kind"] == "DIRECTION_CANDIDATE"}
+            interaction_ids = {item.id for item in response_model.interaction.options}  # type: ignore[union-attr]
+            if interaction_ids != option_ids:
+                raise DirectorExecutionValidationError(
+                    "direction interaction must match current direction candidates"
+                )
+        else:
+            response_model = FirstResponse.model_validate(response_payload)
         response, first_response_json = _canonical_payload(response_model.model_dump(mode="json"), "first_response")
         if response["director_message"] != director_message:
             raise DirectorExecutionValidationError("FirstResponse DIRECTOR text mismatch")
@@ -515,7 +533,7 @@ def prepare_successful_turn(
             transition_reason_code=command.transition_reason_code,
             gate_outcome=command.gate_outcome, review_root_cause=command.review_root_cause,
             execution_format_version=trace["format_version"],
-            execution_trace_json=execution_trace_json, response_format_version=1,
+            execution_trace_json=execution_trace_json, response_format_version=response_format_version,
             first_response_json=first_response_json,
             snapshot_format_version=snapshot["snapshot_format_version"],
             post_state_json=post_state_json,

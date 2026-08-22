@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import unicodedata
 from typing import Any
 
@@ -153,7 +154,24 @@ def normalized_request(owner_text: str, parameters: dict[str, Any]) -> dict[str,
     if type(parameters) is not dict:
         raise CanonicalJSONError("parameters must be an object")
     if parameters:
-        raise CanonicalJSONError("request format v1 parameters must be an empty object")
+        keys = set(parameters)
+        if keys == {"entry_mode"}:
+            if parameters["entry_mode"] not in {"DISCOVER", "IDEA"}:
+                raise CanonicalJSONError("entry_mode must be DISCOVER or IDEA")
+        elif keys == {"action", "direction_id"}:
+            if parameters["action"] != "SELECT_DIRECTION":
+                raise CanonicalJSONError("unsupported Director action")
+            direction_id = parameters["direction_id"]
+            if (
+                not isinstance(direction_id, str)
+                or re.fullmatch(
+                    r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+                    direction_id,
+                ) is None
+            ):
+                raise CanonicalJSONError("direction_id must be a normalized UUIDv4")
+        else:
+            raise CanonicalJSONError("request parameters use an unsupported shape")
     return {"owner_text": normalize_text(owner_text), "parameters": parameters}
 
 

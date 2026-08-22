@@ -1,13 +1,14 @@
 # Food-IP 目标架构
 
-> 本文描述新 Director Core 的目标边界，不表示其已经实现。当前已实现的旧创作系统继续作为 Legacy / compatibility 保留；具体既有 API 行为以 `docs/api.md`、代码和测试为准。
+> 本文同时描述长期目标边界与当前已实现的 Director Core 基础。现有 Session、五阶段编排、六表持久化、幂等、恢复、最小 API 和聊天前端已经实现；创意效果与产品交互正在继续优化。旧创作系统仍作为 Legacy / compatibility 保留；具体 API 行为以 `docs/api.md`、代码和测试为准。
 
 ## 产品定位与主链
 
-Food-IP 是**餐饮老板的 AI 内容编导**。目标架构为：
+Food-IP 的长期目标是成为**餐饮老板的长期 AI 内容编导**：持续发现值得拍的内容、挖掘真实素材、创作自然有吸引力的视频，并在受控上下文支持下越来越懂老板和店铺。目标架构为：
 
 ```text
 用户
+→ 长期关系上下文层（按需）
 → Director Orchestrator
 → EXPLORE / DEEPEN / CREATE / REVIEW / READY
 → ReadyContent
@@ -33,6 +34,8 @@ Direction Problem → EXPLORE
 
 `ReadyContent` 是 Director Core 与制作能力之间的目标交付边界名称；本轮不预设其详细 Schema。`Production Adapter` 负责把可拍内容适配到现有素材、时间轴、渲染和导出能力，而不是让新创作内核直接依赖旧脚本对象。
 
+长期关系上下文层与单条内容 Session 相互独立。一个 `DirectorSession` 只服务一条具体内容并在 `READY` 后结束；轻档案、内容历史和未来受控记忆可以按需提供背景，但不能成为第二套创作状态机，也不能把 AI 推断自动升级为 Owner Facts。当前版本仍聚焦老板主动发起的单条口播脚本，不包含自动学习、主动推荐和制作链路。
+
 ## 核心原则
 
 ### Workflow 管边界，AI 管判断
@@ -45,6 +48,8 @@ Workflow 只约束阶段职责、必要条件和允许的流转。方向选择�
 - Knowledge 教 AI 如何判断，不能证明当前老板或餐厅发生了什么。
 - AI 推测、案例、历史相似内容、外部信息与创意建议不得升级为 Owner Facts。
 - 缺少的事实只有在实质影响当前创作判断时才追问，并且只问最少必要问题；否则保持未确认或使用条件式表达。
+- 老板用自然语言纠正事实时，由模型理解否定与替换语义；当前有效事实直接更新，不为该事实更正额外建立隐藏的拒绝或 supersedes 记录。
+- REVIEW 基于当前事实、约束、未确认推断、Draft 和按需 Knowledge 做语义审核，不以字面相同作为事实成立条件；Knowledge 仍不能证明当前餐厅事实。
 
 ### Context 按需读取
 
@@ -74,7 +79,7 @@ knowledge_pipeline/
   负责：独立生产有证据、有来源边界的 Creative Knowledge
 ```
 
-Director Core 将作为独立内核建设，与旧 `CreativeConversation` 分开持久化和演进。具体持久化 Schema、API 合约及迁移策略只在相应阶段获得确认后设计。
+Director Core 已作为独立内核实现，并与旧 `CreativeConversation` 分开持久化和演进。当前使用已确认的六表 SQLite 契约；后续关系上下文层的 Schema、API 和治理仍需单独确认，不能塞入现有 `DirectorSession`。
 
 `knowledge_pipeline/` 与产品运行时逻辑分离。它可以在未来通过已确认的稳定合约向产品提供按需 Knowledge，但现有 ingestion 内部实现不直接耦合进 Director Core。
 
@@ -98,7 +103,7 @@ Director Core 将作为独立内核建设，与旧 `CreativeConversation` 分开
 
 在获得明确产品或架构确认前，不在目标架构中预设：
 
-- Director Core 的复杂 Schema 或完整数据契约；
+- 长期关系上下文层的 Schema、同步和治理契约；
 - 复杂 Memory、Memory 治理或自动长期记忆；
 - Retrieval 架构、Vector DB、GraphRAG 或其他检索基础设施；
 - Knowledge 准入、分层、评分或时效治理方案；

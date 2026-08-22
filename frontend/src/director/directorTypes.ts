@@ -16,6 +16,18 @@ export interface ReadyContent {
   shooting_notes: string[] | string
 }
 
+export interface DirectionOption {
+  id: string
+  direction: string
+  reason: string
+  recommended: boolean
+}
+
+export interface DirectionSelectionInteraction {
+  kind: 'DIRECTION_SELECTION'
+  options: DirectionOption[]
+}
+
 export interface PendingRequest {
   client_message_id: string
   expected_state_version: number
@@ -33,6 +45,7 @@ export interface DirectorLocalState {
   previous_ready_content: ReadyContent | null
   source_ready_content_id: string | null
   pending_request: PendingRequest | null
+  interaction: DirectionSelectionInteraction | null
   updated_at: string
 }
 
@@ -54,5 +67,6 @@ export interface DirectorTurnResponse {
   }
   status: 'WAITING_FOR_OWNER' | 'READY'
   ready_content: ReadyContent | null
+  interaction: DirectionSelectionInteraction | null
   replayed: boolean
 }

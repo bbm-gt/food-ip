@@ -21,6 +21,11 @@ interface LogicPendingRequest {
   parameters: Record<string, unknown>
 }
 
+interface LogicDirectionInteraction {
+  kind: 'DIRECTION_SELECTION'
+  options: Array<{ id: string; direction: string; reason: string; recommended: boolean }>
+}
+
 export interface DirectorStateShape {
   project_id: string | null
   session_id: string | null
@@ -31,6 +36,7 @@ export interface DirectorStateShape {
   previous_ready_content: LogicReadyContent | null
   source_ready_content_id: string | null
   pending_request: LogicPendingRequest | null
+  interaction: LogicDirectionInteraction | null
   updated_at: string
 }
 
@@ -49,6 +55,7 @@ export interface LogicTurnResponse {
   }
   status: 'WAITING_FOR_OWNER' | 'READY'
   ready_content: LogicReadyContent | null
+  interaction: LogicDirectionInteraction | null
 }
 
 export interface SubmitErrorInput {
@@ -78,6 +85,7 @@ export function emptyDirectorState(now = new Date().toISOString()): DirectorStat
     previous_ready_content: null,
     source_ready_content_id: null,
     pending_request: null,
+    interaction: null,
     updated_at: now,
   }
 }
@@ -108,6 +116,7 @@ export function applyRevisionSession(
     status: 'active',
     messages: [],
     pending_request: null,
+    interaction: null,
     previous_ready_content: state.ready_content,
     ready_content: null,
     source_ready_content_id: session.source_ready_content_id,
@@ -131,6 +140,7 @@ export function applySuccessfulTurn(
     status: response.status === 'READY' ? 'ready' : 'active',
     messages,
     ready_content: response.status === 'READY' ? response.ready_content : state.ready_content,
+    interaction: response.interaction,
     pending_request: null,
   }
 }
@@ -159,6 +169,9 @@ export function classifySubmitError(
   }
   if (error.code === 'state_version_conflict') {
     return { status: 'blocked', retryable: false, clearPending: false, message: '该对话可能已在其他页面更新，请新建对话后继续。' }
+  }
+  if (error.code === 'invalid_direction_selection') {
+    return { status: 'active', retryable: false, clearPending: true, message: '这个方向选择已失效，请从当前方向卡重新选择。' }
   }
   if (error.code === 'session_ready') {
     return hasCurrentReadyContent
@@ -202,4 +215,22 @@ export function clearDirectorStateIfConfirmed(
   now = new Date().toISOString(),
 ): DirectorStateShape {
   return confirmed ? emptyDirectorState(now) : state
+}
+
+export function initialEntryParameters(mode: 'DISCOVER' | 'IDEA'): Record<string, unknown> {
+  return { entry_mode: mode }
+}
+
+export function directionSelectionPayload(option: {
+  id: string
+  direction: string
+}): { content: string; parameters: Record<string, unknown> } {
+  return {
+    content: `我选择这个方向：${option.direction}`,
+    parameters: { action: 'SELECT_DIRECTION', direction_id: option.id },
+  }
+}
+
+export function readyContentText(content: LogicReadyContent): string {
+  return [content.title, content.script_text].join('\n\n')
 }

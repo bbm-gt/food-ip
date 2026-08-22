@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator, model_validator
 
@@ -463,6 +463,52 @@ class FirstResponse(StrictModel):
         if self.stage == "READY" and self.run_control != "READY":
             raise ValueError("READY stage requires READY run control")
         return self
+
+
+class DirectionInteractionOption(StrictModel):
+    id: UUID4Text
+    direction: NonBlankText
+    reason: NonBlankText
+    recommended: bool
+
+    _direction = field_validator("direction")(_nonblank)
+    _reason = field_validator("reason")(_nonblank)
+
+
+class DirectionSelectionInteraction(StrictModel):
+    kind: Literal["DIRECTION_SELECTION"]
+    options: list[DirectionInteractionOption]
+
+    @model_validator(mode="after")
+    def exactly_three_with_one_recommended(self) -> "DirectionSelectionInteraction":
+        if len(self.options) != 3:
+            raise ValueError("direction selection requires exactly three options")
+        if len({item.id for item in self.options}) != 3:
+            raise ValueError("direction selection option IDs must be unique")
+        if len({item.direction for item in self.options}) != 3:
+            raise ValueError("direction selection directions must be distinct")
+        if sum(item.recommended for item in self.options) != 1:
+            raise ValueError("direction selection requires exactly one recommendation")
+        return self
+
+
+class FirstResponseV2(FirstResponse):
+    format_version: Literal[2]
+    interaction: DirectionSelectionInteraction | None
+
+
+def validate_first_response(value: Any, *, response_format_version: int | None = None) -> dict[str, Any]:
+    """Validate and detach a persisted v1 or Amendment-002 v2 response."""
+
+    if not isinstance(value, dict):
+        raise ValueError("FirstResponse must be an object")
+    inferred = 2 if value.get("format_version") == 2 else 1
+    version = inferred if response_format_version is None else response_format_version
+    if version == 1:
+        return FirstResponse.model_validate(value).model_dump(mode="json")
+    if version == 2:
+        return FirstResponseV2.model_validate(value).model_dump(mode="json")
+    raise ValueError("unsupported FirstResponse format version")
 
 
 def _require_unique(values: list, field_name: str) -> None:

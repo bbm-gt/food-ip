@@ -1,6 +1,6 @@
 # Food-IP
 
-Food-IP 是**餐饮老板的 AI 内容编导**。它帮助老板找到现在最值得说的内容，补足真正影响内容质量的真实素材，完成创作与根因自检，最终交付可拍内容。
+Food-IP 的长期目标是成为**餐饮老板的长期 AI 内容编导**。它帮助老板持续发现值得拍的内容、挖掘真实素材、创作自然有吸引力的视频，并在受控上下文支持下越来越懂老板和店铺。
 
 面向用户的完整目标体验是：
 
@@ -30,12 +30,15 @@ Workflow 只控制关键边界与状态流转，AI 负责边界内的具体创�
 ## 当前产品方向
 
 - 旧 `ResearchProfile → IPProfile → CreativeBrief → TopicCard → ScriptBundle → 固定评分 Review` 创作主线已冻结为 **Legacy**，只承担兼容、基线和必要维护，不再作为新产品架构基础。
-- 后续新建独立的 **Director Core**，以 `EXPLORE → DEEPEN → CREATE → REVIEW → READY` 为主链；当前仓库尚未把这套新内核描述为已实现。
+- 独立 **Director Core** 已实现 Session、五阶段编排、六表 SQLite 持久化、幂等、恢复、最小 API 和聊天前端；当前任务是优化其脚本产品交互与创意效果。
+- `DirectorSession` 只服务一条内容。未来轻档案、内容历史和受控记忆属于独立长期关系上下文层；当前不做自动学习、主动推荐或制作链路。
 - 现有 Materials、Timeline、FFmpeg、Export 与部分成熟持久化能力继续作为工程底座复用。`backend/app/engine/timeline.py` 仍是时间轴时长的权威来源。
 - `knowledge_pipeline/` 保持独立的知识生产子系统，不等同于整个 Food-IP 产品主线，也不直接耦合进 Director Core。
 - Owner Facts 只能来自老板或其他明确可信、已确认的来源；Knowledge 教 AI 如何判断，不能证明当前餐厅发生了什么。
 
 当前开发规范以 [`AGENTS.md`](AGENTS.md) 与 [`.codex/skills/food-ip-engineer/SKILL.md`](.codex/skills/food-ip-engineer/SKILL.md) 为准。目标架构与下一阶段范围分别见 [`docs/architecture.md`](docs/architecture.md) 和 [`docs/next-tasks.md`](docs/next-tasks.md)。
+
+Script Core Product Rework 已完成自动化合同与兼容回归，当前等待用户在本地真实对话中验证方向判断、追问和成稿质量；这不等于脚本质量已经通过产品验收。
 
 ## 仓库结构
 
@@ -97,6 +100,16 @@ backend/.venv/Scripts/python.exe -m uvicorn backend.app.main:app --host 0.0.0.0 
 | `AI_SCRIPT_MODEL` | 默认 `deepseek-v4-flash`；Legacy 脚本生成兼容配置 |
 | `AI_SCRIPT_THINKING` | 默认 `disabled`；Legacy 脚本生成兼容配置 |
 | `AI_SCRIPT_TIMEOUT_SECONDS` | 默认 `90`；Legacy 模型请求超时秒数 |
+| `DIRECTOR_DB_PATH` | `<仓库根>/runtime/director/director.sqlite3`；Director 六表 SQLite 持久化文件，部署时必须位于可写持久卷 |
+| `DIRECTOR_DEEPSEEK_API_KEY` | Director Core 独立 DeepSeek 密钥；与 Legacy 配置互不替代 |
+| `DIRECTOR_DEEPSEEK_BASE_URL` | 默认 `https://api.deepseek.com` |
+| `DIRECTOR_DEEPSEEK_MODEL` | 默认 `deepseek-v4-flash` |
+| `DIRECTOR_DEEPSEEK_TIMEOUT_SECONDS` | 默认 `90` |
+| `DIRECTOR_DEEPSEEK_MAX_OUTPUT_TOKENS` | 默认 `8000` |
+| `DIRECTOR_DEEPSEEK_THINKING_MODE` | 默认 `disabled` |
+| `DIRECTOR_CONTEXT_MAX_UNITS` | 默认 `100000`；上下文预算 |
+| `DIRECTOR_MAX_INTERNAL_STEPS` | 默认 `8`；单 Turn 后台阶段推进上限 |
+| `DIRECTOR_STAGE_MODE` | 默认 `semantic_only`；`legacy` 仅保留显式兼容回退 |
 
 ## 验证
 
@@ -121,3 +134,5 @@ python -m pytest -q
 ```
 
 现有 REST API 行为见 [`docs/api.md`](docs/api.md)。[`docs/questionnaire-design.md`](docs/questionnaire-design.md) 仅记录旧调研与多脚本方案，不代表当前产品主线。
+
+当前脚本交互契约见 [`Architecture Amendment 002`](docs/director-core/food-ip-director-core-phase1-architecture-amendment-002.md)，当前事实更正与语义 REVIEW 契约见 [`Architecture Amendment 003`](docs/director-core/food-ip-director-core-phase1-architecture-amendment-003.md)。Phase 1I 研究工具与文档继续保留，但已移入 Deferred，不是当前实施入口。

@@ -160,6 +160,173 @@ def test_real_restaurant_cases_run_through_semantic_conversion(
     }, create_context)
     assert created["target_stage"] == "REVIEW"
     assert created["post_state"]["draft"]["content"]["script_text"] == script
+    assert created["post_state"]["draft"]["content"]["shooting_notes"] == []
+
+
+def test_script_core_enforces_three_directions_one_recommendation_and_one_question() -> None:
+    base = {
+        "result": "DIRECTION_OPTIONS", "message": "选一个方向。", "direction": None,
+        "owner_quote": None, "new_facts": [], "new_constraints": [], "reason": "方向已形成。",
+    }
+    with pytest.raises(SemanticOutputSchemaError):
+        validate_semantic_output("EXPLORE", base | {"directions": [
+            {"direction": "方向一", "reason": "理由一", "recommended": True},
+            {"direction": "方向二", "reason": "理由二", "recommended": False},
+        ]})
+    with pytest.raises(SemanticOutputSchemaError):
+        validate_semantic_output("EXPLORE", base | {"directions": [
+            {"direction": "方向一", "reason": "理由一", "recommended": True},
+            {"direction": "方向二", "reason": "理由二", "recommended": True},
+            {"direction": "方向三", "reason": "理由三", "recommended": False},
+        ]})
+    with pytest.raises(SemanticOutputSchemaError):
+        validate_semantic_output("DEEPEN", {
+            "result": "ASK_OWNER", "message": "请回答两个问题。", "new_facts": [],
+            "new_constraints": [], "missing_material": ["问题一", "问题二"], "reason": "素材不足。",
+        })
+
+    known_context = semantic_context("DEEPEN", owner_text="我们每天九点开门。")
+    known_state = empty_state()
+    known_state["owner_facts"] = [{
+        "item_id": uid(), "statement": "营业时间是每天九点", "evidence_refs": [ref(known_context)],
+        "supersedes_item_ids": [], "inherited_from": None,
+    }]
+    with pytest.raises(SemanticConversionError):
+        convert_semantic_output(
+            "DEEPEN", known_state, owner_text=known_context.current_owner_message.content,
+            owner_message_id=known_context.current_owner_message.id,
+            owner_session_id=ref(known_context)["target_session_id"],
+            semantic_output={
+                "result": "ASK_OWNER", "message": "你们几点营业？", "new_facts": [],
+                "new_constraints": [], "missing_material": ["营业时间"], "reason": "需要时间。",
+            },
+        )
+
+
+def test_owner_confirmation_clears_only_matching_unconfirmed_inference() -> None:
+    owner_text = "我确认，牛骨汤每天凌晨四点开始熬，而且视频里不能提价格。"
+    context = semantic_context("DEEPEN", owner_text=owner_text)
+    state = direction_and_material_state(context)
+    state["unconfirmed_inferences"] = [{
+        "item_id": uid(), "statement": "牛骨汤每天凌晨四点开始熬", "reason": "AI 推测，老板未确认",
+    }, {
+        "item_id": uid(), "statement": "视频里不能提价格", "reason": "AI 推测，老板未确认",
+    }, {
+        "item_id": uid(), "statement": "老板每天亲自看火", "reason": "AI 推测，老板未确认",
+    }]
+
+    confirmed = valid_output("DEEPEN", state, {
+        "result": "MATERIAL_READY", "message": None,
+        "new_facts": [fact_change("牛骨汤每天凌晨四点开始熬", "牛骨汤每天凌晨四点开始熬")],
+        "new_constraints": [constraint_change("视频里不能提价格", "视频里不能提价格")],
+        "missing_material": [], "reason": "老板明确确认了熬汤时间和内容限制。",
+    }, context)
+
+    assert [item["statement"] for item in confirmed["post_state"]["owner_facts"]] == [
+        "牛骨汤每天凌晨四点开始熬"
+    ]
+    assert confirmed["post_state"]["owner_facts"][0]["supersedes_item_ids"] == []
+    assert confirmed["post_state"]["rejected_items"] == []
+    assert [item["statement"] for item in confirmed["post_state"]["owner_constraints"]] == [
+        "视频里不能提价格"
+    ]
+    assert [item["statement"] for item in confirmed["post_state"]["unconfirmed_inferences"]] == [
+        "老板每天亲自看火"
+    ]
+
+
+def test_review_blocks_when_draft_depends_on_unconfirmed_inference() -> None:
+    context = semantic_context("REVIEW")
+    state = direction_and_material_state(context)
+    state["unconfirmed_inferences"] = [{
+        "item_id": uid(), "statement": "每天凌晨四点开始熬汤", "reason": "AI 推测，老板未确认",
+    }]
+    state["draft"] = {
+        "draft_id": uid(),
+        "content": {"title": "每天现熬", "script_text": "我们每天凌晨四点开始熬汤。", "shooting_notes": []},
+        "content_status": "FINAL_CANDIDATE", "based_on_ready_content_id": None,
+    }
+    output = {
+        "result": "PASS", "problem": None, "reason": "表达自然。", "preserve": [], "change": [],
+    }
+    reviewed = valid_output("REVIEW", state, output, semantic_context("REVIEW", state))
+    assert reviewed["run_control"] == "CONTINUE"
+    assert reviewed["target_stage"] == "DEEPEN"
+    assert reviewed["review"]["root_cause"] == "MATERIAL_PROBLEM"
+    assert len(reviewed["post_state"]["material_state"]["required_confirmations"]) == 1
+    assert build_business_feedback("REVIEW", state, output)["target_stage"] == "DEEPEN"
+
+
+def test_review_allows_ready_when_unconfirmed_inference_is_unrelated_to_draft() -> None:
+    context = semantic_context("REVIEW")
+    state = direction_and_material_state(context)
+    state["unconfirmed_inferences"] = [{
+        "item_id": uid(), "statement": "老板平时喜欢穿黑色围裙", "reason": "AI 推测，老板未确认",
+    }]
+    state["draft"] = {
+        "draft_id": uid(),
+        "content": {
+            "title": "每天现熬",
+            "script_text": "我们每天凌晨四点开始熬汤，想把这一口认真做好。",
+            "shooting_notes": [],
+        },
+        "content_status": "FINAL_CANDIDATE", "based_on_ready_content_id": None,
+    }
+    output = {
+        "result": "PASS", "problem": None, "reason": "事实、方向和表达都已通过。",
+        "preserve": [], "change": [],
+    }
+
+    reviewed = valid_output("REVIEW", state, output, semantic_context("REVIEW", state))
+
+    assert reviewed["run_control"] == "READY"
+    assert reviewed["target_stage"] == "READY"
+    assert reviewed["post_state"]["unconfirmed_inferences"] == state["unconfirmed_inferences"]
+    assert build_business_feedback("REVIEW", state, output) is None
+
+
+def test_review_model_input_contains_active_truth_and_uncertainty_context() -> None:
+    context = semantic_context("REVIEW")
+    state = direction_and_material_state(context)
+    state["owner_facts"] = [{
+        "item_id": uid(), "statement": "早上六点开始熬汤",
+        "evidence_refs": [ref(context)], "supersedes_item_ids": [], "inherited_from": None,
+    }]
+    state["owner_constraints"] = [{
+        "item_id": uid(), "statement": "不要提价格", "evidence_refs": [ref(context)],
+        "constraint_kind": "PROHIBITION", "inherited_from": None,
+    }]
+    state["unconfirmed_inferences"] = [{
+        "item_id": uid(), "statement": "老板每天亲自看火", "reason": "AI 推测，老板未确认",
+    }]
+    state["draft"] = {
+        "draft_id": uid(),
+        "content": {"title": "每天现熬", "script_text": "早上六点，我们开始熬汤。", "shooting_notes": []},
+        "content_status": "FINAL_CANDIDATE", "based_on_ready_content_id": None,
+    }
+
+    payload = semantic_model_input(semantic_context("REVIEW", state))
+
+    assert payload["facts"] == [{"statement": "早上六点开始熬汤"}]
+    assert payload["constraints"] == [{"statement": "不要提价格", "category": "PROHIBITION"}]
+    assert payload["unconfirmed_inferences"] == [{
+        "statement": "老板每天亲自看火", "reason": "AI 推测，老板未确认",
+    }]
+    assert payload["draft"] == state["draft"]["content"]
+
+
+@pytest.mark.parametrize("stage", ["EXPLORE", "DEEPEN", "CREATE", "REVIEW"])
+def test_each_stage_model_input_contains_unconfirmed_inferences(stage: str) -> None:
+    state = empty_state()
+    state["unconfirmed_inferences"] = [{
+        "item_id": uid(), "statement": "汤一般凌晨四点开火慢熬", "reason": "AI 推测，老板未确认",
+    }]
+
+    payload = semantic_model_input(semantic_context(stage, state))
+
+    assert payload["unconfirmed_inferences"] == [{
+        "statement": "汤一般凌晨四点开火慢熬", "reason": "AI 推测，老板未确认",
+    }]
 
 
 def test_explore_and_deepen_programmatically_bind_owner_evidence_and_preserve_state() -> None:
@@ -407,8 +574,8 @@ def test_owner_quote_safety_downgrades_expansion_and_rejects_missing_quote() -> 
         }, context)
 
 
-def test_fact_correction_remove_and_ambiguous_match_are_safe() -> None:
-    context = semantic_context("DEEPEN", owner_text="活动期限从两个月改为一个月，不再做买一送一活动。")
+def test_fact_correction_replaces_current_fact_without_hidden_history() -> None:
+    context = semantic_context("DEEPEN", owner_text="我们不是凌晨四点熬汤，是早上六点。买一送一活动也不做了。")
     old_ref = {"evidence_type": "owner_message", "target_id": uid(), "target_session_id": context.session_id}
     state = empty_state()
     state["direction"] = {
@@ -417,30 +584,34 @@ def test_fact_correction_remove_and_ambiguous_match_are_safe() -> None:
     }
     state["material_state"] = {"status": "SUFFICIENT", "required_confirmations": []}
     state["owner_facts"] = [{
-        "item_id": uid(), "statement": "两个月", "evidence_refs": [old_ref],
+        "item_id": uid(), "statement": "凌晨四点熬汤", "evidence_refs": [old_ref],
         "supersedes_item_ids": [], "inherited_from": None,
     }, {
         "item_id": uid(), "statement": "买一送一活动", "evidence_refs": [old_ref],
         "supersedes_item_ids": [], "inherited_from": None,
     }]
+    state["unconfirmed_inferences"] = [{
+        "item_id": uid(), "statement": "凌晨四点熬汤", "reason": "此前尚未确认",
+    }]
     context.working_state = state
     context.owner_evidence_references = tuple([*context.owner_evidence_references, old_ref])
     corrected = valid_output("DEEPEN", state, {
         "result": "MATERIAL_READY", "message": None,
-        "new_facts": [fact_change("一个月", "活动期限从两个月改为一个月", "CORRECT", "两个月"),
-                      fact_change("", "不再做买一送一活动", "REMOVE", "买一送一活动")],
+        "new_facts": [
+            fact_change("早上六点熬汤", "不是凌晨四点熬汤，是早上六点", "CORRECT", "凌晨四点熬汤"),
+            fact_change("", "买一送一活动也不做了", "REMOVE", "买一送一活动"),
+        ],
         "new_constraints": [], "missing_material": [], "reason": "老板纠正了活动信息。",
     }, context)
     facts = corrected["post_state"]["owner_facts"]
-    assert [item["statement"] for item in facts] == ["一个月"]
-    rejected = corrected["post_state"]["rejected_items"]
-    assert {item["statement"] for item in rejected} == {"两个月", "买一送一活动"}
-    assert facts[0]["supersedes_item_ids"] == [rejected[0]["item_id"]]
-    assert all(item["rejected_by_evidence_refs"] for item in rejected)
+    assert [item["statement"] for item in facts] == ["早上六点熬汤"]
+    assert facts[0]["supersedes_item_ids"] == []
+    assert corrected["post_state"]["rejected_items"] == []
+    assert corrected["post_state"]["unconfirmed_inferences"] == []
 
     ambiguous = deepcopy(state)
     ambiguous["owner_facts"].append({
-        "item_id": uid(), "statement": "两个月", "evidence_refs": [old_ref],
+        "item_id": uid(), "statement": "凌晨四点熬汤", "evidence_refs": [old_ref],
         "supersedes_item_ids": [], "inherited_from": None,
     })
     ambiguous_context = semantic_context("DEEPEN", ambiguous, context.current_owner_message.content)
@@ -448,9 +619,60 @@ def test_fact_correction_remove_and_ambiguous_match_are_safe() -> None:
     with pytest.raises(SemanticConversionError):
         valid_output("DEEPEN", ambiguous, {
             "result": "MATERIAL_READY", "message": None,
-            "new_facts": [fact_change("一个月", "活动期限从两个月改为一个月", "CORRECT", "两个月")],
+            "new_facts": [fact_change(
+                "早上六点熬汤", "不是凌晨四点熬汤，是早上六点", "CORRECT", "凌晨四点熬汤",
+            )],
             "new_constraints": [], "missing_material": [], "reason": "纠正。",
         }, ambiguous_context)
+
+
+def test_fact_correction_adds_current_value_when_old_value_was_never_active() -> None:
+    context = semantic_context("DEEPEN", owner_text="我们不是凌晨四点熬汤，是早上六点。")
+    state = direction_and_material_state(context)
+    state["unconfirmed_inferences"] = [{
+        "item_id": uid(), "statement": "汤一般凌晨四点开火慢熬", "reason": "AI 推测，老板未确认",
+    }]
+
+    corrected = valid_output("DEEPEN", state, {
+        "result": "MATERIAL_READY", "message": None,
+        "new_facts": [fact_change(
+            "早上六点熬汤", "不是凌晨四点熬汤，是早上六点", "CORRECT", "汤一般凌晨四点开火慢熬",
+        )],
+        "new_constraints": [], "missing_material": [], "reason": "老板明确说明了实际熬汤时间。",
+    }, context)
+
+    assert [item["statement"] for item in corrected["post_state"]["owner_facts"]] == ["早上六点熬汤"]
+    assert corrected["post_state"]["owner_facts"][0]["supersedes_item_ids"] == []
+    assert corrected["post_state"]["unconfirmed_inferences"] == []
+    assert corrected["post_state"]["rejected_items"] == []
+
+
+def test_fact_correction_without_replacement_adds_current_value_but_remove_stays_strict() -> None:
+    context = semantic_context("DEEPEN", owner_text="我们不是凌晨四点熬汤，是早上六点。")
+    state = direction_and_material_state(context)
+    correction = fact_change(
+        "早上六点熬汤", "不是凌晨四点熬汤，是早上六点", "CORRECT", None,
+    )
+
+    validated = validate_semantic_output("DEEPEN", {
+        "result": "MATERIAL_READY", "message": None, "new_facts": [correction],
+        "new_constraints": [], "missing_material": [], "reason": "老板说明了实际时间。",
+    })
+    assert validated.new_facts[0].replaces_statement is None
+
+    corrected = valid_output("DEEPEN", state, {
+        "result": "MATERIAL_READY", "message": None, "new_facts": [correction],
+        "new_constraints": [], "missing_material": [], "reason": "老板说明了实际时间。",
+    }, context)
+    assert [item["statement"] for item in corrected["post_state"]["owner_facts"]] == ["早上六点熬汤"]
+    assert corrected["post_state"]["rejected_items"] == []
+
+    with pytest.raises(SemanticOutputSchemaError):
+        validate_semantic_output("DEEPEN", {
+            "result": "MATERIAL_READY", "message": None,
+            "new_facts": [fact_change("", "不再凌晨四点熬汤", "REMOVE", None)],
+            "new_constraints": [], "missing_material": [], "reason": "老板要求删除。",
+        })
 
 
 def test_missing_material_is_reconciled_and_review_feedback_reaches_create() -> None:

@@ -14,6 +14,7 @@ from ..director_core.providers.deepseek import (
     DeepSeekTransportError,
 )
 from ..director_core.repository import SQLiteBusyError
+from ..director_core.semantic_only import semantic_model_input
 from ..main import app
 
 
@@ -143,6 +144,43 @@ class ReadyProvider:
         }
 
 
+class SemanticDirectionProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.entry_modes: list[str | None] = []
+
+    def __call__(self, context) -> dict:
+        self.calls += 1
+        stage = context.stage_contract["stage"]
+        if stage == "EXPLORE":
+            semantic = semantic_model_input(context)
+            self.entry_modes.append(semantic.get("entry_mode"))
+            return {
+                "result": "DIRECTION_OPTIONS",
+                "message": "我先给你三个值得继续的方向。",
+                "direction": None,
+                "owner_quote": None,
+                "new_facts": [],
+                "new_constraints": [],
+                "reason": "三个方向分别突出真实做法、老板态度和顾客选择。",
+                "directions": [
+                    {"direction": "讲每天现做为什么值得等", "reason": "最能体现真实坚持。", "recommended": True},
+                    {"direction": "讲老板为什么不愿意预制", "reason": "能让老板态度成为内容。", "recommended": False},
+                    {"direction": "讲熟客每次都点什么", "reason": "从顾客选择切入更自然。", "recommended": False},
+                ],
+            }
+        if stage == "DEEPEN":
+            return {
+                "result": "ASK_OWNER",
+                "message": "你每天现做的具体是哪一步？",
+                "new_facts": [],
+                "new_constraints": [],
+                "missing_material": ["每天现做的具体步骤"],
+                "reason": "只缺这一项真实细节。",
+            }
+        raise AssertionError(f"unexpected stage: {stage}")
+
+
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(config, "PROJECTS_ROOT", str(tmp_path / "projects"))
@@ -179,7 +217,66 @@ def submit_body(*, client_message_id: str | None = None, expected_state_version:
 
 
 def install_provider(monkeypatch: pytest.MonkeyPatch, provider) -> None:
+    # These compatibility fixtures emit the frozen legacy Stage proposal.
+    monkeypatch.setattr(config, "DIRECTOR_STAGE_MODE", "legacy")
     monkeypatch.setattr(director_runtime, "create_director_stage_handler", lambda: provider)
+
+
+def install_semantic_provider(monkeypatch: pytest.MonkeyPatch, provider) -> None:
+    monkeypatch.setattr(config, "DIRECTOR_STAGE_MODE", "semantic_only")
+    monkeypatch.setattr(director_runtime, "create_director_stage_handler", lambda: provider)
+
+
+def test_semantic_direction_cards_replay_validate_scope_and_confirm_visible_text(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider = SemanticDirectionProvider()
+    install_semantic_provider(monkeypatch, provider)
+    project_id = create_project(client)
+    first_session = create_session(client, project_id)
+    first_body = submit_body(content="帮我找方向")
+    first_body["parameters"] = {"entry_mode": "DISCOVER"}
+
+    first = client.post(submit_url(project_id, first_session), json=first_body)
+    replay = client.post(submit_url(project_id, first_session), json=first_body)
+    assert first.status_code == replay.status_code == 200
+    assert first.json()["interaction"] == replay.json()["interaction"]
+    first_options = first.json()["interaction"]["options"]
+    assert len(first_options) == 3
+    assert sum(item["recommended"] for item in first_options) == 1
+    assert provider.calls == 1
+
+    second_session = create_session(client, project_id)
+    second_body = submit_body(content="我想拍每天现做")
+    second_body["parameters"] = {"entry_mode": "IDEA"}
+    second = client.post(submit_url(project_id, second_session), json=second_body)
+    assert second.status_code == 200
+    second_options = second.json()["interaction"]["options"]
+    assert provider.entry_modes == ["DISCOVER", "IDEA"]
+
+    cross_session = submit_body(expected_state_version=1, content=f"我选择这个方向：{first_options[0]['direction']}")
+    cross_session["parameters"] = {
+        "action": "SELECT_DIRECTION", "direction_id": first_options[0]["id"],
+    }
+    rejected = client.post(submit_url(project_id, second_session), json=cross_session)
+    assert rejected.status_code == 409
+    assert rejected.json()["code"] == "invalid_direction_selection"
+
+    selected = second_options[0]
+    with director_runtime.director_repository() as repository:
+        before_selection = repository.get_working_state(director_runtime.director_scope(project_id), second_session)
+        assert selected["id"] in {item["item_id"] for item in before_selection.state_json["ai_judgments"]}
+    selection = submit_body(expected_state_version=1, content=f"我选择这个方向：{selected['direction']}")
+    selection["parameters"] = {"action": "SELECT_DIRECTION", "direction_id": selected["id"]}
+    accepted = client.post(submit_url(project_id, second_session), json=selection)
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["interaction"] is None
+    assert accepted.json()["message"]["content"] == "你每天现做的具体是哪一步？"
+
+    with director_runtime.director_repository() as repository:
+        state = repository.get_working_state(director_runtime.director_scope(project_id), second_session)
+        assert state.state_json["direction"]["item_id"] == selected["id"]
+        assert state.state_json["direction"]["statement"] == selected["direction"]
 
 
 def test_creates_ordinary_session(client: TestClient) -> None:
@@ -220,6 +317,7 @@ def test_owner_message_succeeds_and_replays_once(client: TestClient, monkeypatch
 
     assert first.status_code == replay.status_code == 200
     assert first.json()["status"] == "WAITING_FOR_OWNER"
+    assert first.json()["interaction"] is None
     assert replay.json()["replayed"] is True
     assert replay.json()["turn_id"] == first.json()["turn_id"]
     assert provider.calls == 1

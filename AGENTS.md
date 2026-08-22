@@ -2,7 +2,9 @@
 
 ## Mission
 
-Food-IP is the AI content director for restaurant owners. It helps an owner identify what is most worth saying now, deepen the real material that makes it worth watching, create the content, diagnose quality problems, and reach a shoot-ready result.
+Food-IP aims to become a restaurant owner's long-term AI content director. It helps the owner continuously discover worthwhile content, uncover real material, create natural and compelling videos, and—through explicitly governed context—become increasingly familiar with the owner and restaurant over long-term use.
+
+The long-term relationship and a single content task are separate boundaries. A `DirectorSession` serves exactly one content task and ends at `READY`; a future relationship context layer may provide a light profile, content history, or confirmed memory on demand, but it does not extend a Session into a permanent conversation.
 
 The current product mainline is:
 
@@ -38,6 +40,8 @@ Current implementation status and next task are defined by docs/project-status.y
 - `READY`: the result is coherent, factually grounded, and shoot-ready.
 
 Memory, Knowledge, historical content, uploaded materials, and external information are on-demand capabilities, not mandatory workflow nodes. External trends may reveal a content opportunity, but they cannot replace the owner's own real content.
+
+The current implementation focuses on owner-initiated single-script creation. It does not yet implement automatic learning, proactive recommendations, or the production/shooting workflow. "Becoming increasingly familiar" never permits AI inference to be promoted automatically into Owner Facts.
 
 Do not make fixed questionnaires, fixed scoring systems, complex Routers, Multi-Agent systems, or fixed question trees the core product logic. Do not add unconfirmed workflow states, schemas, persistence designs, scoring mechanisms, Retrieval architecture, Routers, or Agents.
 
@@ -138,7 +142,7 @@ Knowledge-source tiers, admission rules, evidence standards, freshness governanc
 For intended product and architecture direction, use sources in this order:
 
 1. Latest explicitly confirmed user decisions.
-2. Director Core formal design documents. Their internal authority order remains: Core Architecture, Minimal SQLite Schema, Architecture Amendment 001, then Execution Contract.
+2. Director Core formal design documents. Their internal authority order remains: Core Architecture, Minimal SQLite Schema, Architecture Amendment 001, Execution Contract, Architecture Amendment 002, then Architecture Amendment 003. A later amendment overrides only the clauses it explicitly revises.
 3. This file's durable engineering rules.
 4. `docs/project-status.yaml`, only for dynamic implementation status and next-task intent.
 5. `docs/next-tasks.md`, only as the generated result of `docs/project-status.yaml`.

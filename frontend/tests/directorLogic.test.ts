@@ -7,8 +7,11 @@ import {
   classifySubmitError,
   clearDirectorStateIfConfirmed,
   emptyDirectorState,
+  initialEntryParameters,
   normalizeLoadedDirectorState,
   pendingForRetry,
+  directionSelectionPayload,
+  readyContentText,
 } from '../src/director/directorLogic.ts'
 
 function pending() {
@@ -97,4 +100,35 @@ test('404 and 422 outcomes do not offer retry, while 500 remains retryable', () 
   assert.equal(notFound.message, '资源已失效，需要新建对话。')
   assert.equal(invalid.retryable, false)
   assert.equal(serverError.retryable, true)
+})
+
+test('dual entry creates the explicit first-turn intent', () => {
+  assert.deepEqual(initialEntryParameters('DISCOVER'), { entry_mode: 'DISCOVER' })
+  assert.deepEqual(initialEntryParameters('IDEA'), { entry_mode: 'IDEA' })
+})
+
+test('direction cards survive refresh and selection includes stable id and visible text', () => {
+  const interaction = {
+    kind: 'DIRECTION_SELECTION' as const,
+    options: [
+      { id: 'direction-1', direction: '讲每天现做为什么值得等', reason: '真实', recommended: true },
+      { id: 'direction-2', direction: '讲老板为什么不预制', reason: '态度', recommended: false },
+      { id: 'direction-3', direction: '讲熟客每次点什么', reason: '顾客', recommended: false },
+    ],
+  }
+  const loaded = normalizeLoadedDirectorState({ ...emptyDirectorState(), status: 'active', interaction })
+  assert.deepEqual(loaded.interaction, interaction)
+  assert.deepEqual(directionSelectionPayload(interaction.options[0]), {
+    content: '我选择这个方向：讲每天现做为什么值得等',
+    parameters: { action: 'SELECT_DIRECTION', direction_id: 'direction-1' },
+  })
+})
+
+test('ready delivery and copy text expose only title and spoken script', () => {
+  const text = readyContentText({
+    id: 'ready-1', title: '为什么我们坚持每天现做', script_text: '这是口播正文。',
+    shooting_notes: ['这条内部兼容说明不能出现在前台'],
+  })
+  assert.equal(text, '为什么我们坚持每天现做\n\n这是口播正文。')
+  assert.equal(text.includes('拍摄'), false)
 })

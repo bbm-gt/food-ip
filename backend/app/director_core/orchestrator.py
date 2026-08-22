@@ -38,7 +38,10 @@ from .stage_handler import validate_resolved_stage_model_output, StageModelOutpu
 from .semantic_only import (
     SUPPORTED_STAGE_MODES,
     SemanticOutputError,
+    SemanticOutputSchemaError as SemanticStageOutputSchemaError,
     build_business_feedback,
+    build_direction_interaction,
+    convert_direction_selection,
     convert_semantic_output,
 )
 
@@ -98,12 +101,37 @@ class TurnCandidate:
     gate_outcome: str | None
     review_root_cause: str | None
     ready_content: dict[str, Any] | None
+    interaction: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         # Keep the frozen envelope detached from mutable loop-owned payloads.
         object.__setattr__(self, "execution_trace", deepcopy(self.execution_trace))
         object.__setattr__(self, "post_state", deepcopy(self.post_state))
         object.__setattr__(self, "ready_content", deepcopy(self.ready_content))
+        object.__setattr__(self, "interaction", deepcopy(self.interaction))
+
+
+@dataclass(frozen=True)
+class SchemaRepairBudget:
+    """In-memory completion budget shared only by stages in one Turn."""
+
+    remaining: int = 1
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.remaining, bool)
+            or not isinstance(self.remaining, int)
+            or self.remaining < 0
+        ):
+            raise DirectorExecutionValidationError(
+                "schema repair budget must be a non-negative integer"
+            )
+
+    def try_consume(self) -> bool:
+        if self.remaining < 1:
+            return False
+        object.__setattr__(self, "remaining", self.remaining - 1)
+        return True
 
 
 @dataclass(frozen=True)
@@ -129,11 +157,20 @@ class StageExecutionContext:
     owner_message_id: str
     is_revision_session: bool = False
     business_feedback: dict[str, Any] | None = None
+    schema_repair_budget: SchemaRepairBudget = field(
+        default_factory=SchemaRepairBudget,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "working_state", deepcopy(self.working_state))
         object.__setattr__(self, "parameters", deepcopy(self.parameters))
         object.__setattr__(self, "business_feedback", deepcopy(self.business_feedback))
+        if not isinstance(self.schema_repair_budget, SchemaRepairBudget):
+            raise DirectorExecutionValidationError(
+                "schema_repair_budget must be a SchemaRepairBudget"
+            )
 
 
 @dataclass(frozen=True)
@@ -153,12 +190,14 @@ class StageExecutionResult:
     gate: dict[str, Any] | None
     review: dict[str, Any] | None
     business_feedback: dict[str, Any] | None = None
+    interaction: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "post_state", deepcopy(self.post_state))
         object.__setattr__(self, "gate", deepcopy(self.gate))
         object.__setattr__(self, "review", deepcopy(self.review))
         object.__setattr__(self, "business_feedback", deepcopy(self.business_feedback))
+        object.__setattr__(self, "interaction", deepcopy(self.interaction))
 
     @property
     def candidate_state(self) -> dict[str, Any]:
@@ -172,6 +211,34 @@ class StageHandler(Protocol):
 
     def __call__(self, context: ModelContext) -> dict[str, Any] | StageModelProposalV1 | StageModelOutputV1:
         ...
+
+
+class SchemaRepairHandler(Protocol):
+    """Optional provider capability for one strict-schema repair completion."""
+
+    def repair_schema(
+        self,
+        context: ModelContext,
+        *,
+        invalid_output: dict[str, Any],
+        validation_error: str,
+    ) -> dict[str, Any]:
+        ...
+
+
+def _concise_schema_error(exc: SemanticStageOutputSchemaError) -> str:
+    """Keep repair feedback useful without echoing an unbounded traceback."""
+
+    cause = exc.__cause__
+    errors = getattr(cause, "errors", None)
+    if callable(errors):
+        details: list[str] = []
+        for error in errors(include_url=False)[:3]:
+            location = ".".join(str(part) for part in error.get("loc", ())) or "output"
+            details.append(f"{location}: {error.get('msg', 'invalid value')}")
+        if details:
+            return "; ".join(details)[:600]
+    return str(exc)[:600]
 
 
 class SourceReadyContentPolicy(Protocol):
@@ -251,8 +318,45 @@ class DirectorStageExecutor:
                 business_feedback=deepcopy(context.business_feedback),
             )
         try:
-            raw_output = self.handler(assembled)
-            if self.mode == "semantic_only":
+            is_direction_selection = (
+                self.mode == "semantic_only"
+                and context.stage == "EXPLORE"
+                and context.parameters.get("action") == "SELECT_DIRECTION"
+            )
+            if is_direction_selection:
+                business_feedback = None
+                interaction = None
+                resolved = convert_direction_selection(
+                    context.working_state,
+                    owner_text=context.owner_text,
+                    owner_message_id=context.owner_message_id,
+                    owner_session_id=context.session_id,
+                    direction_id=context.parameters.get("direction_id"),
+                )
+                output = validate_resolved_stage_model_output(resolved, context=assembled)
+            else:
+                raw_output = self.handler(assembled)
+                if self.mode == "semantic_only":
+                    try:
+                        # Validate before deterministic state mutation so the
+                        # provider sees the exact rejected semantic object.
+                        build_business_feedback(
+                            context.stage, context.working_state, raw_output
+                        )
+                    except SemanticStageOutputSchemaError as exc:
+                        repair = getattr(self.handler, "repair_schema", None)
+                        if not callable(repair):
+                            raise
+                        # This happens before the provider call, so a third
+                        # repair completion can never exceed the Turn budget.
+                        if not context.schema_repair_budget.try_consume():
+                            raise
+                        raw_output = repair(
+                            assembled,
+                            invalid_output=deepcopy(raw_output),
+                            validation_error=_concise_schema_error(exc),
+                        )
+            if self.mode == "semantic_only" and not is_direction_selection:
                 business_feedback = build_business_feedback(
                     context.stage, context.working_state, raw_output
                 )
@@ -265,8 +369,12 @@ class DirectorStageExecutor:
                     semantic_output=raw_output,
                 )
                 output = validate_resolved_stage_model_output(resolved, context=assembled)
-            else:
+                interaction = build_direction_interaction(
+                    context.stage, raw_output, output.post_state.model_dump(mode="json")
+                )
+            elif self.mode != "semantic_only":
                 business_feedback = None
+                interaction = None
                 output = validate_stage_model_output(raw_output, context=assembled)
         except SemanticOutputError as exc:
             raise StageModelOutputSchemaError(
@@ -281,6 +389,7 @@ class DirectorStageExecutor:
             gate=None if output.gate is None else output.gate.model_dump(mode="json"),
             review=None if output.review is None else output.review.model_dump(mode="json"),
             business_feedback=business_feedback,
+            interaction=interaction,
         )
 
 
@@ -366,7 +475,8 @@ class DirectorOrchestrator:
         )
 
         # Any executor exception or invalid candidate exits before the write
-        # path.  There is intentionally no model retry here.
+        # path. The executor may use only the approved bounded schema-repair
+        # budget; transport/JSON retry policy remains provider-owned.
         candidate = self._run_internal_loop(
             request=request,
             working_state=working_state,
@@ -399,6 +509,7 @@ class DirectorOrchestrator:
         candidate_state = deepcopy(working_state.state_json)
         current_stage: Stage = working_state.stage  # type: ignore[assignment]
         candidate_feedback: dict[str, Any] | None = None
+        schema_repair_budget = SchemaRepairBudget(2)
         trace_steps: list[dict[str, Any]] = []
         final_result: StageExecutionResult | None = None
 
@@ -413,6 +524,7 @@ class DirectorOrchestrator:
                 owner_message_id=owner_message_id,
                 is_revision_session=session.source_ready_content_id is not None,
                 business_feedback=deepcopy(candidate_feedback),
+                schema_repair_budget=schema_repair_budget,
             )
             result = executor(step_context)
             if not isinstance(result, StageExecutionResult):
@@ -530,6 +642,7 @@ class DirectorOrchestrator:
                 final_step["review"]["root_cause"] if final_step["review"] else None
             ),
             ready_content=ready_content,
+            interaction=deepcopy(final_result.interaction),
         )
 
     @staticmethod
@@ -588,6 +701,7 @@ class DirectorOrchestrator:
             review_root_cause=candidate.review_root_cause,
             ready_content_id=(context.ready_content_id if candidate.final_run_control == "READY" else None),
             ready_content=deepcopy(candidate.ready_content),
+            interaction=deepcopy(candidate.interaction),
             created_at=_utc_now(),
         )
 

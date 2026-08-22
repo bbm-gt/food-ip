@@ -8,6 +8,7 @@ StageModelProposalV1, identity, Evidence, Gate, and semantic validation.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 import json
 from typing import Any
@@ -87,34 +88,67 @@ DEEPSEEK_STAGE_PROMPTS: dict[str, str] = {
 
 SEMANTIC_STAGE_PROMPTS: dict[str, str] = {
     "EXPLORE": (
-        "只判断老板现在最值得继续的内容方向。顶层键必须且只能是 "
-        "result,message,direction,owner_quote,new_facts,new_constraints,reason。result 只能是 "
-        "ASK_OWNER、DIRECTION_CANDIDATE 或 DIRECTION_READY；每条 new_facts 都是对象，键只能是 "
+        "先按 semantic_context.entry_mode 判断：DISCOVER 是帮老板找方向，IDEA 是先判断老板已有想法，"
+        "不要默认直接写稿。信息足够但老板尚未确认方向时，必须给出一个首推和两个实质不同的备选。"
+        "按完整语义理解老板对事实的否定和更正，不使用关键词或字面匹配：例如老板说‘不是A，是B’时，"
+        "不得把被否定的A新增为事实；无论A是否已在 semantic_context.facts，都必须只输出一条 CORRECT，"
+        "statement 始终写更正后的B。必须先按含义在 semantic_context.facts 中匹配A；若匹配，"
+        "replaces_statement 必须逐字复制该有效事实的完整 statement。只有 facts 无匹配时，才按含义匹配"
+        "semantic_context.unconfirmed_inferences，并逐字复制该待确认项的完整 statement；两者均无匹配时，"
+        "replaces_statement 必须为 null，不要填写老板原话中的A。不要改成 ADD，"
+        "也不为A输出 ADD、REMOVE 或隐藏记录。转换层会清除匹配的旧项；均无匹配时直接新增B。"
+        "只要 semantic_context.owner_message 明确否定A并确认B，且这属于餐厅或经营事实，本轮 new_facts"
+        " 就必须包含这次更正，并且只能用前述 CORRECT 表达；不得因A不在 facts、素材看似已足够或当前主要"
+        "任务是找方向而省略。若无法可靠理解B，必须 ASK_OWNER 澄清，不能用方向结果忽略这次更正。"
+        "顶层键必须且只能是 result,message,direction,owner_quote,new_facts,new_constraints,reason,directions。"
+        "result 只能是 ASK_OWNER、DIRECTION_OPTIONS 或 DIRECTION_READY；每条 new_facts 都是对象，键只能是 "
         "action,statement,owner_quote,replaces_statement，action 只能是 ADD、CORRECT、REMOVE；"
         "每条 new_constraints 也必须有 action、statement、owner_quote、replaces_statement 和 constraint_kind，类别只能是 BUSINESS_OBJECTIVE、"
         "CONTENT_REQUIREMENT、PREFERENCE、EXPRESSION、SHOOTING、PROHIBITION（不要使用 REQUIREMENT 等其他名称）。每个 ADD 对象都必须显式写 "
-        "replaces_statement:null；ASK_OWNER 的 direction 和 owner_quote 必须为 null；DIRECTION_CANDIDATE "
-        "必须有简短 direction 且 owner_quote 为 null；DIRECTION_READY 必须有简短、直接来自原话的 direction "
-        "和老板原话 owner_quote。结构示例：{\"result\":\"DIRECTION_CANDIDATE\",\"message\":\"请确认这个方向\","
-        "\"direction\":\"现熬牛骨汤\",\"owner_quote\":null,\"new_facts\":[],\"new_constraints\":[],\"reason\":\"候选\"}。"
+        "replaces_statement:null；ASK_OWNER 的 direction 和 owner_quote 必须为 null，directions 必须为空数组，"
+        "且每轮只问一个关键问题；DIRECTION_OPTIONS 的 direction 和 owner_quote 必须为 null，directions 必须恰好"
+        "三个对象，每个对象只有 direction,reason,recommended，且恰好一个 recommended=true；DIRECTION_READY "
+        "必须有 direction 和 owner_quote，directions 必须为空数组；owner_quote 必须是当前老板消息中的连续原文，"
+        "direction 必须逐字复制 owner_quote 中一个连续、非空的原文片段，不能改写、换序或补词。"
     ),
     "DEEPEN": (
         "只判断还缺哪些最影响核心表达的真实材料。顶层键必须且只能是 "
         "result,message,new_facts,new_constraints,missing_material,reason；result 只能是 ASK_OWNER "
         "或 MATERIAL_READY。new_facts/new_constraints 使用 action,statement,owner_quote,"
         "replaces_statement（约束另外有 constraint_kind），action 只能是 ADD、CORRECT、REMOVE；"
+        "DEEPEN 顶层禁止 owner_quote；owner_quote 只允许出现在 new_facts/new_constraints 的每个变化对象内。"
         "missing_material 是处理当前老板消息后的剩余缺口，不要补写老板没有说过的事实。ADD 必须显式写 "
         "replaces_statement:null；constraint_kind 只能使用 BUSINESS_OBJECTIVE、CONTENT_REQUIREMENT、"
-        "PREFERENCE、EXPRESSION、SHOOTING、PROHIBITION；缺少方向或材料时使用 ASK_OWNER。"
+        "PREFERENCE、EXPRESSION、SHOOTING、PROHIBITION。按完整语义理解老板的否定和更正，不使用关键词或"
+        "字面匹配：老板表达‘不是A，是B’等更正时，不得新增被否定的A；无论A是否已在"
+        "semantic_context.facts，都只输出一条 CORRECT，statement 写B。必须先按含义在 semantic_context.facts"
+        " 中匹配A；若匹配，replaces_statement 必须逐字复制该有效事实的完整 statement。只有 facts 无匹配时，"
+        "才按含义匹配 semantic_context.unconfirmed_inferences，并逐字复制该待确认项的完整 statement；两者"
+        "均无匹配时，replaces_statement 必须为 null，不要填写老板原话中的A。不要改成 ADD，也不为A输出"
+        " ADD、REMOVE 或隐藏记录。转换层会清除匹配"
+        "的旧项；均无匹配时直接新增B；"
+        "只要 semantic_context.owner_message 明确否定A并确认B，且这属于餐厅或经营事实，本轮 new_facts"
+        " 就必须包含这次更正，并且只能用前述 CORRECT 表达；不得因A不在 facts、素材看似已足够或当前主要"
+        "任务是补素材而省略。若无法可靠理解B，必须 ASK_OWNER 澄清，不能用 MATERIAL_READY 忽略这次更正；"
+        "ASK_OWNER 时 missing_material 必须恰好一个，message "
+        "也只问这一件事；事实、约束或最近对话已有的信息不得重复询问。素材足够时立即 MATERIAL_READY。"
     ),
     "CREATE": (
         "只根据已确认方向、真实事实和约束创作一个完整可拍的脚本。顶层键必须且只能是 "
-        "title,script_text,shooting_notes；title 必须是字符串或 null，script_text 必须是字符串，"
-        "shooting_notes 必须是字符串数组（例如 [\"拍锅中汤面\",\"老板出镜说原话\"]）。不得添加事实中没有的具体时间、"
-        "食材、步骤、价格、承诺或经营细节；缺少细节时用概括表达。不要输出任何状态、ID、证据或路由字段。"
+        "title,script_text,shooting_notes；title 必须是非空字符串，script_text 必须是唯一一篇自然口播稿，"
+        "shooting_notes 必须固定为空数组。老板未指定时让口播自适应约 30–60 秒；不写三个成稿，不使用广告套话。"
+        "不得添加事实中没有的具体时间、食材、步骤、价格、承诺或经营细节；缺少细节时用概括表达。"
+        "不要输出任何状态、ID、证据或路由字段。"
     ),
     "REVIEW": (
-        "只审核当前脚本的最大根因。顶层键必须且只能是 result,problem,reason,preserve,change；"
+        "在后台审核当前脚本的最大根因，检查方向、事实边界、自然表达、吸引力和口播可用性。"
+        "必须按含义而不是字面相似度，核对 semantic_context.draft 中所有具体餐厅事实、经营事实与"
+        "semantic_context.facts；"
+        "同义改写也要识别。若具体事实没有当前有效事实支持、与当前事实冲突，或只与"
+        "semantic_context.unconfirmed_inferences 中的待确认推断含义一致，必须判为素材问题并输出"
+        "NEED_MATERIAL，让流程回 DEEPEN；不得因为换了说法而 PASS。知识、案例和外部信息只能指导写法和"
+        "判断，不能证明当前餐厅事实。不要求逐句事实来源清单，不输出 claim ledger，也不请求额外审核调用。"
+        "顶层键必须且只能是 result,problem,reason,preserve,change；"
         "result 只能是 PASS、REWRITE、NEED_MATERIAL、CHANGE_DIRECTION。preserve 写应保留的内容，"
         "change 写下一稿必须改变的目标，这两个字段必须是字符串数组，不是字符串；结构示例："
         "{\"result\":\"REWRITE\",\"problem\":\"开头没有说清重点\",\"reason\":\"核心信息太晚出现\","
@@ -125,7 +159,7 @@ SEMANTIC_STAGE_PROMPTS: dict[str, str] = {
 
 _SEMANTIC_COMMON_SYSTEM_PROMPT = """你是 Food-IP 的餐饮内容编导。
 你只能使用老板明确提供的事实；不要把猜测、知识、案例或外部信息写成老板事实。
-owner_quote 必须逐字复制当前老板消息中的连续原文（包括标点），不能改写、补字或换标点。
+owner_quote 只有在当前阶段契约要求非 null 时，才必须逐字复制当前老板消息中的连续原文（包括标点），不能改写、补字或换标点；阶段规则要求 null 时必须输出 null。
 只输出当前阶段规定的一个小 JSON object，禁止 Markdown、隐藏推理或任何系统保存字段。
 """
 
@@ -238,6 +272,11 @@ _SEMANTIC_JSON_REGENERATION_INSTRUCTION = (
     "\n上一次响应为空或不是一个完整 JSON 文档。请基于完全相同的 semantic_context "
     "重新生成当前阶段规定的小 JSON object；不要解释、修补片段或引用上次响应。"
 )
+_SCHEMA_REPAIR_INSTRUCTION = (
+    "\n上一次 JSON 已被严格 schema 校验拒绝。请只根据 validation_error 修正 invalid_output，"
+    "重新输出当前阶段完整 JSON object；validation_error 指出 extra field 时必须删除该多余字段，不得保留"
+    "或把它移动到其他不允许的位置；不得放宽字段、添加解释或改变未被指出的业务含义。"
+)
 
 _RETRYABLE_HTTP_STATUSES = {408, 429}
 
@@ -326,17 +365,57 @@ class DeepSeekStageHandler:
         with httpx.Client() as client:
             return self._run_with_client(client, context, stage)
 
+    def repair_schema(
+        self,
+        context: ModelContext,
+        *,
+        invalid_output: dict[str, Any],
+        validation_error: str,
+    ) -> dict[str, Any]:
+        """Request one bounded repair after application schema rejection."""
+
+        if not isinstance(context, ModelContext):
+            raise TypeError("DeepSeekStageHandler requires ModelContext")
+        stage = context.stage_contract.get("stage")
+        if stage not in DEEPSEEK_STAGE_PROMPTS:
+            raise DeepSeekConfigurationError("READY and unknown stages cannot call DeepSeek")
+        repair_payload = {
+            "invalid_output": invalid_output,
+            "validation_error": validation_error,
+        }
+        if self.client is not None:
+            return self._run_with_client(
+                self.client,
+                context,
+                stage,
+                schema_repair=repair_payload,
+                max_attempts=1,
+            )
+        with httpx.Client() as client:
+            return self._run_with_client(
+                client,
+                context,
+                stage,
+                schema_repair=repair_payload,
+                max_attempts=1,
+            )
+
     def _run_with_client(
         self,
         client: httpx.Client,
         context: ModelContext,
         stage: str,
+        schema_repair: dict[str, Any] | None = None,
+        max_attempts: int = 2,
     ) -> dict[str, Any]:
         regenerate_json = False
         last_error: DeepSeekProviderError | None = None
-        for attempt in range(2):
+        for attempt in range(max_attempts):
             body = self._request_body(
-                context, stage=stage, regenerate_json=regenerate_json
+                context,
+                stage=stage,
+                regenerate_json=regenerate_json,
+                schema_repair=schema_repair,
             )
             try:
                 response = client.post(
@@ -350,18 +429,18 @@ class DeepSeekStageHandler:
                 )
             except httpx.TimeoutException as exc:
                 last_error = DeepSeekTimeoutError("DeepSeek request timed out")
-                if attempt == 0:
+                if attempt + 1 < max_attempts:
                     continue
                 raise last_error from exc
             except httpx.RequestError as exc:
                 last_error = DeepSeekTransportError("DeepSeek network request failed")
-                if attempt == 0:
+                if attempt + 1 < max_attempts:
                     continue
                 raise last_error from exc
 
             if not response.is_success:
                 last_error = DeepSeekHTTPStatusError(response.status_code)
-                if attempt == 0 and (
+                if attempt + 1 < max_attempts and (
                     response.status_code in _RETRYABLE_HTTP_STATUSES
                     or 500 <= response.status_code <= 599
                 ):
@@ -372,7 +451,7 @@ class DeepSeekStageHandler:
                 return self._parse_success_response(response)
             except (DeepSeekEmptyResponseError, DeepSeekNonJSONResponseError) as exc:
                 last_error = exc
-                if attempt == 0:
+                if attempt + 1 < max_attempts:
                     regenerate_json = True
                     continue
                 raise
@@ -387,6 +466,7 @@ class DeepSeekStageHandler:
         *,
         stage: str,
         regenerate_json: bool,
+        schema_repair: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if self.stage_mode == SEMANTIC_ONLY:
             system_prompt = (
@@ -402,6 +482,9 @@ class DeepSeekStageHandler:
                 + DEEPSEEK_STAGE_PROMPTS[stage]
             )
             user_payload = {"model_context": context.to_dict()}
+        if schema_repair is not None:
+            system_prompt += _SCHEMA_REPAIR_INSTRUCTION
+            user_payload.update(deepcopy(schema_repair))
         if regenerate_json:
             system_prompt += (
                 _SEMANTIC_JSON_REGENERATION_INSTRUCTION
@@ -464,7 +547,7 @@ class DeepSeekStageHandler:
         try:
             parsed = json.loads(content, object_pairs_hook=_reject_duplicate_keys)
         except _DuplicateJSONKeyError as exc:
-            raise DeepSeekResponseSchemaError(
+            raise DeepSeekNonJSONResponseError(
                 "DeepSeek model JSON contains duplicate keys"
             ) from exc
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:

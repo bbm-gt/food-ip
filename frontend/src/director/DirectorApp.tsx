@@ -19,9 +19,13 @@ import {
   classifySubmitError,
   clearDirectorStateIfConfirmed,
   hasDirectorData,
+  initialEntryParameters,
   pendingForRetry,
+  directionSelectionPayload,
+  readyContentText,
 } from './directorLogic'
 import type {
+  DirectionOption,
   DirectorLocalState,
   DirectorMessage,
   PendingRequest,
@@ -52,10 +56,6 @@ function updateMessage(
   return messages.map((message) => message.id === id ? { ...message, delivery } : message)
 }
 
-function notesText(notes: ReadyContent['shooting_notes']): string {
-  return Array.isArray(notes) ? notes.join('\n') : notes
-}
-
 function ReadyCard({
   content,
   summary,
@@ -79,12 +79,8 @@ function ReadyCard({
         {!summary && <span className="ready-badge">可以拍了</span>}
       </div>
       <div className="ready-section">
-        <h3>脚本正文</h3>
+        <h3>口播稿</h3>
         <p>{summary ? `${content.script_text.slice(0, 180)}${content.script_text.length > 180 ? '…' : ''}` : content.script_text}</p>
-      </div>
-      <div className="ready-section">
-        <h3>拍摄建议</h3>
-        <p>{summary ? `${Array.isArray(content.shooting_notes) ? content.shooting_notes.length : 1} 条建议` : notesText(content.shooting_notes)}</p>
       </div>
       {!summary && (
         <div className="ready-actions">
@@ -101,8 +97,10 @@ export default function DirectorApp() {
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<Notice | null>(null)
+  const [entryMode, setEntryMode] = useState<'DISCOVER' | 'IDEA' | null>(null)
   const stateRef = useRef(state)
   const endOfMessagesRef = useRef<HTMLDivElement>(null)
+  const composerRef = useRef<HTMLTextAreaElement>(null)
 
   function commit(updater: (current: DirectorLocalState) => DirectorLocalState): DirectorLocalState {
     const next = { ...updater(stateRef.current), updated_at: new Date().toISOString() }
@@ -183,9 +181,7 @@ export default function DirectorApp() {
     setNotice({ kind: outcome.status === 'ready' ? 'info' : 'error', text: outcome.message, retryable: outcome.retryable })
   }
 
-  function handleSend(event: FormEvent<HTMLFormElement>): void {
-    event.preventDefault()
-    const content = draft.trim()
+  function queueOwnerMessage(content: string, parameters: Record<string, unknown>): void {
     const current = stateRef.current
     if (!content || busy || current.pending_request || current.status === 'ready' || current.status === 'blocked') return
 
@@ -193,7 +189,7 @@ export default function DirectorApp() {
       client_message_id: newClientMessageId(),
       expected_state_version: current.state_version,
       content,
-      parameters: {},
+      parameters,
     }
     commit((latest) => ({
       ...latest,
@@ -208,6 +204,29 @@ export default function DirectorApp() {
     }))
     setDraft('')
     void submitPending(pending)
+  }
+
+  function handleSend(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault()
+    const content = draft.trim()
+    const current = stateRef.current
+    const isFirstTurn = current.state_version === 0 && current.messages.length === 0
+    queueOwnerMessage(content, isFirstTurn ? initialEntryParameters(entryMode ?? 'IDEA') : {})
+  }
+
+  function startDiscover(): void {
+    setEntryMode('DISCOVER')
+    queueOwnerMessage('请帮我找一个现在最值得拍的方向。', initialEntryParameters('DISCOVER'))
+  }
+
+  function startWithIdea(): void {
+    setEntryMode('IDEA')
+    composerRef.current?.focus()
+  }
+
+  function selectDirection(option: DirectionOption): void {
+    const payload = directionSelectionPayload(option)
+    queueOwnerMessage(payload.content, payload.parameters)
   }
 
   function retryPending(): void {
@@ -225,13 +244,14 @@ export default function DirectorApp() {
     stateRef.current = next
     setState(next)
     setDraft('')
+    setEntryMode(null)
     setNotice(null)
   }
 
   async function copyReadyContent(): Promise<void> {
     const content = stateRef.current.ready_content
     if (!content) return
-    const text = [content.title, content.script_text, '拍摄建议', notesText(content.shooting_notes)].join('\n\n')
+    const text = readyContentText(content)
     try {
       await navigator.clipboard.writeText(text)
       setNotice({ kind: 'success', text: '脚本已复制。' })
@@ -279,7 +299,15 @@ export default function DirectorApp() {
           {state.messages.length === 0 ? (
             <div className="director-empty-state">
               <span className="empty-mark">✦</span>
-              <p>告诉我你最近想拍什么、遇到了什么问题，<br />或者让我帮你找一个值得拍的方向。</p>
+              <p>这次从哪里开始？</p>
+              <div className="entry-actions">
+                <button type="button" className="entry-card recommended" onClick={startDiscover} disabled={busy}>
+                  <strong>帮我找方向</strong><span>让 AI 编导先判断现在最值得拍什么</span>
+                </button>
+                <button type="button" className="entry-card" onClick={startWithIdea} disabled={busy}>
+                  <strong>我已有想法</strong><span>说说你的想法，先判断再创作</span>
+                </button>
+              </div>
             </div>
           ) : (
             <div className="message-list">
@@ -298,6 +326,21 @@ export default function DirectorApp() {
           )}
         </section>
 
+        {state.interaction?.kind === 'DIRECTION_SELECTION' && state.status === 'active' && (
+          <section className="direction-panel" aria-label="方向选择">
+            <div className="direction-heading"><span className="eyebrow">选择内容方向</span><strong>一个首推，两个备选</strong></div>
+            <div className="direction-grid">
+              {state.interaction.options.map((option) => (
+                <button key={option.id} type="button" className={`direction-card${option.recommended ? ' recommended' : ''}`} onClick={() => selectDirection(option)} disabled={!canCompose}>
+                  {option.recommended && <span className="recommend-badge">首推</span>}
+                  <strong>{option.direction}</strong>
+                  <span>{option.reason}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
         {state.status === 'ready' && state.ready_content && (
           <ReadyCard content={state.ready_content} busy={busy} onCopy={() => void copyReadyContent()} onRevise={() => void continueRevision()} />
         )}
@@ -311,9 +354,10 @@ export default function DirectorApp() {
 
         <form className="director-composer" onSubmit={handleSend}>
           <textarea
+            ref={composerRef}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            placeholder={state.status === 'blocked' ? '请新建对话后继续' : state.status === 'ready' ? '这段对话已经完成' : '写下你想拍的内容或遇到的问题…'}
+            placeholder={state.status === 'blocked' ? '请新建对话后继续' : state.status === 'ready' ? '这段对话已经完成' : entryMode === 'IDEA' ? '说说你已有的内容想法…' : '写下你想拍的内容或遇到的问题…'}
             disabled={!canCompose}
             rows={3}
             aria-label="输入消息"

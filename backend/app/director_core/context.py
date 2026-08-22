@@ -126,6 +126,7 @@ class ModelContext:
     owner_evidence_references: tuple[Mapping[str, str], ...]
     estimated_units: int
     business_feedback: Mapping[str, Any] | None = None
+    request_parameters: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "rules", _freeze(self.rules))
@@ -137,6 +138,7 @@ class ModelContext:
         object.__setattr__(self, "evidence_messages", _freeze(self.evidence_messages))
         object.__setattr__(self, "owner_evidence_references", _freeze(self.owner_evidence_references))
         object.__setattr__(self, "business_feedback", _freeze(self.business_feedback))
+        object.__setattr__(self, "request_parameters", _freeze(self.request_parameters))
 
     @property
     def owner_message(self) -> str:
@@ -257,6 +259,9 @@ class ModelContextAssembler:
             owner_message_id = context.owner_message_id
             owner_text = context.owner_text
             business_feedback = deepcopy(getattr(context, "business_feedback", None))
+            request_parameters = deepcopy(getattr(context, "parameters", None))
+        else:
+            request_parameters = None
         if not isinstance(session_id, str) or not session_id:
             raise ContextAssemblyError("session_id is required for Context Assembly")
         if stage not in STAGE_EXECUTION_COMBINATIONS:
@@ -370,6 +375,7 @@ class ModelContextAssembler:
             owner_evidence_references=tuple(owner_evidence_references),
             estimated_units=total_units,
             business_feedback=business_feedback,
+            request_parameters=request_parameters,
         )
 
     def _resolve_evidence(

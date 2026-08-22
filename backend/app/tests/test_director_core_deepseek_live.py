@@ -163,3 +163,122 @@ def test_deepseek_live_multi_turn_owner_conversation_commits_atomically(tmp_path
         ).fetchone()
         assert ready is not None
         assert json.loads(ready[0])["script_text"].strip()
+
+
+@pytest.mark.parametrize("existing_old_fact", [False, True])
+def test_deepseek_live_understands_natural_language_fact_correction(
+    tmp_path, existing_old_fact: bool,
+) -> None:
+    repository, scope, session, executor = live_repository(
+        tmp_path, "director-deepseek-live-fact-correction.sqlite"
+    )
+    owner_message_id = str(uuid4())
+    evidence = {
+        "evidence_type": "owner_message",
+        "target_id": owner_message_id,
+        "target_session_id": session.id,
+    }
+    state = repository.get_working_state(scope, session.id).state_json
+    state["direction"] = {
+        "item_id": str(uuid4()),
+        "statement": "讲每天熬汤的真实时间",
+        "owner_confirmed": True,
+        "evidence_refs": [evidence],
+        "inherited_from": None,
+    }
+    state["owner_facts"] = []
+    if existing_old_fact:
+        state["owner_facts"].append({
+            "item_id": str(uuid4()),
+            "statement": "凌晨四点开始熬汤",
+            "evidence_refs": [evidence],
+            "supersedes_item_ids": [],
+            "inherited_from": None,
+        })
+    state["material_state"] = {
+        "status": "SUFFICIENT",
+        "required_confirmations": [],
+    }
+
+    result = executor(StageExecutionContext(
+        stage="DEEPEN",
+        working_state=state,
+        owner_text="我们不是凌晨四点熬汤，是早上六点开始熬汤。",
+        parameters={},
+        candidate_revision=0,
+        session_id=session.id,
+        owner_message_id=owner_message_id,
+        is_revision_session=False,
+    ))
+
+    facts = result.post_state["owner_facts"]
+    assert len(facts) == 1
+    assert "六点" in facts[0]["statement"]
+    assert "四点" not in facts[0]["statement"]
+    assert facts[0]["supersedes_item_ids"] == []
+    assert result.post_state["rejected_items"] == []
+
+
+def test_deepseek_live_review_catches_semantic_use_of_unconfirmed_fact(tmp_path) -> None:
+    repository, scope, session, executor = live_repository(
+        tmp_path, "director-deepseek-live-semantic-review.sqlite"
+    )
+    owner_message_id = str(uuid4())
+    evidence = {
+        "evidence_type": "owner_message",
+        "target_id": owner_message_id,
+        "target_session_id": session.id,
+    }
+    state = repository.get_working_state(scope, session.id).state_json
+    state["direction"] = {
+        "item_id": str(uuid4()),
+        "statement": "讲每天熬汤的真实过程",
+        "owner_confirmed": True,
+        "evidence_refs": [evidence],
+        "inherited_from": None,
+    }
+    state["owner_facts"] = [{
+        "item_id": str(uuid4()),
+        "statement": "早上六点开始熬汤",
+        "evidence_refs": [evidence],
+        "supersedes_item_ids": [],
+        "inherited_from": None,
+    }]
+    state["unconfirmed_inferences"] = [{
+        "item_id": str(uuid4()),
+        "statement": "牛骨汤从凌晨四点开始熬",
+        "reason": "老板尚未确认这个时间",
+    }]
+    state["material_state"] = {
+        "status": "SUFFICIENT",
+        "required_confirmations": [],
+    }
+    state["draft"] = {
+        "draft_id": str(uuid4()),
+        "content": {
+            "title": "每天现熬",
+            "script_text": "每天凌晨4点，我们就开火熬牛骨汤。",
+            "shooting_notes": [],
+        },
+        "content_status": "FINAL_CANDIDATE",
+        "based_on_ready_content_id": None,
+    }
+
+    result = executor(StageExecutionContext(
+        stage="REVIEW",
+        working_state=state,
+        owner_text="请审核当前这篇稿件。",
+        parameters={},
+        candidate_revision=0,
+        session_id=session.id,
+        owner_message_id=owner_message_id,
+        is_revision_session=False,
+    ))
+
+    assert result.run_control == "CONTINUE"
+    assert result.target_stage == "DEEPEN"
+    assert result.transition_reason_code == "MATERIAL_GAP"
+    assert result.review == {
+        "outcome": "BLOCKED",
+        "root_cause": "MATERIAL_PROBLEM",
+    }

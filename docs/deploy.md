@@ -33,7 +33,11 @@ FastAPI 启动时检查 `FRONTEND_DIST/index.html`（默认 `frontend/dist/index
 - 存在时，先托管 `/assets`，再把 `/` 挂到前端构建目录；`/api`、`/docs` 和 `/openapi.json` 已提前注册，优先匹配。
 - 不存在时，`GET /` 返回中文构建提示，API 和 Swagger 仍可正常使用。
 
-部署时应把 `PROJECTS_ROOT` 指向可持久化且可写的磁盘目录，并保证服务账号能执行 ffmpeg/ffprobe。当前 job 状态保存在进程内存中，因此重启会丢失未完成任务的查询记录；项目、素材和已导出文件不会丢失。
+部署时应把 `PROJECTS_ROOT` 指向可持久化且可写的磁盘目录，并保证服务账号能执行 ffmpeg/ffprobe。`DIRECTOR_DB_PATH` 必须指向可写持久卷中的 SQLite 文件；启动时会初始化并校验 Director 六表。不要把临时容器文件系统当成 Director 数据持久层。
+
+新产品默认 `DIRECTOR_STAGE_MODE=semantic_only`。`legacy` 仅用于显式兼容回退。Director 模型使用独立的 `DIRECTOR_DEEPSEEK_*` 配置，不能依赖 `AI_SCRIPT_*`；`DIRECTOR_CONTEXT_MAX_UNITS` 和 `DIRECTOR_MAX_INTERNAL_STEPS` 分别控制上下文预算与单 Turn 后台推进上限。
+
+当前 job 状态保存在进程内存中，因此重启会丢失未完成任务的查询记录；项目、Director Session、素材和已导出文件不会丢失（前提是各自路径位于持久卷）。
 
 建议由反向代理提供 HTTPS、请求体大小限制和访问控制。生产环境按真实域名收窄 `CORS_ORIGINS`，不要使用任意来源。
 

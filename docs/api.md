@@ -63,6 +63,31 @@
 - `POST/GET /api/projects/{project_id}/creative-conversations`：创建或列出共创会话；`revise_script` 模式会快照当前脚本，但不会直接覆盖它。
 - 共创会话通过独立接口追加消息、确认 `CreativeBrief`、生成选题卡或脚本候选；只有既有候选选择接口会改变当前 `script.json`。
 
+## Director Core（当前已实现）
+
+Director Core 使用独立 SQLite 持久化与五阶段执行链，不读取 Legacy `CreativeConversation`、`CreativeBrief`、`TopicCard` 或 `ScriptBundle` 作为创作状态。所属项目仍作为当前授权/存在性边界。
+
+### `POST /api/projects/{project_id}/director-sessions`
+
+- 请求：`{"source_ready_content_id": UUID|null}`；省略或传 `null` 创建新内容 Session，传入同项目既有 `ReadyContent` ID 创建修订 Session。
+- `201`：`{"session_id", "lifecycle_status":"ACTIVE", "state_version":0, "source_ready_content_id":string|null}`。
+- 错误：`404`（项目或来源内容不存在）、`422`（请求格式错误）、`500/503`（持久化不可用）。
+
+### `POST /api/projects/{project_id}/director-sessions/{session_id}/messages`
+
+- 请求：`{"client_message_id": UUID, "expected_state_version": integer>=0, "content": non-empty string, "parameters": object}`。
+- `client_message_id` 提供幂等：相同规范化请求会回放首次成功响应且 `replayed=true`；同 ID 用于不同请求返回 `409 idempotency_conflict`。
+- `expected_state_version` 过期返回 `409 state_version_conflict`；已完成 Session 的新消息返回 `409 session_ready`。暂时性数据库失败返回 `503`，客户端应使用同一消息 ID 重试。
+- 成功响应包含 `session_id`、`turn_id`、`state_version`、单条 `DIRECTOR` 消息、`status`（`WAITING_FOR_OWNER|READY`）、可空 `ready_content`、可空 `interaction` 与 `replayed`。
+- `READY` 时 `ready_content` 保持 v1：`id`、`title`、`script_text`、`shooting_notes`。
+- 首次入口可使用 `parameters={"entry_mode":"DISCOVER"}`（帮我找方向）或 `{"entry_mode":"IDEA"}`（我已有想法）。其他普通消息使用空对象。
+- 需要选择方向时，`interaction={"kind":"DIRECTION_SELECTION","options":[...]}`；`options` 恰好三项，每项包含稳定 `id`、`direction`、`reason` 和 `recommended`，且恰好一个首推。
+- 选择方向时请求 `content` 必须包含方向原文，`parameters` 为 `{"action":"SELECT_DIRECTION","direction_id": UUID}`。未知、过期或属于其他 Session 的 ID 返回 `409 invalid_direction_selection`。
+- 带方向卡的成功 Turn 使用 `first_response_json` v2 持久化；刷新后使用客户端本地状态展示，同消息 ID 重试与幂等回放返回同一组卡片和 ID。历史 v1 响应继续读取并返回 `interaction=null`。
+- `READY` 的 `shooting_notes` 保留为兼容字段；新脚本内核写入空数组，当前前端只展示标题和口播稿。
+
+以上 Script Core 增量已经实现，交互约束依据 Architecture Amendment 002；当前事实更正与语义 REVIEW 依据 Architecture Amendment 003。
+
 ## 脚本
 
 ### `POST /api/projects/{project_id}/script/template`
